@@ -1,0 +1,50 @@
+version: '3.8'
+
+services:
+  redis:
+    image: redis:7-alpine
+    container_name: tara_redis
+    ports:
+      - "6379:6379"
+    restart: always
+
+  backend:
+    build: ./backend
+    container_name: tara_backend
+    ports:
+      - "8000:8000"
+    environment:
+      - REDIS_HOST=redis
+      - REDIS_URL=redis://redis:6379/0
+      - DATABASE_URL=sqlite:////app/tara.db
+    volumes:
+      - ./tara.db:/app/tara.db
+      - ./exports:/app/exports
+    restart: always
+    depends_on:
+      - redis
+
+  celery_worker:
+    build: ./backend
+    container_name: tara_celery
+    command: celery -A app.core.celery_app worker --loglevel=info
+    environment:
+      - REDIS_HOST=redis
+      - REDIS_URL=redis://redis:6379/0
+      - DATABASE_URL=sqlite:////app/tara.db
+    volumes:
+      - ./tara.db:/app/tara.db
+      - ./exports:/app/exports
+    restart: always
+    depends_on:
+      - redis
+      - backend
+
+  frontend:
+    build: ./frontend
+    container_name: tara_frontend
+    ports:
+      - "3000:3000"
+    restart: always
+    depends_on:
+      - backend
