@@ -6,7 +6,8 @@ import ReactFlow, {
   useNodesState, 
   useEdgesState, 
   addEdge,
-  MarkerType
+  MarkerType,
+  updateEdge
 } from 'reactflow';
 import 'reactflow/dist/style.css';
 
@@ -15,7 +16,7 @@ import { useAuthStore } from '../stores/authStore';
 import { useProjectStore } from '../stores/projectStore';
 import { 
   ArrowLeft, Save, Sparkles, HelpCircle, AlertTriangle, 
-  Info, Cpu, ShieldAlert, WifiOff, RefreshCw, Layers
+  Info, Cpu, ShieldAlert, WifiOff, RefreshCw, Layers, Send
 } from 'lucide-react';
 
 import CustomDfdNode from './CustomDfdNode';
@@ -47,7 +48,8 @@ export default function DfdEditor({ setPage, diagramId }) {
     setNodes,
     setEdges,
     saveDiagram,
-    triggerAIGenerate,
+    triggerAIChat,
+    applySnapshot,
     setOfflineStatus,
     activeUsers
   } = useCanvasStore();
@@ -61,6 +63,11 @@ export default function DfdEditor({ setPage, diagramId }) {
   // AI Assistant Prompt State
   const [aiPrompt, setAiPrompt] = useState('');
   const [aiLoading, setAiLoading] = useState(false);
+  const [chatHistory, setChatHistory] = useState([
+    { sender: 'ai', text: '您好！我是您的 AI 拓扑助理。请告诉我您想要绘制的场景或系统（例如：IVI网关诊断、智能前视摄像头与域控通信），我会为您规划拓扑结构并提供一键生成 DFD 功能图。' }
+  ]);
+  const [lastSuggestedSnapshot, setLastSuggestedSnapshot] = useState(null);
+  const [isChatSending, setIsChatSending] = useState(false);
 
   // Sync ref to debounce store updates during dragging
   const syncTimeoutRef = useRef(null);
@@ -158,6 +165,15 @@ export default function DfdEditor({ setPage, diagramId }) {
     setEdgesState(newEdges);
     syncLocalChanges(nodes, newEdges);
   }, [edges, nodes, isReadOnly]);
+
+  const onEdgeUpdate = useCallback((oldEdge, newConnection) => {
+    if (isReadOnly) return;
+    setEdgesState((els) => {
+      const updated = updateEdge(oldEdge, newConnection, els);
+      syncLocalChanges(nodes, updated);
+      return updated;
+    });
+  }, [nodes, isReadOnly]);
 
   const onNodesChangeHandler = useCallback((changes) => {
     if (isReadOnly) return;
@@ -312,15 +328,33 @@ export default function DfdEditor({ setPage, diagramId }) {
     syncLocalChanges(nodes, updatedEdges);
   };
 
-  const handleAIGenerateClick = async () => {
-    if (isReadOnly || !aiPrompt.trim()) return;
-    if (window.confirm('一键 AI 生成画图会先清空您当前的画布并重置！确定继续吗？')) {
+  const handleAIChatSend = async () => {
+    if (isReadOnly || !aiPrompt.trim() || isChatSending) return;
+    const userMsg = aiPrompt.trim();
+    setAiPrompt('');
+    setChatHistory(prev => [...prev, { sender: 'user', text: userMsg }]);
+    setIsChatSending(true);
+    try {
+      const res = await triggerAIChat(userMsg);
+      if (res && res.reply) {
+        setChatHistory(prev => [...prev, { sender: 'ai', text: res.reply }]);
+        setLastSuggestedSnapshot(res.snapshot_json);
+      }
+    } catch {
+      setChatHistory(prev => [...prev, { sender: 'ai', text: '抱歉，与 AI 助手沟通失败，请检查网络或配置。' }]);
+    } finally {
+      setIsChatSending(false);
+    }
+  };
+
+  const handleApplySnapshotClick = async () => {
+    if (isReadOnly || !lastSuggestedSnapshot) return;
+    if (window.confirm('一键生成 DFD 图会清空您当前的画布并用 AI 生成的图画上去！确定继续吗？')) {
       setAiLoading(true);
-      const res = await triggerAIGenerate(aiPrompt.trim());
+      const res = await applySnapshot(lastSuggestedSnapshot);
       setAiLoading(false);
       if (res) {
-        setAiPrompt('');
-        alert('AI 画图拓扑生成成功！');
+        alert('AI 画图拓扑应用成功，您可以继续在画布上修改了！');
       }
     }
   };
@@ -328,8 +362,6 @@ export default function DfdEditor({ setPage, diagramId }) {
   const handleManualSave = () => {
     saveDiagram();
   };
-
-  const isLockOwner = lockedBy === user?.username;
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', height: 'calc(100vh - 64px)', overflow: 'hidden' }}>
@@ -593,6 +625,7 @@ export default function DfdEditor({ setPage, diagramId }) {
             onNodesChange={onNodesChangeHandler}
             onEdgesChange={onEdgesChangeHandler}
             onConnect={onConnect}
+            onEdgeUpdate={onEdgeUpdate}
             onNodeClick={onNodeClick}
             onEdgeClick={onEdgeClick}
             onPaneClick={onPaneClick}
@@ -791,54 +824,119 @@ export default function DfdEditor({ setPage, diagramId }) {
         {/* AI Drawing Drawer sidebar (If no node or edge selected) */}
         {!selectedNode && !selectedEdge && (
           <div className="glass" style={{
-            width: '300px',
+            width: '320px',
             borderRadius: '0',
             borderLeft: '1px solid var(--border-color)',
-            padding: '20px 18px',
+            padding: '20px 16px',
             background: 'var(--drawer-bg)',
             zIndex: 10,
             display: 'flex',
             flexDirection: 'column',
-            gap: '16px'
+            height: '100%',
+            boxSizing: 'border-box'
           }}>
-            <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: '6px', marginBottom: '8px' }}>
               <Sparkles size={16} style={{ color: 'var(--primary)' }} />
-              <h3 style={{ fontSize: '16px', fontWeight: '600', color: 'var(--text-primary)' }}>AI 一键自动画图</h3>
+              <h3 style={{ fontSize: '16px', fontWeight: '600', color: 'var(--text-primary)' }}>AI 一键画图助手</h3>
             </div>
             
-            <p style={{ color: 'var(--text-secondary)', fontSize: '12px', lineHeight: '1.4' }}>
-              输入您想要绘制的车载安全场景（例如：“OTA固件升级拓扑”或“UDS诊断功能数据流”），AI 会自动布局生成完整的节点与连线关系。
-            </p>
-
-            <div className="input-group">
-              <textarea
-                className="input-field"
-                rows={5}
-                placeholder="例如：绘制一个车载娱乐系统IVI与中央网关、OBD接口诊断的拓扑图..."
-                value={aiPrompt}
-                onChange={(e) => setAiPrompt(e.target.value)}
-                style={{ resize: 'none' }}
-                disabled={isReadOnly || aiLoading}
-              />
+            {/* Chat History Container */}
+            <div style={{
+              flexGrow: 1,
+              border: '1px solid var(--border-color)',
+              borderRadius: '8px',
+              padding: '12px',
+              background: 'rgba(0, 0, 0, 0.2)',
+              overflowY: 'auto',
+              display: 'flex',
+              flexDirection: 'column',
+              gap: '12px',
+              minHeight: '200px',
+              maxHeight: 'calc(100vh - 420px)',
+              marginBottom: '12px'
+            }}>
+              {chatHistory.map((msg, index) => (
+                <div 
+                  key={index} 
+                  style={{ 
+                    display: 'flex', 
+                    flexDirection: 'column',
+                    alignItems: msg.sender === 'user' ? 'flex-end' : 'flex-start'
+                  }}
+                >
+                  <span style={{ fontSize: '10px', color: 'var(--text-secondary)', marginBottom: '4px' }}>
+                    {msg.sender === 'user' ? '您' : 'AI 助理'}
+                  </span>
+                  <div style={{
+                    alignSelf: msg.sender === 'user' ? 'flex-end' : 'flex-start',
+                    background: msg.sender === 'user' ? 'var(--primary)' : 'rgba(255, 255, 255, 0.05)',
+                    border: msg.sender === 'user' ? 'none' : '1px solid var(--border-color)',
+                    color: msg.sender === 'user' ? '#fff' : 'var(--text-primary)',
+                    borderRadius: msg.sender === 'user' ? '12px 12px 0 12px' : '12px 12px 12px 0',
+                    padding: '8px 12px',
+                    maxWidth: '90%',
+                    fontSize: '12px',
+                    lineHeight: '1.4',
+                    whiteSpace: 'pre-wrap',
+                    wordBreak: 'break-all'
+                  }}>
+                    {msg.text}
+                  </div>
+                </div>
+              ))}
+              {isChatSending && (
+                <div style={{ display: 'flex', gap: '6px', alignItems: 'center', color: 'var(--text-secondary)', fontSize: '12px' }}>
+                  <div className="spinner" style={{ width: '12px', height: '12px' }}></div>
+                  <span>AI 正在思考设计中...</span>
+                </div>
+              )}
             </div>
 
-            <button
-              onClick={handleAIGenerateClick}
-              className="btn btn-primary"
-              style={{ width: '100%' }}
-              disabled={isReadOnly || aiLoading || !aiPrompt.trim()}
-            >
-              {aiLoading ? (
-                <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-                  <div className="spinner"></div> 正在生成中...
-                </div>
-              ) : (
-                <>
-                  <Sparkles size={14} />
-                  <span>一键生成拓扑图</span>
-                </>
-              )}
-            </button>
+            {/* Input and Buttons */}
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
+              <div className="input-group" style={{ margin: 0 }}>
+                <textarea
+                  className="input-field"
+                  rows={3}
+                  placeholder="例如：修改上述方案，再加入一个诊断服务器..."
+                  value={aiPrompt}
+                  onChange={(e) => setAiPrompt(e.target.value)}
+                  style={{ resize: 'none', fontSize: '12px', padding: '10px' }}
+                  disabled={isReadOnly || isChatSending || aiLoading}
+                />
+              </div>
+
+              <div style={{ display: 'flex', gap: '8px' }}>
+                <button
+                  onClick={handleAIChatSend}
+                  className="btn btn-secondary"
+                  style={{ flexGrow: 1, display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '4px', height: '36px', fontSize: '13px' }}
+                  disabled={isReadOnly || isChatSending || !aiPrompt.trim()}
+                >
+                  <Send size={13} />
+                  <span>发送需求</span>
+                </button>
+              </div>
+
+              <button
+                onClick={handleApplySnapshotClick}
+                className="btn btn-primary"
+                style={{ width: '100%', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '6px', height: '38px', fontSize: '13px' }}
+                disabled={isReadOnly || aiLoading || !lastSuggestedSnapshot}
+              >
+                {aiLoading ? (
+                  <>
+                    <div className="spinner" style={{ width: '14px', height: '14px' }}></div>
+                    <span>正在绘制中...</span>
+                  </>
+                ) : (
+                  <>
+                    <Sparkles size={14} />
+                    <span>一键生成 DFD 图</span>
+                  </>
+                )}
+              </button>
+            </div>
           </div>
         )}
       </div>

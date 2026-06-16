@@ -305,6 +305,56 @@ export const useCanvasStore = create((set, get) => {
         });
         return null;
       }
+    },
+
+    triggerAIChat: async (prompt) => {
+      const diag = get().currentDiagram;
+      if (!diag || get().isReadOnly) return null;
+      try {
+        const response = await axios.post(
+          `${API_BASE}/diagrams/${diag.id}/ai-chat`,
+          { prompt },
+          { headers: getHeaders() }
+        );
+        return response.data;
+      } catch (err) {
+        throw new Error(err.response?.data?.detail || 'AI 拓扑对话失败', { cause: err });
+      }
+    },
+
+    applySnapshot: async (snapshotJson) => {
+      const diag = get().currentDiagram;
+      if (!diag || get().isReadOnly) return null;
+      set({ loading: true, error: null });
+      try {
+        // 先获取最新的版本号以规避乐观锁版本冲突
+        const detailResp = await axios.get(
+          `${API_BASE}/diagrams/${diag.id}`,
+          { headers: getHeaders() }
+        );
+        const latestVersion = detailResp.data.version_no;
+
+        const response = await axios.put(
+          `${API_BASE}/diagrams/${diag.id}`,
+          { version_no: latestVersion, snapshot_json: snapshotJson },
+          { headers: getHeaders() }
+        );
+        const snapshot = JSON.parse(response.data.snapshot_json || '{}');
+        set({
+          currentDiagram: response.data,
+          nodes: snapshot.nodes || [],
+          edges: snapshot.edges || [],
+          versionNo: response.data.version_no,
+          loading: false
+        });
+        return response.data;
+      } catch (err) {
+        set({
+          error: err.response?.data?.detail || '应用 AI 拓扑图失败',
+          loading: false
+        });
+        return null;
+      }
     }
   };
 });
