@@ -371,7 +371,7 @@ def create_excel_report(domain: Domain, steps: List[TaraStep], assets: List[Asse
     ws.row_dimensions[2].height = 35
     
     # 填充所有表头单元格默认格式
-    for col_idx in range(1, 37):
+    for col_idx in range(1, 30):
         cell_r1 = ws.cell(row=1, column=col_idx)
         cell_r1.fill = header_fill_r1
         cell_r1.font = header_font
@@ -388,19 +388,17 @@ def create_excel_report(domain: Domain, steps: List[TaraStep], assets: List[Asse
     ws.merge_cells('B1:C1')
     ws['B1'] = 'Assets'
     
-    ws.merge_cells('D1:K1')
-    ws['D1'] = 'Cybersecurity Attributes'
+    ws['D1'] = 'Cybersecurity Attributes Result'
     
-    ws.merge_cells('L1:R1')
-    ws['L1'] = 'Damage Scenarios and Impact Category'
+    ws.merge_cells('E1:K1')
+    ws['E1'] = 'Damage Scenarios and Impact Category'
     
-    ws.merge_cells('S1:AB1')
-    ws['S1'] = 'Threat Scenarios and Attack Feasibility Assessment'
+    ws.merge_cells('L1:U1')
+    ws['L1'] = 'Threat Scenarios and Attack Feasibility Assessment'
     
     # 第二层标题名称 (Row 2)
     headers_r2 = [
         "Number", "Assets SN", "Assets Name",
-        "Authenticity", "Integrity", "Non-repudiation", "Confidentiality", "Availability", "Authorization", "Privacy",
         "Cybersecurity Attributes Result",
         "Damage Scenarios SN", "Damage Scenarios", "Safety", "Financial", "Operational", "Privacy", "Impact Level",
         "Threat Scenarios", "Attack Path",
@@ -417,7 +415,6 @@ def create_excel_report(domain: Domain, steps: List[TaraStep], assets: List[Asse
     current_row = 3
     keys = [
         "number", "asset_sn", "asset_name",
-        "Authenticity", "Integrity", "Non-repudiation", "Confidentiality", "Availability", "Authorization", "Privacy",
         "attribute_result",
         "damage_scenario_sn", "damage_scenario", "safety", "financial", "operational", "privacy", "overall_impact",
         "threat_scenario", "attack_path",
@@ -467,7 +464,6 @@ def create_csv_report(domain: Domain, steps: List[TaraStep], assets: List[Asset]
     
     headers_r2 = [
         "Number", "Assets SN", "Assets Name",
-        "Authenticity", "Integrity", "Non-repudiation", "Confidentiality", "Availability", "Authorization", "Privacy",
         "Cybersecurity Attributes Result",
         "Damage Scenarios SN", "Damage Scenarios", "Safety", "Financial", "Operational", "Privacy", "Impact Level",
         "Threat Scenarios", "Attack Path",
@@ -478,7 +474,6 @@ def create_csv_report(domain: Domain, steps: List[TaraStep], assets: List[Asset]
     
     keys = [
         "number", "asset_sn", "asset_name",
-        "Authenticity", "Integrity", "Non-repudiation", "Confidentiality", "Availability", "Authorization", "Privacy",
         "attribute_result",
         "damage_scenario_sn", "damage_scenario", "safety", "financial", "operational", "privacy", "overall_impact",
         "threat_scenario", "attack_path",
