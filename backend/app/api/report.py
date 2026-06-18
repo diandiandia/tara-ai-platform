@@ -19,7 +19,8 @@ from app.models.tara_step import TaraStep
 
 router = APIRouter(prefix="/reports", tags=["报告导出与脱敏服务"])
 
-EXPORTS_DIR = "/home/ubuntu/tara-ai-platform/exports"
+PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
+EXPORTS_DIR = os.path.join(PROJECT_ROOT, "exports_local")
 
 # 建立导出文件夹
 if not os.path.exists(EXPORTS_DIR):
@@ -224,7 +225,7 @@ def collect_report_data(steps: List[TaraStep], assets: List[Asset], desensitize:
                         for c in attr_cols:
                             row_data[c] = "Yes" if c == attr else None
                             
-                        row_data["attribute_result"] = f"{attr}{chinese_suffix_map.get(attr, '')}"
+                        row_data["attribute_result"] = f"{chinese_suffix_map.get(attr, '')} / {attr}"
                         row_data["damage_scenario_sn"] = ds.get("damage_scenario_sn", "")
                         row_data["damage_scenario"] = ds.get("damage_scenario", "")
                         
@@ -243,7 +244,7 @@ def collect_report_data(steps: List[TaraStep], assets: List[Asset], desensitize:
                         
                         # Attack Path & Feasibility Columns
                         if desensitize:
-                            row_data["attack_path"] = "攻击路径分析细节已脱敏过滤。"
+                            row_data["attack_path"] = "攻击路径分析细节已脱敏过滤。 / Attack path details have been desensitized and filtered."
                             row_data["time_consuming"] = "N/A"
                             row_data["expertise"] = "N/A"
                             row_data["knowledge_about_toe"] = "N/A"
@@ -255,28 +256,28 @@ def collect_report_data(steps: List[TaraStep], assets: List[Asset], desensitize:
                             if isinstance(raw_ap, dict):
                                 ap_lines = []
                                 if raw_ap.get("entry_point"):
-                                    ap_lines.append(f"入口点: {raw_ap.get('entry_point')}")
+                                    ap_lines.append(f"入口点 / Entry Point: {raw_ap.get('entry_point')}")
                                 if raw_ap.get("attack_technique"):
-                                    ap_lines.append(f"技术手法: {raw_ap.get('attack_technique')}")
+                                    ap_lines.append(f"技术手法 / Attack Technique: {raw_ap.get('attack_technique')}")
                                 if raw_ap.get("attack_steps"):
                                     steps_list = raw_ap.get("attack_steps")
                                     if isinstance(steps_list, list):
-                                        ap_lines.append("步骤:\n" + "\n".join(steps_list))
+                                        ap_lines.append("步骤 / Steps:\n" + "\n".join(steps_list))
                                     else:
-                                        ap_lines.append(f"步骤: {steps_list}")
+                                        ap_lines.append(f"步骤 / Steps: {steps_list}")
                                 row_data["attack_path"] = "\n".join(ap_lines)
                             elif isinstance(ap, dict) and "entry_point" in ap:
                                 ap_lines = []
                                 if ap.get("entry_point"):
-                                    ap_lines.append(f"入口点: {ap.get('entry_point')}")
+                                    ap_lines.append(f"入口点 / Entry Point: {ap.get('entry_point')}")
                                 if ap.get("attack_technique"):
-                                    ap_lines.append(f"技术手法: {ap.get('attack_technique')}")
+                                    ap_lines.append(f"技术手法 / Attack Technique: {ap.get('attack_technique')}")
                                 if ap.get("attack_steps"):
                                     steps_list = ap.get("attack_steps")
                                     if isinstance(steps_list, list):
-                                        ap_lines.append("步骤:\n" + "\n".join(steps_list))
+                                        ap_lines.append("步骤 / Steps:\n" + "\n".join(steps_list))
                                     else:
-                                        ap_lines.append(f"步骤: {steps_list}")
+                                        ap_lines.append(f"步骤 / Steps: {steps_list}")
                                 row_data["attack_path"] = "\n".join(ap_lines)
                             else:
                                 row_data["attack_path"] = str(raw_ap) if raw_ap else (ap.get("method", "") or str(ap))

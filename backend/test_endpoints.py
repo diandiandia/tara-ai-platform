@@ -7,7 +7,8 @@ from fastapi.testclient import TestClient
 sys.path.append(os.path.abspath(os.path.dirname(__file__)))
 
 # 强制测试使用独立的 SQLite 文件，防止清空/破坏生产数据库 (tara.db)
-os.environ["DATABASE_URL"] = "sqlite:////home/ubuntu/tara-ai-platform/tara_test.db"
+PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+os.environ["DATABASE_URL"] = f"sqlite:///{os.path.join(PROJECT_ROOT, 'tara_test.db')}"
 
 from app.main import app
 from app.core.database import SessionLocal, Base, engine

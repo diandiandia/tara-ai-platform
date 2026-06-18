@@ -1,8 +1,10 @@
+import { useI18n } from '../stores/i18nStore';
 import React, { useState } from 'react';
 import { useAuthStore } from '../stores/authStore';
 import { Key, Lock, AlertTriangle, ShieldCheck, CheckCircle2 } from 'lucide-react';
 
 export default function ForceChangePassword() {
+  const { t } = useI18n();
   const { user, changePassword, logout, loading, error, clearError } = useAuthStore();
   const [newPassword, setNewPassword] = useState('');
   const [confirmPassword, setConfirmPassword] = useState('');
@@ -16,17 +18,17 @@ export default function ForceChangePassword() {
     clearError();
 
     if (!newPassword.trim()) {
-      setValidationError('密码不能为空！');
+      setValidationError(t('密码不能为空！'));
       return;
     }
 
     if (newPassword !== confirmPassword) {
-      setValidationError('两次输入的新密码不一致，请检查！');
+      setValidationError(t('两次输入的新密码不一致，请检查！'));
       return;
     }
 
     if (newPassword.length < 6) {
-      setValidationError('为了账户安全，新密码长度不能少于 6 位。');
+      setValidationError(t('为了账户安全，新密码长度不能少于 6 位。'));
       return;
     }
 
@@ -43,16 +45,16 @@ export default function ForceChangePassword() {
           <div style={{ margin: '0 auto', background: 'rgba(52, 211, 153, 0.1)', color: 'var(--success)', borderRadius: '50%', width: '60px', height: '60px', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
             <CheckCircle2 size={32} />
           </div>
-          <h2 style={{ fontSize: '20px', fontWeight: '700', color: 'var(--text-primary)', margin: 0 }}>密码修改成功！</h2>
+          <h2 style={{ fontSize: '20px', fontWeight: '700', color: 'var(--text-primary)', margin: 0 }}>{t("密码修改成功！")}</h2>
           <p style={{ color: 'var(--text-secondary)', fontSize: '14px', lineHeight: '1.5' }}>
-            系统已保存您的安全密码。为了使新密码生效，请重新登录系统。
+            {t("系统已保存您的安全密码。为了使新密码生效，请重新登录系统。")}
           </p>
           <button 
             onClick={logout}
             className="btn btn-primary"
             style={{ width: '100%', justifyContent: 'center', marginTop: '10px' }}
           >
-            <span>重新登录</span>
+            <span>{t("重新登录")}</span>
           </button>
         </div>
       </div>
@@ -70,7 +72,7 @@ export default function ForceChangePassword() {
             <span>TARA AI Platform</span>
           </div>
           <span style={{ fontSize: '11px', textTransform: 'uppercase', color: 'var(--primary)', letterSpacing: '2px', fontWeight: '600' }}>
-            账户首次登录安全保护 (BR-01)
+            {t("账户首次登录安全保护 (BR-01)")}
           </span>
         </div>
 
@@ -89,9 +91,9 @@ export default function ForceChangePassword() {
         }}>
           <AlertTriangle size={18} style={{ flexShrink: 0, marginTop: '2px' }} />
           <div>
-            <b>需要修改初始密码</b>
+            <b>{t("需要修改初始密码")}</b>
             <p style={{ marginTop: '2px' }}>
-              检测到当前账户 [<b>{user?.username}</b>] 拥有管理员或系统核心权限，但仍在使用初始密码。系统强制要求必须修改初始密码后才能进入工作台。
+              {t("检测到当前账户 [")}<b>{user?.username}</b>{t("] 拥有管理员或系统核心权限，但仍在使用初始密码。系统强制要求必须修改初始密码后才能进入工作台。")}
             </p>
           </div>
         </div>
@@ -118,12 +120,12 @@ export default function ForceChangePassword() {
         <form onSubmit={handleSubmit} style={{ display: 'flex', flexDirection: 'column', gap: '20px' }}>
           <div className="input-group">
             <span className="input-label" style={{ display: 'flex', alignItems: 'center', gap: '4px' }}>
-              <Key size={14} /> 设置新密码
+              <Key size={14} /> {t("设置新密码")}
             </span>
             <input
               type="password"
               className="input-field"
-              placeholder="请输入新安全密码"
+              placeholder={t("请输入新安全密码")}
               value={newPassword}
               onChange={(e) => setNewPassword(e.target.value)}
               required
@@ -132,12 +134,12 @@ export default function ForceChangePassword() {
 
           <div className="input-group">
             <span className="input-label" style={{ display: 'flex', alignItems: 'center', gap: '4px' }}>
-              <Lock size={14} /> 确认新密码
+              <Lock size={14} /> {t("确认新密码")}
             </span>
             <input
               type="password"
               className="input-field"
-              placeholder="请再次输入新密码"
+              placeholder={t("请再次输入新密码")}
               value={confirmPassword}
               onChange={(e) => setConfirmPassword(e.target.value)}
               required
@@ -151,7 +153,7 @@ export default function ForceChangePassword() {
               className="btn btn-secondary"
               style={{ flex: 1, justifyContent: 'center' }}
             >
-              <span>取消登录</span>
+              <span>{t("取消登录")}</span>
             </button>
             
             <button
@@ -160,7 +162,7 @@ export default function ForceChangePassword() {
               style={{ flex: 2, justifyContent: 'center' }}
               disabled={loading}
             >
-              {loading ? <div className="spinner"></div> : '提交修改'}
+              {loading ? <div className="spinner"></div> : t('提交修改')}
             </button>
           </div>
         </form>

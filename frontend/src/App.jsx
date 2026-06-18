@@ -1,3 +1,4 @@
+import { useI18n } from './stores/i18nStore';
 import React, { useState, useEffect } from 'react';
 import { useAuthStore } from './stores/authStore';
 import Login from './components/Login';
@@ -11,6 +12,7 @@ import ForceChangePassword from './components/ForceChangePassword';
 import UserManagement from './components/UserManagement';
 
 export default function App() {
+  const { t } = useI18n();
   const { token, user } = useAuthStore();
   const [page, setPage] = useState(user?.role === 'admin' ? 'users' : 'projects');
   

@@ -19,9 +19,10 @@ from app.models.tara_run import TaraRun
 from app.models.tara_step import TaraStep
 from app.models.system_settings import SystemSettings
 
-DB_FILE = "/home/ubuntu/tara-ai-platform/tara.db"
-EXPORTS_DIR = "/home/ubuntu/tara-ai-platform/exports"
-BACKUP_DIR = "/home/ubuntu/tara-ai-platform/backups"
+PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+DB_FILE = os.path.join(PROJECT_ROOT, "tara_local.db")
+EXPORTS_DIR = os.path.join(PROJECT_ROOT, "exports_local")
+BACKUP_DIR = os.path.join(PROJECT_ROOT, "backups_local")
 
 def init_db():
     print("正在初始化数据库表...")

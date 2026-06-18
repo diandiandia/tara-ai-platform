@@ -1,10 +1,12 @@
+import { useI18n } from '../stores/i18nStore';
 import React from 'react';
 import { useAuthStore } from '../stores/authStore';
 import { useProjectStore } from '../stores/projectStore';
 import { useCanvasStore } from '../stores/canvasStore';
-import { LogOut, Settings, Layout, Folder, ShieldCheck, Users, User as UserIcon } from 'lucide-react';
+import { LogOut, Settings, Layout, Folder, ShieldCheck, Users, User as UserIcon, Globe } from 'lucide-react';
 
 export default function Navbar({ setPage }) {
+  const { t, language, setLanguage } = useI18n();
   const { user, logout } = useAuthStore();
   const { currentProject } = useProjectStore();
   const { closeDiagram } = useCanvasStore();
@@ -56,7 +58,7 @@ export default function Navbar({ setPage }) {
             border: '1px solid var(--border-color)'
           }}>
             <Folder size={14} style={{ color: 'var(--secondary)' }} />
-            <span>当前项目: {currentProject.name}</span>
+            <span>{t("当前项目:")} {currentProject.name}</span>
           </div>
         )}
       </div>
@@ -84,7 +86,7 @@ export default function Navbar({ setPage }) {
                 borderRadius: '4px',
                 fontWeight: '600'
               }}>
-                {user.role === 'admin' ? '管理员' : '分析员'}
+                {user.role === 'admin' ? t('管理员') : t('分析员')}
               </span>
             </div>
           </div>
@@ -95,31 +97,41 @@ export default function Navbar({ setPage }) {
             onClick={() => setPage('users')}
             className="btn btn-secondary"
             style={{ padding: '8px 12px', fontSize: '13px', display: 'flex', alignItems: 'center', gap: '4px' }}
-            title="用户管理"
+            title={t("用户管理")}
           >
             <Users size={15} />
-            <span>用户管理</span>
+            <span>{t("用户管理")}</span>
           </button>
         )}
+
+        <button 
+          onClick={() => setLanguage(language === 'zh' ? 'en' : 'zh')}
+          className="btn btn-secondary"
+          style={{ padding: '8px 12px', fontSize: '13px', display: 'flex', alignItems: 'center', gap: '4px' }}
+          title={language === 'zh' ? 'Switch to English' : '切换至中文'}
+        >
+          <Globe size={15} />
+          <span>{language === 'zh' ? 'English' : '中文'}</span>
+        </button>
 
         <button 
           onClick={handleSettingsClick}
           className="btn btn-secondary"
           style={{ padding: '8px 12px', fontSize: '13px' }}
-          title="系统配置"
+          title={t("系统配置")}
         >
           <Settings size={15} />
-          <span>系统配置</span>
+          <span>{t("系统配置")}</span>
         </button>
 
         <button 
           onClick={handleLogout}
           className="btn btn-danger"
           style={{ padding: '8px 12px', fontSize: '13px' }}
-          title="退出登录"
+          title={t("退出登录")}
         >
           <LogOut size={15} />
-          <span>退出</span>
+          <span>{t("退出")}</span>
         </button>
       </div>
     </nav>

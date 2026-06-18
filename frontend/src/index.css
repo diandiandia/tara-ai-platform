@@ -425,6 +425,30 @@ body {
   stroke: var(--primary) !important;
 }
 
+/* If an edge is selected or connection is being dragged, bring edges container on top of nodes container to prevent click/hover blocking */
+.react-flow:has(.react-flow__edge.selected) .react-flow__edges,
+.react-flow--connection-drag .react-flow__edges,
+.react-flow.connection-drag .react-flow__edges {
+  z-index: 1000 !important;
+}
+
+/* Styling and sizing for the connection updater handles */
+.react-flow__edgeupdater {
+  fill: var(--primary) !important;
+  stroke: #ffffff !important;
+  stroke-width: 2px !important;
+  r: 5 !important;
+  cursor: move !important;
+  pointer-events: all !important;
+  transition: r 0.15s ease, fill 0.15s ease, stroke 0.15s ease !important;
+}
+
+.react-flow__edgeupdater:hover {
+  r: 8 !important;
+  fill: #ffffff !important;
+  stroke: var(--primary) !important;
+}
+
 /* Custom toolbox hover effects */
 .toolbox-card {
   transition: all 0.2s cubic-bezier(0.4, 0, 0.2, 1) !important;
@@ -472,6 +496,12 @@ body {
 .custom-node-container .react-flow__handle:hover {
   transform: scale(1.4) !important;
   background: #ffffff !important;
+}
+
+/* Ensure that invalid handles do not block valid handles during drag/connection */
+.react-flow--connection-drag .react-flow__handle:not(.react-flow__handle-valid),
+.react-flow.connection-drag .react-flow__handle:not(.react-flow__handle-valid) {
+  pointer-events: none !important;
 }
 
 /* React Flow Node Resizer styling */

@@ -1,8 +1,10 @@
+import { useI18n } from '../stores/i18nStore';
 import React, { useEffect, useState } from 'react';
 import { useAuthStore } from '../stores/authStore';
 import { UserPlus, Trash2, Key, Users, ShieldAlert, CheckCircle2, AlertCircle } from 'lucide-react';
 
 export default function UserManagement() {
+  const { t } = useI18n();
   const { 
     user: currentUser, 
     users, 
@@ -43,7 +45,7 @@ export default function UserManagement() {
       setUsername('');
       setPassword('');
       setRole('analyst');
-      setActionSuccess(`用户 "${res.username}" 创建成功！`);
+      setActionSuccess(t('用户 "') + res.username + t('" 创建成功！'));
       setTimeout(() => setActionSuccess(''), 3000);
     }
   };
@@ -53,14 +55,14 @@ export default function UserManagement() {
     clearError();
 
     if (user.id === currentUser.id) {
-      alert('无法删除自身账户！');
+      alert(t('无法删除自身账户！'));
       return;
     }
 
-    if (window.confirm(`确认要删除用户 "${user.username}" 吗？此操作无法撤销。`)) {
+    if (window.confirm(t('确认要删除用户 "') + user.username + t('" 吗？此操作无法撤销。'))) {
       const success = await deleteUser(user.id);
       if (success) {
-        setActionSuccess(`用户 "${user.username}" 已被成功删除。`);
+        setActionSuccess(t('用户 "') + user.username + t('" 已被成功删除。'));
         setTimeout(() => setActionSuccess(''), 3000);
       }
     }
@@ -79,7 +81,7 @@ export default function UserManagement() {
 
     const success = await resetUserPassword(resettingUser.id, newPassword.trim());
     if (success) {
-      setActionSuccess(`用户 "${resettingUser.username}" 的密码已成功重置！`);
+      setActionSuccess(t('用户 "') + resettingUser.username + t('" 的密码已成功重置！'));
       setResettingUser(null);
       setNewPassword('');
       setTimeout(() => setActionSuccess(''), 3000);
@@ -93,10 +95,10 @@ export default function UserManagement() {
       <div>
         <h1 className="section-title" style={{ margin: 0, display: 'flex', alignItems: 'center', gap: '10px' }}>
           <Users style={{ color: 'var(--primary)' }} />
-          <span>用户账户管理</span>
+          <span>{t("用户账户管理")}</span>
         </h1>
         <p style={{ color: 'var(--text-secondary)', fontSize: '14px', marginTop: '4px' }}>
-          配置与管理系统用户账户。系统管理员只能执行用户配置与系统大模型设置，不具有项目编辑权限。
+          {t("配置与管理系统用户账户。系统管理员只能执行用户配置与系统大模型设置，不具有项目编辑权限。")}
         </p>
       </div>
 
@@ -115,7 +117,7 @@ export default function UserManagement() {
         }}>
           <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
             <ShieldAlert size={16} />
-            <span>{error}</span>
+            <span>{t(error)}</span>
           </div>
           <button onClick={clearError} style={{ background: 'none', border: 'none', color: '#e11d48', cursor: 'pointer', fontWeight: 'bold' }}>×</button>
         </div>
@@ -143,24 +145,24 @@ export default function UserManagement() {
         
         {/* Left Side: Users List Table */}
         <div className="glass" style={{ padding: '24px', display: 'flex', flexDirection: 'column', gap: '16px' }}>
-          <h3 style={{ margin: 0, fontSize: '16px', fontWeight: '600', color: 'var(--text-primary)' }}>全部系统账户 ({users.length})</h3>
+          <h3 style={{ margin: 0, fontSize: '16px', fontWeight: '600', color: 'var(--text-primary)' }}>{t("全部系统账户")} ({users.length})</h3>
           
           <div style={{ overflowX: 'auto' }}>
             <table className="tara-table" style={{ width: '100%', borderCollapse: 'collapse', textAlign: 'left' }}>
               <thead>
                 <tr style={{ borderBottom: '2px solid var(--border-color)', color: 'var(--text-muted)', fontSize: '12px', textTransform: 'uppercase' }}>
-                  <th style={{ padding: '12px 8px' }}>用户名</th>
-                  <th style={{ padding: '12px 8px' }}>角色</th>
-                  <th style={{ padding: '12px 8px' }}>必须改密</th>
-                  <th style={{ padding: '12px 8px' }}>创建时间</th>
-                  <th style={{ padding: '12px 8px', textAlign: 'right' }}>操作</th>
+                  <th style={{ padding: '12px 8px' }}>{t("用户名")}</th>
+                  <th style={{ padding: '12px 8px' }}>{t("角色")}</th>
+                  <th style={{ padding: '12px 8px' }}>{t("必须改密")}</th>
+                  <th style={{ padding: '12px 8px' }}>{t("创建时间")}</th>
+                  <th style={{ padding: '12px 8px', textAlign: 'right' }}>{t("操作")}</th>
                 </tr>
               </thead>
               <tbody>
                 {users.map((u) => (
                   <tr key={u.id} style={{ borderBottom: '1px solid var(--border-color)', fontSize: '14px', color: 'var(--text-primary)' }}>
                     <td style={{ padding: '14px 8px', fontWeight: '600' }}>
-                      {u.username} {u.id === currentUser.id && <span style={{ color: 'var(--text-muted)', fontWeight: 'normal' }}>(当前账户)</span>}
+                      {u.username} {u.id === currentUser.id && <span style={{ color: 'var(--text-muted)', fontWeight: 'normal' }}>({t("当前账户")})</span>}
                     </td>
                     <td style={{ padding: '14px 8px' }}>
                       <span style={{ 
@@ -172,16 +174,16 @@ export default function UserManagement() {
                         borderRadius: '4px',
                         fontWeight: '600'
                       }}>
-                        {u.role === 'admin' ? '管理员' : '分析员'}
+                        {u.role === 'admin' ? t('管理员') : t('分析员')}
                       </span>
                     </td>
                     <td style={{ padding: '14px 8px' }}>
                       {u.must_change_password ? (
                         <span style={{ color: 'var(--warning)', fontSize: '12px', display: 'flex', alignItems: 'center', gap: '4px' }}>
-                          <AlertCircle size={12} /> 是
+                          <AlertCircle size={12} /> {t("是")}
                         </span>
                       ) : (
-                        <span style={{ color: 'var(--text-muted)', fontSize: '12px' }}>否</span>
+                        <span style={{ color: 'var(--text-muted)', fontSize: '12px' }}>{t("否")}</span>
                       )}
                     </td>
                     <td style={{ padding: '14px 8px', color: 'var(--text-muted)', fontSize: '13px' }}>
@@ -193,20 +195,20 @@ export default function UserManagement() {
                           onClick={() => handleOpenReset(u)}
                           className="btn btn-secondary"
                           style={{ padding: '6px 10px', fontSize: '12px' }}
-                          title="重置密码"
+                          title={t("重置密码")}
                         >
                           <Key size={12} />
-                          <span>改密</span>
+                          <span>{t("改密")}</span>
                         </button>
                         {u.id !== currentUser.id && (
                           <button
                             onClick={() => handleDeleteUser(u)}
                             className="btn btn-danger"
                             style={{ padding: '6px 10px', fontSize: '12px' }}
-                            title="删除账号"
+                            title={t("删除账号")}
                           >
                             <Trash2 size={12} />
-                            <span>删除</span>
+                            <span>{t("删除")}</span>
                           </button>
                         )}
                       </div>
@@ -225,16 +227,16 @@ export default function UserManagement() {
           <div className="glass" style={{ padding: '24px' }}>
             <h3 style={{ margin: '0 0 16px 0', fontSize: '15px', fontWeight: '600', color: 'var(--text-primary)', display: 'flex', alignItems: 'center', gap: '6px' }}>
               <UserPlus size={16} style={{ color: 'var(--primary)' }} />
-              <span>新建系统账户</span>
+              <span>{t("新建系统账户")}</span>
             </h3>
             
             <form onSubmit={handleCreateUser} style={{ display: 'flex', flexDirection: 'column', gap: '16px' }}>
               <div className="input-group">
-                <span className="input-label">用户名</span>
+                <span className="input-label">{t("用户名")}</span>
                 <input
                   type="text"
                   className="input-field"
-                  placeholder="请输入用户名"
+                  placeholder={t("请输入用户名")}
                   value={username}
                   onChange={(e) => setUsername(e.target.value)}
                   required
@@ -242,11 +244,11 @@ export default function UserManagement() {
               </div>
 
               <div className="input-group">
-                <span className="input-label">初始密码</span>
+                <span className="input-label">{t("初始密码")}</span>
                 <input
                   type="password"
                   className="input-field"
-                  placeholder="请输入初始密码"
+                  placeholder={t("请输入初始密码")}
                   value={password}
                   onChange={(e) => setPassword(e.target.value)}
                   required
@@ -254,15 +256,15 @@ export default function UserManagement() {
               </div>
 
               <div className="input-group">
-                <span className="input-label">角色权限</span>
+                <span className="input-label">{t("角色权限")}</span>
                 <select
                   className="input-field"
                   value={role}
                   onChange={(e) => setRole(e.target.value)}
                   style={{ cursor: 'pointer' }}
                 >
-                  <option value="analyst">分析员 (Analyst)</option>
-                  <option value="admin">管理员 (Admin - 强制初登改密)</option>
+                  <option value="analyst">{t("分析员 (Analyst)")}</option>
+                  <option value="admin">{t("管理员 (Admin - 强制初登改密)")}</option>
                 </select>
               </div>
 
@@ -272,7 +274,7 @@ export default function UserManagement() {
                 style={{ width: '100%', justifyContent: 'center' }}
                 disabled={loading}
               >
-                <span>创建账户</span>
+                <span>{t("创建账户")}</span>
               </button>
             </form>
           </div>
@@ -282,20 +284,20 @@ export default function UserManagement() {
             <div className="glass" style={{ padding: '24px', border: '1px solid var(--primary)' }}>
               <h3 style={{ margin: '0 0 16px 0', fontSize: '15px', fontWeight: '600', color: 'var(--text-primary)', display: 'flex', alignItems: 'center', gap: '6px' }}>
                 <Key size={16} style={{ color: 'var(--warning)' }} />
-                <span>重置用户密码</span>
+                <span>{t("重置用户密码")}</span>
               </h3>
               
               <p style={{ fontSize: '13px', color: 'var(--text-secondary)', marginBottom: '16px' }}>
-                正在为用户 <b>{resettingUser.username}</b> 重置密码。
+              {t("正在为用户 ")} <b>{resettingUser.username}</b> {t(" 重置密码。")}
               </p>
 
               <form onSubmit={handleResetPasswordSubmit} style={{ display: 'flex', flexDirection: 'column', gap: '16px' }}>
                 <div className="input-group">
-                  <span className="input-label">新密码</span>
+                  <span className="input-label">{t("新密码")}</span>
                   <input
                     type="password"
                     className="input-field"
-                    placeholder="密码包含字母和数字组合"
+                    placeholder={t("密码包含字母和数字组合")}
                     value={newPassword}
                     onChange={(e) => setNewPassword(e.target.value)}
                     required
@@ -309,7 +311,7 @@ export default function UserManagement() {
                     className="btn btn-secondary"
                     style={{ flex: 1, justifyContent: 'center' }}
                   >
-                    <span>取消</span>
+                    <span>{t("取消")}</span>
                   </button>
                   <button
                     type="submit"
@@ -317,7 +319,7 @@ export default function UserManagement() {
                     style={{ flex: 1, justifyContent: 'center', background: 'var(--warning)' }}
                     disabled={loading}
                   >
-                    <span>确认重置</span>
+                    <span>{t("确认重置")}</span>
                   </button>
                 </div>
               </form>

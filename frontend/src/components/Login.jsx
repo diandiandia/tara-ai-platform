@@ -1,8 +1,10 @@
+import { useI18n } from '../stores/i18nStore';
 import React, { useState } from 'react';
 import { useAuthStore } from '../stores/authStore';
 import { Shield, Lock, User as UserIcon } from 'lucide-react';
 
 export default function Login() {
+  const { t } = useI18n();
   const [username, setUsername] = useState('');
   const [password, setPassword] = useState('');
   const { login, loading, error, clearError } = useAuthStore();
@@ -43,10 +45,10 @@ export default function Login() {
             <Shield size={32} />
           </div>
           <h2 style={{ fontSize: '24px', fontWeight: '700', letterSpacing: '-0.5px' }}>
-            TARA AI 分析平台
+            {t("TARA AI 分析平台")}
           </h2>
           <p style={{ color: 'var(--text-secondary)', fontSize: '13px', marginTop: '6px' }}>
-            汽车网络安全威胁建模与分析系统 (v3)
+            {t("汽车网络安全威胁建模与分析系统 (v3)")}
           </p>
         </div>
 
@@ -63,7 +65,7 @@ export default function Login() {
             justifyContent: 'space-between',
             alignItems: 'center'
           }}>
-            <span>{error}</span>
+            <span>{t(error)}</span>
             <button onClick={clearError} style={{
               background: 'none',
               border: 'none',
@@ -77,12 +79,12 @@ export default function Login() {
         <form onSubmit={handleSubmit}>
           <div className="input-group">
             <span className="input-label" style={{ display: 'flex', alignItems: 'center', gap: '4px' }}>
-              <UserIcon size={14} /> 用户名
+              <UserIcon size={14} /> {t("用户名")}
             </span>
             <input
               type="text"
               className="input-field"
-              placeholder="请输入用户名"
+              placeholder={t("请输入用户名")}
               value={username}
               onChange={(e) => setUsername(e.target.value)}
               required
@@ -91,12 +93,12 @@ export default function Login() {
 
           <div className="input-group" style={{ marginBottom: '24px' }}>
             <span className="input-label" style={{ display: 'flex', alignItems: 'center', gap: '4px' }}>
-              <Lock size={14} /> 密码
+              <Lock size={14} /> {t("密码")}
             </span>
             <input
               type="password"
               className="input-field"
-              placeholder="请输入密码"
+              placeholder={t("请输入密码")}
               value={password}
               onChange={(e) => setPassword(e.target.value)}
               required
@@ -111,14 +113,14 @@ export default function Login() {
           >
             {loading ? (
               <div style={{ display: 'flex', alignItems: 'center', gap: '8px', justifyContent: 'center' }}>
-                <div className="spinner"></div> 正在登录...
+                <div className="spinner"></div> {t("正在登录...")}
               </div>
-            ) : '立即登录'}
+            ) : t('立即登录')}
           </button>
         </form>
 
         <div style={{ textAlign: 'center', marginTop: '24px', fontSize: '12px', color: 'var(--text-muted)' }}>
-          提示: 初始管理员账户为 admin / Admin123
+          {t("提示: 初始管理员账户为 admin / Admin123")}
         </div>
       </div>
     </div>

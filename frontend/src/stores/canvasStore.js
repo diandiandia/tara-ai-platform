@@ -307,13 +307,13 @@ export const useCanvasStore = create((set, get) => {
       }
     },
 
-    triggerAIChat: async (prompt) => {
+    triggerAIChat: async (prompt, history = []) => {
       const diag = get().currentDiagram;
       if (!diag || get().isReadOnly) return null;
       try {
         const response = await axios.post(
           `${API_BASE}/diagrams/${diag.id}/ai-chat`,
-          { prompt },
+          { prompt, history },
           { headers: getHeaders() }
         );
         return response.data;

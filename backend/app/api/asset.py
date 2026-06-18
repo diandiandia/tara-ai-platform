@@ -140,6 +140,23 @@ def delete_asset(
     db.commit()
     return {"message": "资产删除成功"}
 
+@router.delete("/domains/{domain_id}/assets")
+def clear_domain_assets(
+    domain_id: int,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user)
+):
+    """
+    清空该域控下的所有资产 (包括手动添加的和自动提取的)
+    """
+    check_domain_idle(domain_id, db)
+    
+    assets = db.query(Asset).filter(Asset.domain_id == domain_id).all()
+    for asset in assets:
+        db.delete(asset)
+    db.commit()
+    return {"message": "清空资产成功"}
+
 # ----------------- DFD 资产收集 Parser (BR-25, BR-29) -----------------
 
 @router.post("/domains/{domain_id}/extract-assets", response_model=List[AssetOut])
@@ -403,7 +420,7 @@ def deduplicate_assets(
             ],
             "response_format": {"type": "json_object"}
         }
-        with httpx.Client(timeout=15.0) as client:
+        with httpx.Client(timeout=60.0) as client:
             resp = client.post(url, headers=headers, json=llm_payload)
         if resp.status_code == 200:
             choice_text = resp.json()["choices"][0]["message"]["content"]

@@ -144,6 +144,22 @@ def call_llm_json(db: Session, system_prompt: str, messages: list, mock_fallback
         print(f"[TARA-AI] 警告: 大模型调用或解析失败 ({e})，执行 Mock 降级。")
         return mock_fallback_func(*fallback_args)
 
+def mock_stage5_summary(asset: Asset, device_reqs: list) -> dict:
+    summarized = []
+    for req in device_reqs:
+        req_id = req.get("cybersecurity_requirement_id", "CSR-001")
+        req_text = req.get("cybersecurity_requirement", "")
+        summarized.append({
+            "asset_id": f"ID{asset.id}",
+            "asset_name": asset.name,
+            "cybersecurity_requirement_id": req_id,
+            "csr_id": req_id,
+            "title": f"针对 {asset.name} 的安全要求 / Security requirement for {asset.name}",
+            "sub_title": f"网络安全防护 / Cybersecurity protection for {asset.name}",
+            "cybersecurity_requirement": req_text
+        })
+    return {"asset_cybersecurity_requirement_list": summarized}
+
 def mock_tara_ai_call(stage: str, asset: Asset, prev_stages: dict) -> dict:
     """
     Rules-based 降级算法：模拟 TARA 大模型分析输出
@@ -189,7 +205,7 @@ def mock_tara_ai_call(stage: str, asset: Asset, prev_stages: dict) -> dict:
             "confidentiality": get_rating(c),
             "integrity": get_rating(i),
             "availability": get_rating(a),
-            "description": f"已选定高相关安全属性: {', '.join(selected)} 进行后续分析。" if selected else "无高相关(分数>2)安全属性，未选择属性。"
+            "description": f"已选定高相关安全属性: {', '.join(selected)} 进行后续分析。 / Selected highly relevant security attributes: {', '.join(selected)} for subsequent analysis." if selected else "无高相关(分数>2)安全属性，未选择属性。 / No highly relevant (score > 2) security attributes, none selected."
         }
         
     elif stage == "stage2":
@@ -201,8 +217,8 @@ def mock_tara_ai_call(stage: str, asset: Asset, prev_stages: dict) -> dict:
         
         for attr in selected_attrs:
             # Generate 2 damage scenarios per selected attribute
-            ds1_text = f"攻击者破坏了 {asset.name} 的 {attr} 属性，导致车载系统的相关控制功能受损，从而影响驾驶安全或造成财产损失。"
-            ds2_text = f"恶意用户篡改 {asset.name} 的 {attr} 信息，导致系统做出错误决策，存在引发交通事故的潜在风险。"
+            ds1_text = f"攻击者破坏了 {asset.name} 的 {attr} 属性，导致车载系统的相关控制功能受损，从而影响驾驶安全或造成财产损失。 / Attacker compromises the {attr} attribute of {asset.name}, impairing control functions of the vehicle system, thereby impacting driving safety or causing property damage."
+            ds2_text = f"恶意用户篡改 {asset.name} 的 {attr} 信息，导致系统做出错误决策，存在引发交通事故的潜在风险。 / Malicious user tampers with the {attr} information of {asset.name}, causing the system to make incorrect decisions, presenting potential risks of traffic accidents."
             
             # Decide impact ratings
             s, f, o, p = "Negligible", "Moderate", "Moderate", "Negligible"
@@ -249,7 +265,7 @@ def mock_tara_ai_call(stage: str, asset: Asset, prev_stages: dict) -> dict:
         
         return {
             "damage_scenarios": damage_scenarios,
-            "damage_scenario": "; ".join(all_ds_texts[:2]) if all_ds_texts else "由于安全属性泄露或篡改，导致车辆对应子域故障。",
+            "damage_scenario": "; ".join(all_ds_texts[:2]) if all_ds_texts else "由于安全属性泄露或篡改，导致车辆对应子域故障。 / Cybersecurity attribute breach or tampering leads to subdomain failure of the vehicle.",
             "impact_rating": {"safety": max_s, "financial": max_f, "operational": max_o, "privacy": max_p},
             "overall_impact": overall_impact
         }
@@ -261,7 +277,7 @@ def mock_tara_ai_call(stage: str, asset: Asset, prev_stages: dict) -> dict:
             damage_scenarios = [{
                 "attribute": "Integrity",
                 "damage_scenario_sn": "DS_Integrity_1",
-                "damage_scenario": prev_stages.get("stage2", {}).get("damage_scenario", "车载子系统故障"),
+                "damage_scenario": prev_stages.get("stage2", {}).get("damage_scenario", "车载子系统故障 / Vehicle subsystem failure"),
                 "overall_impact": prev_stages.get("stage2", {}).get("overall_impact", 1)
             }]
             
@@ -271,12 +287,12 @@ def mock_tara_ai_call(stage: str, asset: Asset, prev_stages: dict) -> dict:
         feasibility_order = {"Very Low": 1, "Low": 2, "Medium": 3, "High": 4}
         
         for ds in damage_scenarios:
-            ts_text = f"攻击者利用系统调试协议漏洞，向目标资产发送虚假指令，破坏其 {ds['attribute']} 属性，进而导致损害场景: {ds['damage_scenario']}"
+            ts_text = f"攻击者利用系统调试协议漏洞，向目标资产发送虚假指令，破坏其 {ds['attribute']} 属性，进而导致损害场景: {ds['damage_scenario']} / Attacker exploits system debugging protocol vulnerability to send spoofed commands to the target asset, compromising its {ds['attribute']} attribute, thereby leading to the damage scenario: {ds['damage_scenario']}"
             
             # Formulate 2 attack paths
             paths = [
                 {
-                    "attack_path": "近距离通过OBD/蓝牙接口注入恶意协议报文进行重放或伪造。",
+                    "attack_path": "近距离通过OBD/蓝牙接口注入恶意协议报文进行重放或伪造。 / Close-range injection of malicious protocol packets via OBD/Bluetooth interface for replay or spoofing.",
                     "time_consuming": "no_more_than_1w",
                     "expertise": "proficient",
                     "knowledge_about_toe": "restricted",
@@ -286,7 +302,7 @@ def mock_tara_ai_call(stage: str, asset: Asset, prev_stages: dict) -> dict:
                     "feasibility": "High"
                 },
                 {
-                    "attack_path": "物理拆解设备并对芯片进行固件读取、逆向分析及逻辑修改。",
+                    "attack_path": "物理拆解设备并对芯片进行固件读取、逆向分析及逻辑修改。 / Physical disassembly of the device for chip firmware extraction, reverse engineering, and logic modification.",
                     "time_consuming": "no_more_than_1m",
                     "expertise": "expert",
                     "knowledge_about_toe": "confidential",
@@ -322,7 +338,7 @@ def mock_tara_ai_call(stage: str, asset: Asset, prev_stages: dict) -> dict:
         
         return {
             "threat_scenarios": threat_scenarios,
-            "threat_scenario": "; ".join(all_ts_texts[:2]) if all_ts_texts else "攻击者操纵相关接口以注入恶意数据流。",
+            "threat_scenario": "; ".join(all_ts_texts[:2]) if all_ts_texts else "攻击者操纵相关接口以注入恶意数据流。 / Attacker manipulates relevant interfaces to inject malicious data streams.",
             "attack_paths": all_attack_paths,
             "final_feasibility": max_feasibility
         }
@@ -334,7 +350,7 @@ def mock_tara_ai_call(stage: str, asset: Asset, prev_stages: dict) -> dict:
             threat_scenarios = [{
                 "attribute": "Integrity",
                 "threat_id": "TS_Integrity_1",
-                "threat_scenario": prev_stages.get("stage3", {}).get("threat_scenario", "威胁场景"),
+                "threat_scenario": prev_stages.get("stage3", {}).get("threat_scenario", "威胁场景 / Threat scenario"),
                 "overall_impact": prev_stages.get("stage2", {}).get("overall_impact", 1),
                 "final_feasibility": prev_stages.get("stage3", {}).get("final_feasibility", "Medium")
             }]
@@ -363,12 +379,12 @@ def mock_tara_ai_call(stage: str, asset: Asset, prev_stages: dict) -> dict:
             
             decision = "Reduce"
             change = ""
-            goal = f"针对资产 {asset.name} 的安全属性 {ts.get('attribute')} 威胁，制定安全防护策略，通过采用防重放、报文完整性签名校验等机制降低攻击可行性与整体风险。"
+            goal = f"针对资产 {asset.name} 的安全属性 {ts.get('attribute')} 威胁，制定安全防护策略，通过采用防重放、报文完整性签名校验等机制降低攻击可行性与整体风险。 / Formulate security protection strategies against threats to the security attribute {ts.get('attribute')} of asset {asset.name}, reducing attack feasibility and overall risk through replay protection and packet integrity signature verification mechanisms."
             claim = ""
             
             if risk_val <= 1:
                 decision = "Retain"
-                claim = f"基于风险值极小 ({risk_val})，接受该威胁针对 {asset.name} 的网络安全风险。"
+                claim = f"基于风险值极小 ({risk_val})，接受该威胁针对 {asset.name} 的网络安全风险。 / Based on minimal risk value ({risk_val}), accept the cybersecurity risk of this threat targeting {asset.name}."
                 goal = ""
                 has_transfer = True
             else:
@@ -388,7 +404,7 @@ def mock_tara_ai_call(stage: str, asset: Asset, prev_stages: dict) -> dict:
                 "cybersecurity_claim": claim
             })
             
-            justifications.append(f"安全风险为 {risk_val} ({ts.get('attribute')}属性)，采取 {decision} 决策。")
+            justifications.append(f"安全风险为 {risk_val} ({ts.get('attribute')}属性)，采取 {decision} 决策。 / Cybersecurity risk is {risk_val} ({ts.get('attribute')} attribute), decision: {decision} decision.")
             
         decision_raw = "mitigate"
         if has_mitigate:
@@ -414,20 +430,20 @@ def mock_tara_ai_call(stage: str, asset: Asset, prev_stages: dict) -> dict:
             risk_decisions = [{
                 "attribute": "Integrity",
                 "threat_id": "TS_Integrity_1",
-                "threat_scenario": "威胁场景",
+                "threat_scenario": "威胁场景 / Threat scenario",
                 "risk_value": prev_stages.get("stage4", {}).get("risk_rating", 3),
                 "risk_treatment": "Reduce" if prev_stages.get("stage4", {}).get("risk_decision") == "mitigate" else "Retain",
-                "cybersecurity_goal": "保护系统安全"
+                "cybersecurity_goal": "保护系统安全 / Protect system security"
             }]
             
         # Check if any reduce
         has_reduce = any(dec.get("risk_treatment") == "Reduce" for dec in risk_decisions)
         if not has_reduce:
             return {
-                "cso": "无需制定安全目标",
+                "cso": "无需制定安全目标 / No cybersecurity goals needed",
                 "csr": [],
                 "exempted": True,
-                "reason": "所有威胁场景决策均为Retain/Share，免除安全需求制定。"
+                "reason": "所有威胁场景决策均为Retain/Share，免除安全需求制定。 / All threat scenario decisions are Retain/Share, exempting the formulation of cybersecurity requirements."
             }
             
         requirements = []
@@ -435,12 +451,12 @@ def mock_tara_ai_call(stage: str, asset: Asset, prev_stages: dict) -> dict:
         for dec in risk_decisions:
             if dec.get("risk_treatment") == "Reduce":
                 req_id = f"CSR_{dec['attribute']}_1"
-                req_text = f"系统应对针对 {asset.name} 的 {dec['attribute']} 关键消息启用强制签名及抗重放序号校验。"
+                req_text = f"系统应对针对 {asset.name} 的 {dec['attribute']} 关键消息启用强制签名及抗重放序号校验。 / The system shall enable mandatory signature and anti-replay sequence number checks for critical messages targeting the {dec['attribute']} of {asset.name}."
                 
                 requirements.append({
                     "threat_id": dec["threat_id"],
                     "cybersecurity_control_id": f"CSO_{dec['attribute']}_1",
-                    "cybersecurity_control": f"通过部署安全通信算法（如SecOC或TLS）保护 {asset.name} 的数据传输通道。",
+                    "cybersecurity_control": f"通过部署安全通信算法（如SecOC或TLS）保护 {asset.name} 的数据传输通道。 / Protect the data transmission channel of {asset.name} by deploying secure communication algorithms such as SecOC or TLS.",
                     "allocated_to_device": "yes",
                     "cybersecurity_requirement_id": req_id,
                     "cybersecurity_requirement": req_text
@@ -451,8 +467,8 @@ def mock_tara_ai_call(stage: str, asset: Asset, prev_stages: dict) -> dict:
                     "asset_name": asset.name,
                     "cybersecurity_requirement_id": req_id,
                     "csr_id": req_id,
-                    "title": f"针对 {asset.name} {dec['attribute']} 的报文防伪要求",
-                    "sub_title": "双向通信安全签名",
+                    "title": f"针对 {asset.name} {dec['attribute']} 的报文防伪要求 / Packet anti-counterfeiting requirements targeting {asset.name} {dec['attribute']}",
+                    "sub_title": "双向通信安全签名 / Bidirectional secure communication signature",
                     "cybersecurity_requirement": req_text
                 })
                 
@@ -463,7 +479,7 @@ def mock_tara_ai_call(stage: str, asset: Asset, prev_stages: dict) -> dict:
         return {
             "requirements": requirements,
             "summarized_csrs": device_requirements,
-            "cso": "; ".join(all_cso_texts[:2]) if all_cso_texts else "网络安全目标制定完成",
+            "cso": "; ".join(all_cso_texts[:2]) if all_cso_texts else "网络安全目标制定完成 / Formulation of cybersecurity goals completed",
             "csr": all_csr_texts,
             "exempted": False,
             "reason": ""
@@ -483,7 +499,7 @@ def tara_ai_analysis_call(db: Session, stage: str, asset: Asset, prev_stages: di
     # 核心系统专家提示词 (基于 pyTara_V 设定)
     system_prompt = (
         "你现在是拥有丰富经验的 ISO 21434 汽车网络安全专家。当前 Item 是自动驾驶子系统域控制器（ADCU），具备 L2.9 级自动驾驶功能。\n"
-        "1. 仅使用中文回答；\n"
+        "1. 所有描述性内容、场景描述、路径、理由、安全目标和安全控制/需求必须使用中英文双语对照输出，格式为“中文描述 / English translation” (例如：“由于系统受损，功能失效。 / Impaired functions due to system compromise.”)，保证翻译的专业性与准确性；\n"
         "2. 绝对不使用 Markdown 代码块；\n"
         "3. 绝对不包含任何思考过程、推理步骤或解释说明；\n"
         "4. 只返回最终的 JSON 格式结果；\n"
@@ -560,7 +576,7 @@ def tara_ai_analysis_call(db: Session, stage: str, asset: Asset, prev_stages: di
                 "confidentiality": get_rating(ai_res.get("Confidentiality", 0)),
                 "integrity": get_rating(ai_res.get("Integrity", 0)),
                 "availability": get_rating(ai_res.get("Availability", 0)),
-                "description": f"已选定高相关安全属性: {', '.join(selected)} 进行后续分析。" if selected else "无高相关(分数>2)安全属性，未选择属性。"
+                "description": f"已选定高相关安全属性: {', '.join(selected)} 进行后续分析。 / Selected highly relevant security attributes: {', '.join(selected)} for subsequent analysis." if selected else "无高相关(分数>2)安全属性，未选择属性。 / No highly relevant (score > 2) security attributes, none selected."
             }
 
         elif stage == "stage2":
@@ -581,14 +597,14 @@ def tara_ai_analysis_call(db: Session, stage: str, asset: Asset, prev_stages: di
                 }
                 msg_list = json.dumps(msg_dict_list, ensure_ascii=False)
                 prompt_list = (
-                    "资产信息：请严格按照 ISO 21434 [RQ-15-01] 的要求，根据资产的asset_id,asset_name, assigned_security_attribute信息，为该 Item 识别所有可能的 Damage Scenario\n"
-                    "每个损害场景可以包含如下几点，请使用逻辑清晰的语言描述每个damage_scenario，将以下四点符合逻辑的编写成一句话。\n"
+                    "资产信息：请严格按照 ISO 21434 [RQ-15-01] 的要求，根据资产的asset_id,asset_name, assigned_security_attribute信息，为该 Item 识别所有可能的 Damage Scenario。\n"
+                    "每个损害场景可以包含如下几点，请使用逻辑清晰的语言描述每个damage_scenario，将以下四点符合逻辑的编写成一句话，且描述必须是中英文对照的（采用“中文 / English”格式）：\n"
                     "1. 导致功能失效的攻击入口点（ECU、通信通道、后端系统等）\n"
                     "2. 被破坏的安全属性与损害场景的关联关系\n"
                     "3. 资产功能与不良后果的因果关系链\n"
                     "4. 对道路使用者的潜在伤害类型（身体伤害、财产损失等）\n"
                     "输出请忽略输入的资产信息内容和格式要求，请按照输出格式参考内容和要求回复。\n"
-                    '输出JSON结果示例:{"possible_damage_scenario_list":[{"damage_scenario_1":"XXXXXXXXX"},{"damage_scenario_2":"XXXXXXXXXXX"}]}'
+                    '输出JSON结果示例:{"possible_damage_scenario_list":[{"damage_scenario_1":"中文损害场景描述 / English damage scenario description."},{"damage_scenario_2":"中文损害场景描述 / English damage scenario description."}]}'
                 )
                 res_list = call_llm(msg_list, prompt_list)
                 
@@ -647,7 +663,7 @@ def tara_ai_analysis_call(db: Session, stage: str, asset: Asset, prev_stages: di
                 damage_scenarios.append({
                     "attribute": "Integrity",
                     "damage_scenario_sn": "DS_Integrity_1",
-                    "damage_scenario": f"由于 {asset.name} 遭受篡改，导致车载功能受损。",
+                    "damage_scenario": f"由于 {asset.name} 遭受篡改，导致车载功能受损。 / Due to tampering of {asset.name}, vehicle functions are impaired.",
                     "impact_rating": {"safety": "Moderate", "financial": "Moderate", "operational": "Moderate", "privacy": "Negligible"},
                     "overall_impact": 1
                 })
@@ -666,7 +682,7 @@ def tara_ai_analysis_call(db: Session, stage: str, asset: Asset, prev_stages: di
             
             return {
                 "damage_scenarios": damage_scenarios,
-                "damage_scenario": "; ".join(all_ds_texts[:2]) if all_ds_texts else "由于安全属性泄露或篡改，导致车辆对应子域故障。",
+                "damage_scenario": "; ".join(all_ds_texts[:2]) if all_ds_texts else "由于安全属性泄露或篡改，导致车辆对应子域故障。 / Cybersecurity attribute breach or tampering leads to subdomain failure of the vehicle.",
                 "impact_rating": {"safety": max_s, "financial": max_f, "operational": max_o, "privacy": max_p},
                 "overall_impact": overall_impact
             }
@@ -704,13 +720,13 @@ def tara_ai_analysis_call(db: Session, stage: str, asset: Asset, prev_stages: di
                 msg_ts = json.dumps(msg_dict_ts, ensure_ascii=False)
                 prompt_ts = (
                     "资产信息：根据资产的asset_id,asset_name, assigned_security_attribute, damage_scenario,safety,financial,operational, privacy信息，分析可能存在的威胁场景信息，\n"
-                    "每个威胁场景必须同时清晰包含以下四要素，并写成逻辑连贯的一句话：\n"
+                    "每个威胁场景必须同时清晰包含以下四要素，并写成逻辑连贯的一句话，且描述必须是中英文对照的（采用“中文 / English”格式）：\n"
                     "1. 目标资产（明确写J6P PCBA电路板）；\n"
                     "2. 被破坏的网络安全属性（必须是Authenticity）；\n"
                     "3. 导致真实性被破坏的具体原因/攻击方式（必须描述明确的攻击入口点和具体技术手段或缺失的防护措施）；\n"
                     "4. 简要说明该威胁场景如何导致之前识别的某个或多个damage scenario。\n"
                     "输出请忽略输入的资产信息内容和格式要求，请按照输出格式参考内容和要求回复。\n"
-                    '输出JSON结果示例:{"possible_threat_scenario_list":[{"threat_scenario_1":"XXXXXXXXXXX"},{"threat_scenario_2":"XXXXXXXXXXX"}]}'
+                    '输出JSON结果示例:{"possible_threat_scenario_list":[{"threat_scenario_1":"中文威胁场景描述 / English threat scenario description."},{"threat_scenario_2":"中文威胁场景描述 / English threat scenario description."}]}'
                 )
                 res_ts = call_llm(msg_ts, prompt_ts)
                 
@@ -738,9 +754,9 @@ def tara_ai_analysis_call(db: Session, stage: str, asset: Asset, prev_stages: di
                             "3. 涉及的资产组件\n"
                             "4. 前提条件(Prerequisites)\n"
                             "5. 所需攻击者能力\n"
-                            "整体思考以上5点，生成多个符合逻辑的攻击场景后，然后对每个场景进行按步骤拆解，生成逻辑完整，语言表达顺畅的攻击步骤\n"
+                            "整体思考以上5点，生成多个符合逻辑的攻击场景后，然后对每个场景进行按步骤拆解，生成逻辑完整，语言表达顺畅的攻击步骤，且每个攻击步骤的描述必须是中英文对照的（采用“中文 / English”格式）。\n"
                             "输出请忽略输入的资产信息内容和格式要求，请按照输出格式参考内容和要求回复。\n"
-                            '输出JSON结果示例:{"possible_attack_path_list":[{"attack_path1":"XXXXXXXXX"},{"attack_path2":"XXXXXXXXXXXXXXXXXXXX"}]}'
+                            '输出JSON结果示例:{"possible_attack_path_list":[{"attack_path1":"中文攻击路径描述 / English attack path description."},{"attack_path2":"中文攻击路径描述 / English attack path description."}]}'
                         )
                         res_paths = call_llm(msg_paths, prompt_paths)
                         
@@ -834,7 +850,7 @@ def tara_ai_analysis_call(db: Session, stage: str, asset: Asset, prev_stages: di
             
             return {
                 "threat_scenarios": threat_scenarios,
-                "threat_scenario": "; ".join(all_ts_texts[:2]) if all_ts_texts else "攻击者操纵相关接口以注入恶意数据流。",
+                "threat_scenario": "; ".join(all_ts_texts[:2]) if all_ts_texts else "攻击者操纵相关接口以注入恶意数据流。 / Attacker manipulates relevant interfaces to inject malicious data streams.",
                 "attack_paths": all_attack_paths,
                 "final_feasibility": max_feasibility
             }
@@ -891,10 +907,10 @@ def tara_ai_analysis_call(db: Session, stage: str, asset: Asset, prev_stages: di
                 prompt_rt = (
                     "资产信息：根据资产的asset_id,asset_name, assigned_security_attribute, damage_scenario,threat_scenario,attack_path,attack_feasibility_rating信息，考虑对资产信息安全处理决策，\n"
                     "风险处理选项包括：avoid（主动放弃或者修改系统设计，避免damage scenario and threat scenario的发生）, reduce（采取信息安全管控措施，减少风险发生）, share（考虑风险可以分配给其他车辆组件，例如某个安全控制措施可以在tbox实施，从而减少自己所涉及设备的安全风险，或者采用购买保险的方式）, retain（风险的影响很小，是可以接受的）\n"
-                    "风险处理risk_treatment一旦确定后，需要提供相关理由：\n"
-                    "如果选择avoid，需要提供item_change的相关信息，如：通过移除危险源，停止相关安全开发活动来避免风险发生。\n"
-                    "如果选择reduce，需要提供cybersecurity_goal的相关信息，如：通过采用加密技术，确保数据在传输和存储过程中的安全性。\n"
-                    "如果选择share/retain，需要提供cybersecurity_claim的相关信息，如：供应商开发相关组件或者通过购买保险， cover 资产的安全风险。\n"
+                    "风险处理risk_treatment一旦确定后，需要提供相关理由（即item_change, cybersecurity_goal, 或 cybersecurity_claim 字段）。所有理由描述必须是中英文对照的（采用“中文 / English”格式）：\n"
+                    "如果选择avoid，需要提供item_change的相关信息，如：通过移除危险源，停止相关安全开发活动来避免风险发生。 / Avoid risk occurrence by removing the hazard and stopping relevant safety development activities.\n"
+                    "如果选择reduce，需要提供cybersecurity_goal的相关信息，如：通过采用加密技术，确保数据在传输和存储过程中的安全性。 / Ensure security of data during transmission and storage by adopting encryption technology.\n"
+                    "如果选择share/retain，需要提供cybersecurity_claim的相关信息，如：供应商开发相关组件或者通过购买保险， cover 资产的安全风险。 / Supplier develops relevant components or covers asset security risks by purchasing insurance.\n"
                     "cybersecurity_goal编写标准：\n"
                     "1. 网络安全目标是一个需求，用来针对威胁场景来保护资产。\n"
                     "2. 网络安全目标cybersecurity_goal可以针对item的生命周期的任何一个阶段\n"
@@ -912,9 +928,9 @@ def tara_ai_analysis_call(db: Session, stage: str, asset: Asset, prev_stages: di
                     "3. 表述要求\n"
                     "- 明确声明风险被接受的理由\n"
                     "- 描述风险分担的责任方\n"
-                    "- 包含监控和维护要求.\n"
+                    "- 包含监控 and 维护要求.\n"
                     "输出请忽略输入的资产信息内容和格式要求，请按照输出格式参考内容和要求回复。\n"
-                    '输出JSON结果示例:{"risk_treatment":"Avoid","item_change":"通过移除危险源，停止相关安全开发活动来避免风险发生", "cybersecurity_goal":"","cybersecurity_claim":""}'
+                    '输出JSON结果示例:{"risk_treatment":"Avoid","item_change":"通过移除危险源，停止相关安全开发活动来避免风险发生 / Avoid risk occurrence by removing the hazard and stopping relevant safety development activities.", "cybersecurity_goal":"","cybersecurity_claim":""}'
                 )
                 res_rt = call_llm(msg_rt, prompt_rt)
                 
@@ -947,7 +963,7 @@ def tara_ai_analysis_call(db: Session, stage: str, asset: Asset, prev_stages: di
                     "cybersecurity_claim": res_rt.get("cybersecurity_claim", "")
                 })
                 
-                justifications.append(f"安全风险为 {risk_val} ({ts.get('attribute')}属性)，采取 {decision_norm} 决策。")
+                justifications.append(f"安全风险为 {risk_val} ({ts.get('attribute')}属性)，采取 {decision_norm} 决策。 / Cybersecurity risk is {risk_val} ({ts.get('attribute')} attribute), decision: {decision_norm} decision.")
                 
             decision_raw = "mitigate"
             if has_mitigate:
@@ -981,10 +997,10 @@ def tara_ai_analysis_call(db: Session, stage: str, asset: Asset, prev_stages: di
             has_reduce = any(dec.get("risk_treatment") == "Reduce" for dec in risk_decisions)
             if not has_reduce:
                 return {
-                    "cso": "无需制定安全目标",
+                    "cso": "无需制定安全目标 / No cybersecurity goals needed",
                     "csr": [],
                     "exempted": True,
-                    "reason": "所有威胁场景决策均为Retain/Share，免除安全需求制定。"
+                    "reason": "所有威胁场景决策均为Retain/Share，免除安全需求制定。 / All threat scenario decisions are Retain/Share, exempting the formulation of cybersecurity requirements."
                 }
                 
             requirements = []
@@ -1014,6 +1030,7 @@ def tara_ai_analysis_call(db: Session, stage: str, asset: Asset, prev_stages: di
                     msg_cs = json.dumps(msg_dict_cs, ensure_ascii=False)
                     prompt_cs = (
                         "资产信息：根据资产的asset_id,asset_name, assigned_security_attribute, damage_scenario,threat_scenario,attack_path,attack_feasibility_rating,cybersecurity_goal信息，且risk_treatment为reduce，考虑编写信息安全目标cybersecurity_control与cybersecurity_requirement信息，编写规则：\n"
+                        "所有生成的cybersecurity_control与cybersecurity_requirement描述均必须是中英文对照的（采用“中文 / English”格式）。\n"
                         "Cybersecurity Control描述必须包含：\n"
                         "1. 说明控制措施cybersecurity_control是技术性（technical）还是操作性（operational），并给出具体实现方式（例如：AES-256-GCM、Secure Boot + HSM、消息MAC + Freshness、OTA双向证书认证等）。\n"
                         "2. 明确说明该控制措施在威胁场景中的作用（是预防、检测、响应、恢复，还是降低后果严重度）。\n"
@@ -1041,10 +1058,10 @@ def tara_ai_analysis_call(db: Session, stage: str, asset: Asset, prev_stages: di
                         "- 明确运行环境要求的责任方\n"
                         "c) 验证要求：\n"
                         "- 100%可验证\n"
-                        "- 包含具体验证标准和方法\n"
+                        "- 包含具体验证标准与方法\n"
                         "- 明确验证环境和条件.\n"
                         "输出请忽略输入的资产信息内容和格式要求，请按照输出格式参考内容和要求回复。\n"
-                        '输出JSON结果示例:{"cybersecurity_control_id":"CSO-001", "cybersecurity_control":"通过移除危险源，停止相关安全开发活动来避免风险发生", "allocated_to_device":"yes", "cybersecurity_requirement_id":"CSR-001", "cybersecurity_requirement":"确保资产的安全开发活动得到适当的支持 and 监控"}'
+                        '输出JSON结果示例:{"cybersecurity_control_id":"CSO-001", "cybersecurity_control":"通过部署安全机制保护资产传输通道 / Protect asset transmission channel by deploying security mechanisms.", "allocated_to_device":"yes", "cybersecurity_requirement_id":"CSR-001", "cybersecurity_requirement":"确保资产的网络安全要求得到适当的支持与监控 / Ensure that cybersecurity requirements for assets are properly supported and monitored."}'
                     )
                     res_cs = call_llm(msg_cs, prompt_cs)
                     
@@ -1066,8 +1083,9 @@ def tara_ai_analysis_call(db: Session, stage: str, asset: Asset, prev_stages: di
                 msg_list_str = "\n".join([json.dumps(req, ensure_ascii=False) for req in device_reqs])
                 prompt_sum = (
                     "请对以下资产的网络安全需求列表进行整理与总结，原子化拆解并归并去重，生成最终的项目级网络安全控制需求列表。\n"
+                    "生成的每一个需求项的title、sub_title、cybersecurity_requirement描述均必须是中英文对照的（采用“中文 / English”格式）。\n"
                     "输出请忽略输入的资产信息内容和格式要求，请按照输出格式参考内容和要求回复。\n"
-                    '输出JSON结果示例:{"asset_cybersecurity_requirement_list":[{"asset_id":"资产ID","asset_name":"资产名称","cybersecurity_requirement_id":"网络安全要求ID","csr_id":"CSR ID","title":"要求标题","sub_title":"要求副标题","cybersecurity_requirement":"网络安全要求内容"},{"asset_id":"资产ID","asset_name":"资产名称","cybersecurity_requirement_id":"网络安全要求ID","csr_id":"CSR ID","title":"要求标题","sub_title":"要求副标题","cybersecurity_requirement":"网络安全要求内容"}]}'
+                    '输出JSON结果示例:{"asset_cybersecurity_requirement_list":[{"asset_id":"资产ID","asset_name":"资产名称","cybersecurity_requirement_id":"网络安全要求ID","csr_id":"CSR ID","title":"要求标题 / Requirement Title","sub_title":"要求副标题 / Requirement Subtitle","cybersecurity_requirement":"网络安全要求内容 / Cybersecurity requirement content."}]}'
                 )
                 
                 # Build mock fallback for summary
@@ -1097,7 +1115,7 @@ def tara_ai_analysis_call(db: Session, stage: str, asset: Asset, prev_stages: di
             return {
                 "requirements": requirements,
                 "summarized_csrs": summarized_csrs,
-                "cso": "; ".join(all_cso_texts[:2]) if all_cso_texts else "网络安全目标制定完成",
+                "cso": "; ".join(all_cso_texts[:2]) if all_cso_texts else "网络安全目标制定完成 / Formulation of cybersecurity goals completed",
                 "csr": all_csr_texts,
                 "exempted": False,
                 "reason": ""

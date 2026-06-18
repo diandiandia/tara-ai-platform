@@ -1,9 +1,11 @@
+import { useI18n } from '../stores/i18nStore';
 import React, { useEffect, useState, useRef } from 'react';
 import { useProjectStore } from '../stores/projectStore';
 import { useAuthStore } from '../stores/authStore';
 import { Plus, Search, Folder, Calendar, Archive, Trash2, ArrowRight, ShieldAlert } from 'lucide-react';
 
 export default function ProjectList({ setPage, setProjectId }) {
+  const { t } = useI18n();
   const { 
     projects, 
     fetchProjects, 
@@ -56,15 +58,15 @@ export default function ProjectList({ setPage, setProjectId }) {
     setFormError('');
 
     if (!newProjectName.trim()) {
-      setFormError('项目名称为必填项');
+      setFormError(t('项目名称为必填项'));
       return;
     }
     if (newProjectName.length > 50) {
-      setFormError('项目名称不能超过 50 个字符');
+      setFormError(t('项目名称不能超过 50 个字符'));
       return;
     }
     if (newProjectDesc.length > 200) {
-      setFormError('项目描述不能超过 200 个字符');
+      setFormError(t('项目描述不能超过 200 个字符'));
       return;
     }
 
@@ -78,7 +80,7 @@ export default function ProjectList({ setPage, setProjectId }) {
 
   const handleDeleteClick = async (e, id, name) => {
     e.stopPropagation();
-    if (window.confirm(`确定要彻底删除项目 "${name}" 吗？这将会级联清空其下所有域控、功能图、资产和运行分析记录。`)) {
+    if (window.confirm(t('确定要彻底删除项目 "') + name + t('" 吗？这将会级联清空其下所有域控、功能图、资产和运行分析记录。'))) {
       await deleteProject(id);
     }
   };
@@ -86,11 +88,11 @@ export default function ProjectList({ setPage, setProjectId }) {
   const handleArchiveToggle = async (e, project) => {
     e.stopPropagation();
     if (project.is_archived === 1) {
-      if (window.confirm(`确认要将项目 "${project.name}" 解除归档吗？`)) {
+      if (window.confirm(t('确认要将项目 "') + project.name + t('" 解除归档吗？'))) {
         await unarchiveProject(project.id);
       }
     } else {
-      if (window.confirm(`确认要将项目 "${project.name}" 归档吗？归档后所有内容均变为只读。`)) {
+      if (window.confirm(t('确认要将项目 "') + project.name + t('" 归档吗？归档后所有内容均变为只读。'))) {
         await archiveProject(project.id);
       }
     }
@@ -108,13 +110,13 @@ export default function ProjectList({ setPage, setProjectId }) {
   };
 
   const getStatusName = (status, is_archived) => {
-    if (is_archived === 1) return '已归档';
+    if (is_archived === 1) return t('已归档');
     switch(status) {
-      case 'completed': return '分析完成';
-      case 'in_progress': return '进行中';
+      case 'completed': return t('分析完成');
+      case 'in_progress': return t('进行中');
       case 'draft': 
       default: 
-        return '草稿';
+        return t('草稿');
     }
   };
 
@@ -131,9 +133,9 @@ export default function ProjectList({ setPage, setProjectId }) {
     <div className="dashboard-container">
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '36px' }}>
         <div>
-          <h1 className="section-title">项目列表</h1>
+          <h1 className="section-title">{t("项目列表")}</h1>
           <p style={{ color: 'var(--text-secondary)', fontSize: '14px' }}>
-            管理并规划车载子域控网络安全属性与威胁分析
+            {t("管理并规划车载子域控网络安全属性与威胁分析")}
           </p>
         </div>
 
@@ -142,7 +144,7 @@ export default function ProjectList({ setPage, setProjectId }) {
           className="btn btn-primary"
         >
           <Plus size={18} />
-          <span>创建新项目</span>
+          <span>{t("创建新项目")}</span>
         </button>
       </div>
 
@@ -161,7 +163,7 @@ export default function ProjectList({ setPage, setProjectId }) {
         }}>
           <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
             <ShieldAlert size={16} />
-            <span>{error}</span>
+            <span>{t(error)}</span>
           </div>
           <button onClick={clearError} style={{ background: 'none', border: 'none', color: '#e11d48', cursor: 'pointer' }}>×</button>
         </div>
@@ -178,7 +180,7 @@ export default function ProjectList({ setPage, setProjectId }) {
         <Search size={18} style={{ color: 'var(--text-muted)', marginRight: '10px' }} />
         <input
           type="text"
-          placeholder="搜索项目名称或描述..."
+          placeholder={t("搜索项目名称或描述...")}
           value={searchQuery}
           onChange={handleSearchChange}
           style={{
@@ -195,14 +197,14 @@ export default function ProjectList({ setPage, setProjectId }) {
       {loading && projects.length === 0 ? (
         <div style={{ display: 'flex', alignItems: 'center', gap: '12px', padding: '40px 0' }}>
           <div className="spinner"></div>
-          <span style={{ color: 'var(--text-secondary)' }}>正在加载项目...</span>
+          <span style={{ color: 'var(--text-secondary)' }}>{t("正在加载项目...")}</span>
         </div>
       ) : projects.length === 0 ? (
         <div className="glass" style={{ padding: '60px 40px', textAlign: 'center', borderStyle: 'dashed' }}>
           <Folder size={48} style={{ color: 'var(--text-muted)', marginBottom: '16px' }} />
-          <h3 style={{ fontSize: '18px', marginBottom: '8px' }}>暂无匹配的项目</h3>
+          <h3 style={{ fontSize: '18px', marginBottom: '8px' }}>{t("暂无匹配的项目")}</h3>
           <p style={{ color: 'var(--text-secondary)', fontSize: '14px' }}>
-            没有找到符合条件的项目，请点击“创建新项目”开始。
+            {t("没有找到符合条件的项目，请点击“创建新项目”开始。")}
           </p>
         </div>
       ) : (
@@ -257,7 +259,7 @@ export default function ProjectList({ setPage, setProjectId }) {
                 WebkitLineClamp: 3,
                 WebkitBoxOrient: 'vertical'
               }}>
-                {project.description || '暂无描述信息'}
+                {project.description || t('暂无描述信息')}
               </p>
 
               {/* Card Footer Actions */}
@@ -277,7 +279,7 @@ export default function ProjectList({ setPage, setProjectId }) {
                   fontWeight: '600',
                   color: 'var(--primary)' 
                 }}>
-                  进入工作台 <ArrowRight size={14} />
+                  {t("进入工作台")} <ArrowRight size={14} />
                 </span>
 
                 <div style={{ display: 'flex', gap: '8px' }} onClick={(e) => e.stopPropagation()}>
@@ -286,7 +288,7 @@ export default function ProjectList({ setPage, setProjectId }) {
                       onClick={(e) => handleArchiveToggle(e, project)}
                       className="btn btn-secondary"
                       style={{ padding: '6px 10px' }}
-                      title={project.is_archived === 1 ? '解除归档' : '归档锁定'}
+                      title={project.is_archived === 1 ? t('解除归档') : t('归档锁定')}
                     >
                       <Archive size={14} style={{ color: project.is_archived === 1 ? 'var(--success)' : 'var(--text-secondary)' }} />
                     </button>
@@ -296,7 +298,7 @@ export default function ProjectList({ setPage, setProjectId }) {
                       onClick={(e) => handleDeleteClick(e, project.id, project.name)}
                       className="btn btn-danger"
                       style={{ padding: '6px 10px', background: 'rgba(244, 63, 94, 0.05)' }}
-                      title="删除项目"
+                      title={t("删除项目")}
                     >
                       <Trash2 size={14} />
                     </button>
@@ -313,7 +315,7 @@ export default function ProjectList({ setPage, setProjectId }) {
         <div className="modal-overlay">
           <div className="modal-content glass">
             <h3 style={{ fontSize: '18px', fontWeight: '600', marginBottom: '20px', color: 'var(--text-primary)' }}>
-              创建新分析项目
+              {t("创建新分析项目")}
             </h3>
 
             {formError && (
@@ -332,11 +334,11 @@ export default function ProjectList({ setPage, setProjectId }) {
 
             <form onSubmit={handleCreateSubmit}>
               <div className="input-group">
-                <span className="input-label">项目名称 <span style={{ color: 'var(--accent)' }}>*</span> (最多50字)</span>
+                <span className="input-label">{t("项目名称")} <span style={{ color: 'var(--accent)' }}>*</span> ({t("最多50字")})</span>
                 <input
                   type="text"
                   className="input-field"
-                  placeholder="例如: 智能网联车载娱乐系统TARA评估"
+                  placeholder={t("例如: 智能网联车载娱乐系统TARA评估")}
                   value={newProjectName}
                   onChange={(e) => setNewProjectName(e.target.value)}
                   maxLength={50}
@@ -345,10 +347,10 @@ export default function ProjectList({ setPage, setProjectId }) {
               </div>
 
               <div className="input-group" style={{ marginBottom: '24px' }}>
-                <span className="input-label">项目描述 (最多200字)</span>
+                <span className="input-label">{t("项目描述")} ({t("最多200字")})</span>
                 <textarea
                   className="input-field"
-                  placeholder="选填，简要描述该项目的安全范围与边界目标..."
+                  placeholder={t("选填，简要描述该项目的安全范围与边界目标...")}
                   value={newProjectDesc}
                   onChange={(e) => setNewProjectDesc(e.target.value)}
                   maxLength={200}
@@ -363,14 +365,14 @@ export default function ProjectList({ setPage, setProjectId }) {
                   onClick={() => setShowCreateModal(false)}
                   className="btn btn-secondary"
                 >
-                  取消
+                  {t("取消")}
                 </button>
                 <button
                   type="submit"
                   className="btn btn-primary"
                   disabled={loading}
                 >
-                  {loading ? '正在创建...' : '确认创建'}
+                  {loading ? t('正在创建...') : t('确认创建')}
                 </button>
               </div>
             </form>

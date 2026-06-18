@@ -1,3 +1,4 @@
+import { useI18n } from '../stores/i18nStore';
 import React, { useEffect, useState } from 'react';
 import { useTaraStore } from '../stores/taraStore';
 import { 
@@ -6,6 +7,7 @@ import {
 } from 'lucide-react';
 
 export default function TaraResults({ setPage, domainId }) {
+  const { t, language } = useI18n();
   const {
     taraResults,
     assets,
@@ -105,7 +107,7 @@ export default function TaraResults({ setPage, domainId }) {
         confidentiality: mS1Conf,
         integrity: mS1Int,
         availability: mS1Avail,
-        description: mS1Desc || '手工安全属性分析。'
+        description: mS1Desc || t('手工安全属性分析。')
       };
     } else if (manualStage === 'stage2') {
       const s = parseInt(mS2Saf);
@@ -113,15 +115,15 @@ export default function TaraResults({ setPage, domainId }) {
       const o = parseInt(mS2Ops);
       const p = parseInt(mS2Priv);
       finalOutput = {
-        damage_scenario: mS2Scenario || '手工录入损害场景。',
+        damage_scenario: mS2Scenario || t('手工录入损害场景。'),
         impact_rating: { safety: s, financial: f, operational: o, privacy: p },
         overall_impact: Math.max(s, f, o, p)
       };
     } else if (manualStage === 'stage3') {
       finalOutput = {
-        threat_scenario: mS3Threat || '手工录入威胁场景。',
+        threat_scenario: mS3Threat || t('手工录入威胁场景。'),
         attack_paths: [
-          { path_id: "P_MANUAL", method: "手工定义攻击方法", feasibility: mS3Feas }
+          { path_id: "P_MANUAL", method: t("手工定义攻击方法"), feasibility: mS3Feas }
         ],
         final_feasibility: mS3Feas
       };
@@ -129,15 +131,15 @@ export default function TaraResults({ setPage, domainId }) {
       finalOutput = {
         risk_rating: parseInt(mS4Rating),
         risk_decision: mS4Decision,
-        justification: mS4Justify || '手工录入决策。'
+        justification: mS4Justify || t('手工录入决策。')
       };
     } else if (manualStage === 'stage5') {
       const isExempted = mS4Decision === 'accept' || mS4Decision === 'transfer';
       finalOutput = {
-        cso: isExempted ? '无需制定安全目标' : (mS5Cso || '手工定义安全目标。'),
+        cso: isExempted ? t('无需制定安全目标') : (mS5Cso || t('手工定义安全目标。')),
         csr: isExempted ? [] : mS5Csr.split('\n').filter(line => line.trim()),
         exempted: isExempted,
-        reason: isExempted ? '人工选择免除安全控制目标' : ''
+        reason: isExempted ? t('人工选择免除安全控制目标') : ''
       };
     }
 
@@ -167,24 +169,24 @@ export default function TaraResults({ setPage, domainId }) {
     const success = await exportReport(domainId, exportFormat, exportDesensitize);
     setExporting(false);
     if (success) {
-      alert(`报告导出成功！文件已保存。`);
+      alert(t('报告导出成功！文件已保存。'));
     }
   };
 
   const getStageLabel = (stage) => {
     switch (stage) {
-      case 'stage1': return '① 安全属性分析';
-      case 'stage2': return '② 损害评估 (SFOP)';
-      case 'stage3': return '③ 威胁与攻击可行性';
-      case 'stage4': return '④ 风险决策评估';
-      case 'stage5': return '⑤ CSR/CSO 控制目标';
+      case 'stage1': return t('① 安全属性分析');
+      case 'stage2': return t('② 损害评估 (SFOP)');
+      case 'stage3': return t('③ 威胁与攻击可行性');
+      case 'stage4': return t('④ 风险决策评估');
+      case 'stage5': return t('⑤ CSR/CSO 控制目标');
       default: return stage;
     }
   };
 
   const getAssetLabel = (assetId) => {
     const asset = assets.find(a => a.id === assetId);
-    return asset ? `${asset.name} (${asset.asset_type})` : `资产 #${assetId}`;
+    return asset ? `${asset.name} (${asset.asset_type})` : `${t("资产")} #${assetId}`;
   };
 
   // Group steps by asset for Tab 2 Matrix
@@ -201,7 +203,7 @@ export default function TaraResults({ setPage, domainId }) {
       }
       if (step.stage === 'stage5') {
         const out = step.analysis_result.final_output || {};
-        groups[step.asset_id].cso = out.cso || '未定义';
+        groups[step.asset_id].cso = out.cso || t('未定义');
         groups[step.asset_id].csrs = out.csr || [];
         groups[step.asset_id].exempted = out.exempted || false;
       }
@@ -220,12 +222,12 @@ export default function TaraResults({ setPage, domainId }) {
             className="btn btn-secondary"
             style={{ padding: '8px 12px' }}
           >
-            <ArrowLeft size={14} /> 返回工作台
+            <ArrowLeft size={14} /> {t("返回工作台")}
           </button>
           <div>
-            <h1 className="section-title" style={{ margin: '0' }}>TARA 评估结果审阅</h1>
+            <h1 className="section-title" style={{ margin: '0' }}>{t("TARA 评估结果审阅")}</h1>
             <p style={{ color: 'var(--text-secondary)', fontSize: '13px', marginTop: '4px' }}>
-              审阅大模型自动计算出的 5 阶段安全要求。支持专家人工干预修改结论与离线导入。
+              {t("审阅大模型自动计算出的 5 阶段安全要求。支持专家人工干预修改结论与离线导入。")}
             </p>
           </div>
         </div>
@@ -237,7 +239,7 @@ export default function TaraResults({ setPage, domainId }) {
             style={{ border: '1px dashed var(--border-glow)' }}
           >
             <Plus size={16} />
-            <span>手工故障备用录入</span>
+            <span>{t("手工故障备用录入")}</span>
           </button>
         </div>
       </div>
@@ -257,7 +259,7 @@ export default function TaraResults({ setPage, domainId }) {
         }}>
           <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
             <ShieldAlert size={16} />
-            <span>{error}</span>
+            <span>{t(error)}</span>
           </div>
           <button onClick={clearError} style={{ background: 'none', border: 'none', color: '#fda4af', cursor: 'pointer' }}>×</button>
         </div>
@@ -283,7 +285,7 @@ export default function TaraResults({ setPage, domainId }) {
           }}
         >
           <CheckSquare size={16} />
-          <span>TARA 5 阶段审阅表</span>
+          <span>{t("TARA 5 阶段审阅表")}</span>
         </button>
 
         <button
@@ -304,21 +306,21 @@ export default function TaraResults({ setPage, domainId }) {
           }}
         >
           <BookOpen size={16} />
-          <span>项目级安全控制矩阵</span>
+          <span>{t("项目级安全控制矩阵")}</span>
         </button>
       </div>
 
       {loading && taraResults.length === 0 ? (
         <div style={{ display: 'flex', alignItems: 'center', gap: '12px', padding: '45px 0' }}>
           <div className="spinner"></div>
-          <span style={{ color: 'var(--text-secondary)' }}>正在加载评估数据...</span>
+          <span style={{ color: 'var(--text-secondary)' }}>{t("正在加载评估数据...")}</span>
         </div>
       ) : taraResults.length === 0 ? (
         <div className="glass" style={{ padding: '60px 40px', textAlign: 'center', color: 'var(--text-secondary)' }}>
           <Layers size={48} style={{ color: 'var(--text-muted)', marginBottom: '16px' }} />
-          <h3 style={{ fontSize: '18px', marginBottom: '8px', color: 'var(--text-primary)' }}>没有找到分析记录</h3>
+          <h3 style={{ fontSize: '18px', marginBottom: '8px', color: 'var(--text-primary)' }}>{t("没有找到分析记录")}</h3>
           <p style={{ fontSize: '14px', maxWidth: '440px', margin: '0 auto' }}>
-            该子系统域控尚未生成分析步骤数据。您可以在工作台点击“启动 TARA 分析”派发异步任务，或者使用右上角“手工故障备用录入”填入已有数据。
+            {t("该子系统域控尚未生成分析步骤数据。您可以在工作台点击“启动 TARA 分析”派发异步任务，或者使用右上角“手工故障备用录入”填入已有数据。")}
           </p>
         </div>
       ) : activeTab === 'review' ? (
@@ -327,20 +329,20 @@ export default function TaraResults({ setPage, domainId }) {
           {/* Report Export Panel */}
           <div className="glass" style={{ padding: '20px 24px', display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '16px' }}>
             <div>
-              <h4 style={{ fontSize: '15px', fontWeight: '600', color: 'var(--text-primary)' }}>导出评估报告</h4>
-              <p style={{ color: 'var(--text-secondary)', fontSize: '12px', marginTop: '2px' }}>一键生成 XLSX 或 CSV 归档安全规范文档，保存在宿主机持久挂载卷</p>
+              <h4 style={{ fontSize: '15px', fontWeight: '600', color: 'var(--text-primary)' }}>{t("导出评估报告")}</h4>
+              <p style={{ color: 'var(--text-secondary)', fontSize: '12px', marginTop: '2px' }}>{t("一键生成 XLSX 或 CSV 归档安全规范文档，保存在宿主机持久挂载卷")}</p>
             </div>
             
             <div style={{ display: 'flex', alignItems: 'center', gap: '16px', flexWrap: 'wrap' }}>
               <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-                <span style={{ fontSize: '13px', color: 'var(--text-secondary)' }}>文件格式:</span>
+                <span style={{ fontSize: '13px', color: 'var(--text-secondary)' }}>{t("文件格式:")}</span>
                 <select
                   value={exportFormat}
                   onChange={(e) => setExportFormat(e.target.value)}
                   style={{ background: 'var(--bg-card)', border: '1px solid var(--border-color)', borderRadius: '4px', color: 'var(--text-primary)', padding: '6px 12px', outline: 'none', fontSize: '13px' }}
                 >
-                  <option value="xlsx">Excel 工作簿 (.xlsx)</option>
-                  <option value="csv">CSV 文件 (.csv)</option>
+                  <option value="xlsx">{t("Excel 工作簿 (.xlsx)")}</option>
+                  <option value="csv">{t("CSV 文件 (.csv)")}</option>
                 </select>
               </div>
 
@@ -351,7 +353,7 @@ export default function TaraResults({ setPage, domainId }) {
                   onChange={(e) => setExportDesensitize(e.target.checked)}
                   style={{ cursor: 'pointer' }}
                 />
-                <span>导出脱敏版 (隐藏攻击路径/漏洞)</span>
+                <span>{t("导出脱敏版 (隐藏攻击路径/漏洞)")}</span>
               </label>
 
               <button
@@ -361,7 +363,7 @@ export default function TaraResults({ setPage, domainId }) {
                 disabled={exporting}
               >
                 {exporting ? <div className="spinner"></div> : <Download size={14} />}
-                <span>立即下载</span>
+                <span>{t("立即下载")}</span>
               </button>
             </div>
           </div>
@@ -371,12 +373,12 @@ export default function TaraResults({ setPage, domainId }) {
             <table className="custom-table">
               <thead>
                 <tr>
-                  <th style={{ width: '220px' }}>资产项</th>
-                  <th style={{ width: '180px' }}>分析阶段</th>
-                  <th>评估结论</th>
-                  <th style={{ width: '180px' }}>安全控制要求/指标</th>
-                  <th style={{ width: '110px' }}>人工标记</th>
-                  <th style={{ width: '100px' }}>操作</th>
+                  <th style={{ width: '220px' }}>{t("资产项")}</th>
+                  <th style={{ width: '180px' }}>{t("分析阶段")}</th>
+                  <th>{t("评估结论")}</th>
+                  <th style={{ width: '180px' }}>{t("安全控制要求/指标")}</th>
+                  <th style={{ width: '110px' }}>{t("人工标记")}</th>
+                  <th style={{ width: '100px' }}>{t("操作")}</th>
                 </tr>
               </thead>
               <tbody>
@@ -389,22 +391,22 @@ export default function TaraResults({ setPage, domainId }) {
                   let metrics = '';
                   
                   if (step.stage === 'stage1') {
-                    conclusion = finalOut.description || '无 CIA 描述';
+                    conclusion = finalOut.description || t('无 CIA 描述');
                     metrics = `C: ${finalOut.confidentiality || 'N/A'} • I: ${finalOut.integrity || 'N/A'} • A: ${finalOut.availability || 'N/A'}`;
                   } else if (step.stage === 'stage2') {
-                    conclusion = finalOut.damage_scenario || '无损害场景';
-                    const ratings = finalOut.impact_rating || {};
-                    metrics = `整体影响: ${finalOut.overall_impact || 0} (S:${ratings.safety || 0} F:${ratings.financial || 0} O:${ratings.operational || 0} P:${ratings.privacy || 0})`;
+                    conclusion = finalOut.damage_scenario || t('无损害场景');
+                    const ratings = finalOut.damage_ratings || finalOut.impact_rating || {};
+                    metrics = `${t("整体影响")}: ${finalOut.overall_impact || 0} (S:${ratings.safety || 0} F:${ratings.financial || 0} O:${ratings.operational || 0} P:${ratings.privacy || 0})`;
                   } else if (step.stage === 'stage3') {
-                    conclusion = finalOut.threat_scenario || '无威胁场景';
-                    metrics = `最终可行性: ${finalOut.final_feasibility || 'N/A'}`;
+                    conclusion = finalOut.threat_scenario || t('无威胁场景');
+                    metrics = `${t("最终可行性")}: ${finalOut.final_feasibility || 'N/A'}`;
                   } else if (step.stage === 'stage4') {
-                    conclusion = finalOut.justification || '无决策依据';
-                    metrics = `风险: ${finalOut.risk_rating || 0} 决策: ${finalOut.risk_decision || 'N/A'}`;
+                    conclusion = finalOut.justification || t('无决策依据');
+                    metrics = `${t("风险")}: ${finalOut.risk_rating || 0} ${t("决策")}: ${finalOut.risk_decision || 'N/A'}`;
                   } else if (step.stage === 'stage5') {
                     const isEx = finalOut.exempted;
-                    conclusion = isEx ? `[免除] ${finalOut.reason}` : `安全目标: ${finalOut.cso || 'N/A'}`;
-                    metrics = isEx ? '无需CSR要求' : `包含 ${finalOut.csr?.length || 0} 条CSR`;
+                    conclusion = isEx ? `[${t("免除")}] ${finalOut.reason}` : `${t("安全目标")}: ${finalOut.cso || 'N/A'}`;
+                    metrics = isEx ? t('无需CSR要求') : (language === 'zh' ? `包含 ${finalOut.csr?.length || 0} 条CSR` : `Contains ${finalOut.csr?.length || 0} CSR(s)`);
                   }
 
                   return (
@@ -427,11 +429,11 @@ export default function TaraResults({ setPage, domainId }) {
                       </td>
                       <td>
                         {isModified ? (
-                          <span style={{ fontSize: '11px', background: 'rgba(217, 119, 6, 0.08)', color: '#d97706', padding: '2px 8px', borderRadius: '4px', fontWeight: '600' }} title={`修改原因: ${step.analysis_result.modification_reason}`}>
-                            专家人工修改
+                          <span style={{ fontSize: '11px', background: 'rgba(217, 119, 6, 0.08)', color: '#d97706', padding: '2px 8px', borderRadius: '4px', fontWeight: '600' }} title={`${t("修改原因")}: ${step.analysis_result.modification_reason}`}>
+                            {t("专家人工修改")}
                           </span>
                         ) : (
-                          <span style={{ fontSize: '11px', color: 'var(--text-muted)' }}>AI 原始草案</span>
+                          <span style={{ fontSize: '11px', color: 'var(--text-muted)' }}>{t("AI 原始草案")}</span>
                         )}
                       </td>
                       <td>
@@ -439,10 +441,10 @@ export default function TaraResults({ setPage, domainId }) {
                           onClick={() => handleEditClick(step)}
                           className="btn btn-secondary"
                           style={{ padding: '6px 10px', fontSize: '12px' }}
-                          title="人工修改此评估项"
+                          title={t("人工修改此评估项")}
                         >
                           <Edit3 size={12} />
-                          <span>修改</span>
+                          <span>{t("修改")}</span>
                         </button>
                       </td>
                     </tr>
@@ -457,10 +459,10 @@ export default function TaraResults({ setPage, domainId }) {
         <div style={{ display: 'flex', flexDirection: 'column', gap: '24px' }}>
           <div className="glass" style={{ padding: '20px' }}>
             <h3 style={{ fontSize: '16px', color: 'var(--text-primary)', fontWeight: '600', marginBottom: '6px' }}>
-              安全控制矩阵汇总 (Consolidated CSR Matrix)
+              {t("安全控制矩阵汇总 (Consolidated CSR Matrix)")}
             </h3>
             <p style={{ color: 'var(--text-secondary)', fontSize: '13px' }}>
-              聚合该域控所有资产项。根据安全目标 (CSO) 对标输出的所有网络安全控制要求 (CSR) 一览。
+              {t("聚合该域控所有资产项。根据安全目标 (CSO) 对标输出的所有网络安全控制要求 (CSR) 一览。")}
             </p>
           </div>
 
@@ -468,31 +470,31 @@ export default function TaraResults({ setPage, domainId }) {
             {groupedMatrix.map((item, idx) => (
               <div key={idx} className="glass" style={{ padding: '24px' }}>
                 <h4 style={{ fontSize: '16px', fontWeight: '600', color: 'var(--primary)', marginBottom: '14px', borderBottom: '1px solid var(--border-color)', paddingBottom: '8px' }}>
-                  资产项: {item.assetName}
+                  {t("资产项")}: {item.assetName}
                 </h4>
 
                 {item.exempted ? (
                   <div style={{ color: 'var(--text-muted)', fontSize: '13px', display: 'flex', alignItems: 'center', gap: '6px' }}>
                     <CheckCircle2 size={14} style={{ color: 'var(--success)' }} />
-                    <span>该威胁已被专家评估为接受风险/转移风险。安全需求已根据联动规则豁免制定。</span>
+                    <span>{t("该威胁已被专家评估为接受风险/转移风险。安全需求已根据联动规则豁免制定。")}</span>
                   </div>
                 ) : (
                   <div>
                     <div style={{ marginBottom: '14px' }}>
                       <span style={{ fontSize: '12px', color: 'var(--text-secondary)', textTransform: 'uppercase', letterSpacing: '0.5px' }}>
-                        网络安全目标 (CSO):
+                        {t("网络安全目标 (CSO):")}
                       </span>
                       <p style={{ color: 'var(--text-primary)', fontSize: '14px', fontWeight: '500', marginTop: '4px' }}>
-                        {item.cso || '未指定或分析未跑完'}
+                        {item.cso || t('未指定或分析未跑完')}
                       </p>
                     </div>
 
                     <div>
                       <span style={{ fontSize: '12px', color: 'var(--text-secondary)', textTransform: 'uppercase', letterSpacing: '0.5px' }}>
-                        网络安全控制要求 (CSR):
+                        {t("网络安全控制要求 (CSR):")}
                       </span>
                       {item.csrs.length === 0 ? (
-                        <p style={{ color: 'var(--text-muted)', fontSize: '13px', marginTop: '4px' }}>无安全要求列表</p>
+                        <p style={{ color: 'var(--text-muted)', fontSize: '13px', marginTop: '4px' }}>{t("无安全要求列表")}</p>
                       ) : (
                         <ul style={{ paddingLeft: '20px', marginTop: '8px', display: 'flex', flexDirection: 'column', gap: '8px' }}>
                           {item.csrs.map((csr, cIdx) => (
@@ -516,13 +518,13 @@ export default function TaraResults({ setPage, domainId }) {
         <div className="modal-overlay">
           <div className="modal-content glass" style={{ width: '560px', maxWidth: '95%' }}>
             <h3 style={{ fontSize: '18px', fontWeight: '600', color: 'var(--text-primary)', marginBottom: '20px' }}>
-              人工修订结论 [{getStageLabel(editingStep.stage)}]
+              {t("人工修订结论")} [{getStageLabel(editingStep.stage)}]
             </h3>
 
             <form onSubmit={handleEditSubmit}>
               <div style={{ maxHeight: '360px', overflowY: 'auto', paddingRight: '4px', marginBottom: '20px' }}>
                 <div style={{ background: 'rgba(15, 23, 42, 0.02)', padding: '12px', borderRadius: '8px', border: '1px solid var(--border-color)', marginBottom: '16px', fontSize: '12px', color: 'var(--text-secondary)' }}>
-                  <span><b>修改资产:</b> {getAssetLabel(editingStep.asset_id)}</span>
+                  <span><b>{t("修改资产:")}</b> {getAssetLabel(editingStep.asset_id)}</span>
                 </div>
 
                 {/* Render forms according to stage */}
@@ -568,7 +570,7 @@ export default function TaraResults({ setPage, domainId }) {
                     </div>
 
                     <div className="input-group">
-                      <span className="input-label">破坏影响描述</span>
+                      <span className="input-label">{t("破坏影响描述")}</span>
                       <textarea
                         className="input-field"
                         rows={3}
@@ -583,7 +585,7 @@ export default function TaraResults({ setPage, domainId }) {
                 {editingStep.stage === 'stage2' && (
                   <div>
                     <div className="input-group">
-                      <span className="input-label">潜在损害场景描述</span>
+                      <span className="input-label">{t("潜在损害场景描述")}</span>
                       <textarea
                         className="input-field"
                         rows={3}
@@ -653,7 +655,7 @@ export default function TaraResults({ setPage, domainId }) {
                 {editingStep.stage === 'stage3' && (
                   <div>
                     <div className="input-group">
-                      <span className="input-label">潜在威胁场景描述</span>
+                      <span className="input-label">{t("潜在威胁场景描述")}</span>
                       <textarea
                         className="input-field"
                         rows={3}
@@ -664,7 +666,7 @@ export default function TaraResults({ setPage, domainId }) {
                     </div>
 
                     <div className="input-group">
-                      <span className="input-label">最终攻击可行性等级 (Feasibility)</span>
+                      <span className="input-label">{t("最终攻击可行性等级 (Feasibility)")}</span>
                       <select
                         className="input-field"
                         value={editFormData.final_feasibility || 'Medium'}
@@ -684,7 +686,7 @@ export default function TaraResults({ setPage, domainId }) {
                   <div>
                     <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2, 1fr)', gap: '12px', marginBottom: '16px' }}>
                       <div className="input-group">
-                        <span className="input-label">计算出的风险值 (Rating)</span>
+                        <span className="input-label">{t("计算出的风险值 (Rating)")}</span>
                         <input
                           type="number"
                           className="input-field"
@@ -693,22 +695,22 @@ export default function TaraResults({ setPage, domainId }) {
                         />
                       </div>
                       <div className="input-group">
-                        <span className="input-label">安全处理决策 (Decision)</span>
+                        <span className="input-label">{t("安全处理决策 (Decision)")}</span>
                         <select
                           className="input-field"
                           value={editFormData.risk_decision || 'mitigate'}
                           onChange={(e) => setEditFormData({ ...editFormData, risk_decision: e.target.value })}
                         >
-                          <option value="mitigate">Mitigate (缓解风险)</option>
-                          <option value="accept">Accept (接受风险 - 免除CSR)</option>
-                          <option value="transfer">Transfer (转移风险 - 免除CSR)</option>
-                          <option value="avoid">Avoid (规避风险)</option>
+                          <option value="mitigate">{t("Mitigate (缓解风险)")}</option>
+                          <option value="accept">{t("Accept (接受风险 - 免除CSR)")}</option>
+                          <option value="transfer">{t("Transfer (转移风险 - 免除CSR)")}</option>
+                          <option value="avoid">{t("Avoid (规避风险)")}</option>
                         </select>
                       </div>
                     </div>
 
                     <div className="input-group">
-                      <span className="input-label">合理性说明 (Justification)</span>
+                      <span className="input-label">{t("合理性说明 (Justification)")}</span>
                       <textarea
                         className="input-field"
                         rows={3}
@@ -723,7 +725,7 @@ export default function TaraResults({ setPage, domainId }) {
                 {editingStep.stage === 'stage5' && (
                   <div>
                     <div className="input-group">
-                      <span className="input-label">网络安全目标 (CSO)</span>
+                      <span className="input-label">{t("网络安全目标 (CSO)")}</span>
                       <input
                         type="text"
                         className="input-field"
@@ -734,11 +736,11 @@ export default function TaraResults({ setPage, domainId }) {
                     </div>
 
                     <div className="input-group">
-                      <span className="input-label">网络安全控制要求列表 (CSR，一行写一条)</span>
+                      <span className="input-label">{t("网络安全控制要求列表 (CSR，一行写一条)")}</span>
                       <textarea
                         className="input-field"
                         rows={5}
-                        placeholder="每行填入一条安全要求..."
+                        placeholder={t("每行填入一条安全要求...")}
                         value={editFormData.csr?.join('\n') || ''}
                         onChange={(e) => setEditFormData({ ...editFormData, csr: e.target.value.split('\n') })}
                         style={{ resize: 'none' }}
@@ -750,12 +752,12 @@ export default function TaraResults({ setPage, domainId }) {
 
                 <div className="input-group">
                   <span className="input-label" style={{ color: '#fde047', fontWeight: '600' }}>
-                    修改原因说明 (Mandatory审计留痕) <span style={{ color: 'var(--accent)' }}>*</span>
+                    {t("修改原因说明 (Mandatory审计留痕)")} <span style={{ color: 'var(--accent)' }}>*</span>
                   </span>
                   <input
                     type="text"
                     className="input-field"
-                    placeholder="例如: 结合实际网络物理拓扑过滤了虚警"
+                    placeholder={t("例如: 结合实际网络物理拓扑过滤了虚警")}
                     value={editReason}
                     onChange={(e) => setEditReason(e.target.value)}
                     required
@@ -769,13 +771,13 @@ export default function TaraResults({ setPage, domainId }) {
                   onClick={() => setShowEditModal(false)}
                   className="btn btn-secondary"
                 >
-                  取消
+                  {t("取消")}
                 </button>
                 <button
                   type="submit"
                   className="btn btn-primary"
                 >
-                  确认保存修订
+                  {t("确认保存修订")}
                 </button>
               </div>
             </form>
@@ -788,20 +790,20 @@ export default function TaraResults({ setPage, domainId }) {
         <div className="modal-overlay">
           <div className="modal-content glass" style={{ width: '560px', maxWidth: '95%' }}>
             <h3 style={{ fontSize: '18px', fontWeight: '600', color: 'var(--text-primary)', marginBottom: '20px' }}>
-              手动录入 TARA 评估指标 (脱网备用)
+              {t("手动录入 TARA 评估指标 (脱网备用)")}
             </h3>
 
             <form onSubmit={handleManualSubmit}>
               <div style={{ maxHeight: '380px', overflowY: 'auto', paddingRight: '4px', marginBottom: '20px' }}>
                 <div className="input-group">
-                  <span className="input-label">选择目标资产项</span>
+                  <span className="input-label">{t("选择目标资产项")}</span>
                   <select
                     className="input-field"
                     value={manualAssetId}
                     onChange={(e) => setManualAssetId(e.target.value)}
                     required
                   >
-                    <option value="">-- 请选择资产 --</option>
+                    <option value="">{t("-- 请选择资产 --")}</option>
                     {assets.filter(a => a.status === 'confirmed').map(a => (
                       <option key={a.id} value={a.id}>{a.name} ({a.asset_type})</option>
                     ))}
@@ -809,17 +811,17 @@ export default function TaraResults({ setPage, domainId }) {
                 </div>
 
                 <div className="input-group">
-                  <span className="input-label">选择分析阶段</span>
+                  <span className="input-label">{t("选择分析阶段")}</span>
                   <select
                     className="input-field"
                     value={manualStage}
                     onChange={(e) => setManualStage(e.target.value)}
                   >
-                    <option value="stage1">① 安全属性分析</option>
-                    <option value="stage2">② 损害评估 (SFOP)</option>
-                    <option value="stage3">③ 威胁与攻击可行性</option>
-                    <option value="stage4">④ 风险决策评估</option>
-                    <option value="stage5">⑤ CSR/CSO 控制目标</option>
+                    <option value="stage1">{t("① 安全属性分析")}</option>
+                    <option value="stage2">{t("② 损害评估 (SFOP)")}</option>
+                    <option value="stage3">{t("③ 威胁与攻击可行性")}</option>
+                    <option value="stage4">{t("④ 风险决策评估")}</option>
+                    <option value="stage5">{t("⑤ CSR/CSO 控制目标")}</option>
                   </select>
                 </div>
 
@@ -847,8 +849,8 @@ export default function TaraResults({ setPage, domainId }) {
                         </div>
                       </div>
                       <div className="input-group">
-                        <span className="input-label">描述</span>
-                        <input type="text" className="input-field" value={mS1Desc} onChange={(e) => setMS1Desc(e.target.value)} placeholder="分析CIA破坏场景原因..." />
+                        <span className="input-label">{t("描述")}</span>
+                        <input type="text" className="input-field" value={mS1Desc} onChange={(e) => setMS1Desc(e.target.value)} placeholder={t("分析CIA破坏场景原因...")} />
                       </div>
                     </div>
                   )}
@@ -856,8 +858,8 @@ export default function TaraResults({ setPage, domainId }) {
                   {manualStage === 'stage2' && (
                     <div>
                       <div className="input-group">
-                        <span className="input-label">潜在损害场景</span>
-                        <input type="text" className="input-field" value={mS2Scenario} onChange={(e) => setMS2Scenario(e.target.value)} placeholder="例如: 刹车失效, 动力异常等" required />
+                        <span className="input-label">{t("潜在损害场景")}</span>
+                        <input type="text" className="input-field" value={mS2Scenario} onChange={(e) => setMS2Scenario(e.target.value)} placeholder={t("例如: 刹车失效, 动力异常等")} required />
                       </div>
                       <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: '8px' }}>
                         <div className="input-group">
@@ -883,11 +885,11 @@ export default function TaraResults({ setPage, domainId }) {
                   {manualStage === 'stage3' && (
                     <div>
                       <div className="input-group">
-                        <span className="input-label">威胁场景</span>
-                        <input type="text" className="input-field" value={mS3Threat} onChange={(e) => setMS3Threat(e.target.value)} placeholder="描述可能遭受的攻击场景..." required />
+                        <span className="input-label">{t("威胁场景")}</span>
+                        <input type="text" className="input-field" value={mS3Threat} onChange={(e) => setMS3Threat(e.target.value)} placeholder={t("描述可能遭受的攻击场景...")} required />
                       </div>
                       <div className="input-group">
-                        <span className="input-label">攻击可行性 (Feasibility)</span>
+                        <span className="input-label">{t("攻击可行性 (Feasibility)")}</span>
                         <select className="input-field" value={mS3Feas} onChange={(e) => setMS3Feas(e.target.value)}>
                           <option value="Very High">Very High</option><option value="High">High</option><option value="Medium">Medium</option><option value="Low">Low</option><option value="Very Low">Very Low</option>
                         </select>
@@ -899,21 +901,21 @@ export default function TaraResults({ setPage, domainId }) {
                     <div>
                       <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2, 1fr)', gap: '10px' }}>
                         <div className="input-group">
-                          <span className="input-label">风险值 (0~10)</span>
+                          <span className="input-label">{t("风险值 (0~10)")}</span>
                           <input type="number" className="input-field" min="0" max="10" value={mS4Rating} onChange={(e) => setMS4Rating(e.target.value)} />
                         </div>
                         <div className="input-group">
-                          <span className="input-label">风险处理决策</span>
+                          <span className="input-label">{t("风险处理决策")}</span>
                           <select className="input-field" value={mS4Decision} onChange={(e) => setMS4Decision(e.target.value)}>
-                            <option value="mitigate">Mitigate (缓解风险)</option>
-                            <option value="accept">Accept (接受风险 - 免除CSR)</option>
-                            <option value="transfer">Transfer (转移风险 - 免除CSR)</option>
-                            <option value="avoid">Avoid (规避风险)</option>
+                            <option value="mitigate">{t("Mitigate (缓解风险)")}</option>
+                            <option value="accept">{t("Accept (接受风险 - 免除CSR)")}</option>
+                            <option value="transfer">{t("Transfer (转移风险 - 免除CSR)")}</option>
+                            <option value="avoid">{t("Avoid (规避风险)")}</option>
                           </select>
                         </div>
                       </div>
                       <div className="input-group">
-                        <span className="input-label">决策依据说明</span>
+                        <span className="input-label">{t("决策依据说明")}</span>
                         <input type="text" className="input-field" value={mS4Justify} onChange={(e) => setMS4Justify(e.target.value)} />
                       </div>
                     </div>
@@ -922,12 +924,12 @@ export default function TaraResults({ setPage, domainId }) {
                   {manualStage === 'stage5' && (
                     <div>
                       <div className="input-group">
-                        <span className="input-label">网络安全目标 (CSO)</span>
-                        <input type="text" className="input-field" value={mS5Cso} onChange={(e) => setMS5Cso(e.target.value)} placeholder="保护资产不受XXX威胁..." />
+                        <span className="input-label">{t("网络安全目标 (CSO)")}</span>
+                        <input type="text" className="input-field" value={mS5Cso} onChange={(e) => setMS5Cso(e.target.value)} placeholder={t("保护资产不受XXX威胁...")} />
                       </div>
                       <div className="input-group">
-                        <span className="input-label">安全要求列表 (CSR，一行填写一条)</span>
-                        <textarea className="input-field" rows={4} value={mS5Csr} onChange={(e) => setMS5Csr(e.target.value)} placeholder="例如: 开启身份鉴权\n对报文施加CAN签名验证..." />
+                        <span className="input-label">{t("安全要求列表 (CSR，一行填写一条)")}</span>
+                        <textarea className="input-field" rows={4} value={mS5Csr} onChange={(e) => setMS5Csr(e.target.value)} placeholder={t("例如: 开启身份鉴权\n对报文施加CAN签名验证...")} />
                       </div>
                     </div>
                   )}
@@ -940,13 +942,13 @@ export default function TaraResults({ setPage, domainId }) {
                   onClick={() => setShowManualModal(false)}
                   className="btn btn-secondary"
                 >
-                  取消
+                  {t("取消")}
                 </button>
                 <button
                   type="submit"
                   className="btn btn-primary"
                 >
-                  录入存盘
+                  {t("录入存盘")}
                 </button>
               </div>
             </form>

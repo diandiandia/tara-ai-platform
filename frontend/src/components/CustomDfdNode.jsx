@@ -1,9 +1,11 @@
+import { useI18n } from '../stores/i18nStore';
 import React from 'react';
 import { Handle, Position, NodeResizer } from 'reactflow';
 import { User, Cpu, Database, Shield } from 'lucide-react';
 import { useCanvasStore } from '../stores/canvasStore';
 
 export default function CustomDfdNode({ id, type, data, selected }) {
+  const { t } = useI18n();
   const isReadOnly = useCanvasStore((state) => state.isReadOnly);
   const fontSize = data.fontSize || 11;
   const iconSize = Math.max(10, Math.round(fontSize * 1.25));
@@ -191,7 +193,7 @@ export default function CustomDfdNode({ id, type, data, selected }) {
           <div style={{ display: 'flex', flexDirection: 'column', width: '100%', height: '100%', justifyContent: 'flex-start', alignItems: 'flex-start' }}>
             <div style={{ display: 'flex', alignItems: 'center', gap: '6px', fontSize: `${Math.max(8, fontSize - 1)}px`, fontWeight: 'bold', color: textColor, textTransform: 'uppercase', letterSpacing: '0.5px', marginBottom: '4px' }}>
               {icon}
-              <span>{data.name || '物理边界'}</span>
+              <span>{data.name || t('物理边界')}</span>
             </div>
             {data.description && (
               <span style={{ fontSize: `${Math.max(8, fontSize - 2)}px`, color: subTextColor, textAlign: 'left', overflow: 'hidden', textOverflow: 'ellipsis', display: '-webkit-box', WebkitLineClamp: 2, WebkitBoxOrient: 'vertical' }}>

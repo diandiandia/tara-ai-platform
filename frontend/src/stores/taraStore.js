@@ -80,6 +80,18 @@ export const useTaraStore = create((set, get) => ({
     }
   },
 
+  clearAssets: async (domainId) => {
+    set({ loading: true, error: null });
+    try {
+      await axios.delete(`${API_BASE}/domains/${domainId}/assets`, { headers: getHeaders() });
+      set({ assets: [], loading: false });
+      return true;
+    } catch (err) {
+      set({ error: err.response?.data?.detail || '清空资产失败', loading: false });
+      return false;
+    }
+  },
+
   extractAssets: async (domainId) => {
     set({ loading: true, error: null });
     try {

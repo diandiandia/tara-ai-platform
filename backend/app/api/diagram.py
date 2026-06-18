@@ -2,7 +2,7 @@ from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.orm import Session
 import redis
 import json
-from typing import List
+from typing import List, Optional
 from app.core.database import get_db
 from app.api.auth import get_current_user
 from app.models.user import User
@@ -367,13 +367,30 @@ def ai_generate_topology(
             }
             # 请求结构化 JSON 格式
             system_prompt = (
-                "你是一个车载网络安全拓扑设计助手。请根据用户的需求，输出一个标准的 JSON，格式为：\n"
+                "你是一个车载网络安全拓扑设计助手。请根据用户的需求，输出一个标准的 JSON。\n"
+                "本系统将根据你设计的 DFD 拓扑自动提取安全资产，请仔细遵循以下映射关系来绘制并填写属性，以便自动提取完整正确的资产：\n"
+                "- 节点类型 type='process' 代表【软件资产】；\n"
+                "- 节点类型 type='entity' 代表【硬件资产】（如OBD接口、网关控制器、物理设备）；\n"
+                "- 节点类型 type='storage' 代表【数据资产】（如数据库、本地配置文件、内存数据）；\n"
+                "- 节点类型 type='boundary' 代表【物理安全边界】；\n"
+                "- 连线 edges 代表【数据流/通信资产】。\n"
+                "\n"
+                "请务必在生成每个节点和连线时填好对应属性以供提取：\n"
+                "- 节点的 data.name 必须是具体的资产名称，不要有符号干扰；\n"
+                "- 节点的 data.description 填该节点详细的功能描述和安全作用，不要为空；\n"
+                "- 节点的 data.protocol 填具体的通信协议或数据协议类型（如 CAN, LIN, Ethernet, HTTPS, FTP 等，尽量用规范大写字母，不要为空）；\n"
+                "- 节点的 data.remarks 填相关的安全备注或资产标记；\n"
+                "- 连线的 data.name 填具体数据流名称；\n"
+                "- 连线的 data.protocol 填数据流传输采用的协议；\n"
+                "- 连线的 data.transmitted_info 填传输的具体数据内容（如固件刷写包、诊断请求指令等，不要为空）。\n"
+                "\n"
+                "你必须输出标准的 JSON，格式为：\n"
                 "{\n"
                 '  "nodes": [\n'
-                '    {"id": "n1", "type": "entity|process|storage|boundary", "position": {"x": 100, "y": 150}, "data": {"name": "节点名", "description": "描述", "protocol": "协议", "remarks": "备注"}}\n'
+                '    {"id": "n1", "type": "entity|process|storage|boundary", "position": {"x": 100, "y": 150}, "style": {"width": 100, "height": 100}, "data": {"name": "节点名", "description": "描述", "protocol": "协议", "remarks": "备注"}}\n'
                 "  ],\n"
                 '  "edges": [\n'
-                '    {"id": "e1", "source": "n1", "target": "n2", "data": {"name": "连线名", "transmitted_info": "传输数据"}}\n'
+                '    {"id": "e1", "source": "n1", "target": "n2", "data": {"name": "连线名", "protocol": "协议", "transmitted_info": "传输数据"}}\n'
                 "  ]\n"
                 "}\n"
                 "不要包含任何非 JSON 文字或 markdown 标记。"
@@ -386,7 +403,7 @@ def ai_generate_topology(
                 ],
                 "response_format": {"type": "json_object"}
             }
-            with httpx.Client(timeout=15.0) as client:
+            with httpx.Client(timeout=60.0) as client:
                 resp = client.post(url, headers=headers, json=llm_payload)
             if resp.status_code == 200:
                 choice_text = resp.json()["choices"][0]["message"]["content"]
@@ -406,8 +423,13 @@ def ai_generate_topology(
     
     return diagram
 
+class ChatMessage(BaseModel):
+    sender: str
+    text: str
+
 class AIChatReq(BaseModel):
     prompt: str
+    history: Optional[List[ChatMessage]] = None
 
 @router.post("/{id}/ai-chat")
 def ai_chat_diagram(
@@ -437,7 +459,7 @@ def ai_chat_diagram(
             {"id": "e1", "source": "n1", "target": "n2", "data": {"name": "UDS请求帧", "transmitted_info": "UDS服务请求"}},
             {"id": "e2", "source": "n2", "target": "n3", "data": {"name": "内部路由报文", "transmitted_info": "过滤校验后的UDS消息"}}
         ]
-        reply = "我已经为您规划好了诊断拓扑。该拓扑包括三个节点：OBD物理接口（物理诊断物理接口，连接诊断仪）、诊断网关ECU（车身网关，负责报文过滤路由）和诊断服务进程（UDS协议栈与诊断任务分发）。数据流包括外部诊断仪发来的‘UDS请求帧’以及网关路由到核心进程的‘内部路由报文’。您可以点击下方‘一键生成dfd图’按钮，将这个方案应用到您的画布上。"
+        reply = "我已经为您规划好了诊断拓扑。该拓扑包括三个节点：OBD物理接口（物理诊断物理接口，连接诊断仪）、诊断网关ECU（车身网关，负责报文过滤路由） and 诊断服务进程（UDS协议栈与诊断任务分发）。数据流包括外部诊断仪发来的‘UDS请求帧’以及网关路由到核心进程的‘内部路由报文’。您可以点击下方‘一键生成dfd图’按钮，将这个方案应用到您的画布上。"
     elif "ota" in p or "升级" in p or "update" in p:
         nodes = [
             {"id": "n1", "type": "entity", "position": {"x": 100, "y": 150}, "data": {"name": "OTA云端服务器", "description": "云端管理与包分发系统", "protocol": "HTTPS", "remarks": "云端节点"}},
@@ -472,28 +494,52 @@ def ai_chat_diagram(
             }
             system_prompt = (
                 "你是一个车载网络安全拓扑设计助手。请针对用户的聊天和画图需求进行解答，并同时输出数据流图DFD设计。\n"
+                "本系统将根据你设计的 DFD 拓扑自动提取安全资产，请仔细遵循以下映射关系来绘制并填写属性，以便自动提取完整正确的资产：\n"
+                "- 节点类型 type='process' 代表【软件资产】；\n"
+                "- 节点类型 type='entity' 代表【硬件资产】（如OBD接口、网关控制器、物理设备）；\n"
+                "- 节点类型 type='storage' 代表【数据资产】（如数据库、本地配置文件、内存数据）；\n"
+                "- 节点类型 type='boundary' 代表【物理安全边界】；\n"
+                "- 连线 edges 代表【数据流/通信资产】。\n"
+                "\n"
+                "请务必在生成每个节点和连线时填好对应属性以供提取：\n"
+                "- 节点的 data.name 必须是具体的资产名称，不要有符号干扰；\n"
+                "- 节点的 data.description 填该节点详细的功能描述和安全作用，不要为空；\n"
+                "- 节点的 data.protocol 填具体的通信协议或数据协议类型（如 CAN, LIN, Ethernet, HTTPS, FTP 等，尽量用规范大写字母，不要为空）；\n"
+                "- 节点的 data.remarks 填相关的安全备注或资产标记；\n"
+                "- 连线的 data.name 填具体数据流名称；\n"
+                "- 连线的 data.protocol 填数据流传输采用的协议；\n"
+                "- 连线的 data.transmitted_info 填传输的具体数据内容（如固件刷写包、诊断请求指令等，不要为空）。\n"
+                "\n"
                 "你必须返回一个结构化的 JSON 对象，包含两个字段：\n"
                 '1. "reply": 你对用户需求的理解和设计方案的自然语言描述（请用中文回答，不要包含 markdown 格式，控制在200字以内）。\n'
                 '2. "snapshot_json": 一个包含 nodes 和 edges 的 JSON 对象，格式为：\n'
                 '{\n'
                 '  "nodes": [\n'
-                '    {"id": "n1", "type": "entity|process|storage|boundary", "position": {"x": 100, "y": 150}, "data": {"name": "节点名", "description": "描述", "protocol": "协议", "remarks": "备注"}}\n'
+                '    {"id": "n1", "type": "entity|process|storage|boundary", "position": {"x": 100, "y": 150}, "style": {"width": 100, "height": 100}, "data": {"name": "节点名", "description": "描述", "protocol": "协议", "remarks": "备注"}}\n'
                 '  ],\n'
                 '  "edges": [\n'
-                '    {"id": "e1", "source": "n1", "target": "n2", "data": {"name": "连线名", "transmitted_info": "传输数据"}}\n'
+                '    {"id": "e1", "source": "n1", "target": "n2", "data": {"name": "连线名", "protocol": "协议", "transmitted_info": "传输数据"}}\n'
                 '  ]\n'
                 '}\n'
                 "不要包含任何非 JSON 文字或 markdown 标记。"
             )
+            messages = [{"role": "system", "content": system_prompt}]
+            
+            if req_data.history:
+                for msg in req_data.history:
+                    if "AI 拓扑助理" in msg.text or "一键生成 DFD 功能图" in msg.text:
+                        continue
+                    role = "user" if msg.sender == "user" else "assistant"
+                    messages.append({"role": role, "content": msg.text})
+            
+            messages.append({"role": "user", "content": f"我的画图需求是：{req_data.prompt}"})
+            
             llm_payload = {
                 "model": settings.model_name,
-                "messages": [
-                    {"role": "system", "content": system_prompt},
-                    {"role": "user", "content": f"我的画图需求是：{req_data.prompt}"}
-                ],
+                "messages": messages,
                 "response_format": {"type": "json_object"}
             }
-            with httpx.Client(timeout=15.0) as client:
+            with httpx.Client(timeout=60.0) as client:
                 resp = client.post(url, headers=headers, json=llm_payload)
             if resp.status_code == 200:
                 choice_text = resp.json()["choices"][0]["message"]["content"]
