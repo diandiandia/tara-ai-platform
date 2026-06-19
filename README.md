@@ -75,11 +75,16 @@ docker-compose up -d --build
    ```bash
    pip install -r requirements.txt
    ```
-3. 启动 FastAPI API 服务（具备热重载）：
+3. 初始化数据库并创建初始管理员（首次运行需要）：
+   ```bash
+   ./venv/bin/python manage.py init-db
+   ./venv/bin/python manage.py create-admin --user admin --pwd Admin123
+   ```
+4. 启动 FastAPI API 服务（具备热重载）：
    ```bash
    ./venv/bin/python -m uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload
    ```
-4. 启动 Celery Worker 跑批任务进程：
+5. 启动 Celery Worker 跑批任务进程：
    ```bash
    ./venv/bin/celery -A app.core.celery_app worker --loglevel=info
    ```

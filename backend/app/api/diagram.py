@@ -423,6 +423,68 @@ def ai_generate_topology(
     
     return diagram
 
+def verify_dfd_compliance(db: Session, nodes: list, edges: list) -> str:
+    """
+    独立子代理 (Sub-Agent): 进行轻量化的 DFD 拓扑安全与合规性校验，符合 Context Budget 原则
+    """
+    settings = db.query(SystemSettings).first()
+    
+    # 规则算法作为 Mock 降级和兜底校验
+    warnings = []
+    
+    # 1. 检查是否有 entity 直接与 storage 节点通信而没有经过任何 process
+    entity_ids = {n["id"] for n in nodes if n.get("type") == "entity"}
+    storage_ids = {n["id"] for n in nodes if n.get("type") == "storage"}
+    
+    for edge in edges:
+        s = edge.get("source")
+        t = edge.get("target")
+        if s in entity_ids and t in storage_ids:
+            warnings.append("外部实体直接访问数据存储节点，存在未授权读写风险，应使用服务进程进行接口隔离控制。")
+            
+    # 2. 检查连线是否缺失关键属性
+    for edge in edges:
+        data = edge.get("data", {})
+        if not data.get("protocol") or not data.get("transmitted_info"):
+            warnings.append(f"连线 {data.get('name', edge.get('id'))} 传输协议或内容不完整，可能导致资产识别失真。")
+            
+    local_warning = " / ".join(warnings) if warnings else "拓扑合规性初步校验通过。"
+
+    if not settings or not settings.api_key or settings.api_key == "mock_test_key":
+        return f"【🛡️ 拓扑安全校验反馈 (Local Rule-Gate)】: {local_warning}"
+
+    try:
+        url = f"{settings.api_base_url.rstrip('/')}/chat/completions"
+        headers = {
+            "Authorization": f"Bearer {settings.api_key}",
+            "Content-Type": "application/json"
+        }
+        system_prompt = (
+            "你是一个车载数据流图（DFD）安全合规性校验助手（Compliance Check Sub-Agent）。\n"
+            "请针对输入的数据流图进行安全设计审查。主要检查以下两条底线校验原则：\n"
+            "1. 边界隔离检查：外部实体或接口（如OBD物理接口、OTA云端、T-BOX等entity类型）不能在没有网关过滤的情况下直接与内部进程或数据库（process/storage）进行无保护数据交互。\n"
+            "2. 传输协议审计：跨信任边界的通信连线必须注明传输协议（如HTTPS, DoIP）及传输具体数据，禁止为空。\n"
+            "\n"
+            "请用极其简练、专业的中文安全评审语言直接指出问题（若有多个问题请分点，总字数控制在150字以内，不要使用 Markdown 格式，不要包含思考过程）。\n"
+            "如果拓扑设计良好，未发现任何安全漏洞风险，请直接回复：【校验通过：当前拓扑未发现明显的边界安全漏洞。】"
+        )
+        llm_payload = {
+            "model": settings.model_name,
+            "messages": [
+                {"role": "system", "content": system_prompt},
+                {"role": "user", "content": f"需要校验的数据流图拓扑为：\n{json.dumps({'nodes': nodes, 'edges': edges}, ensure_ascii=False)}"}
+            ]
+        }
+        with httpx.Client(timeout=30.0) as client:
+            resp = client.post(url, headers=headers, json=llm_payload)
+        if resp.status_code == 200:
+            result = resp.json()["choices"][0]["message"]["content"]
+            return f"【🛡️ 拓扑安全校验反馈 (Sub-Agent Check)】: {result.strip()}"
+    except Exception as e:
+        print(f"⚠️ Sub-Agent 校验失败，降级执行本地规则: {e}")
+        
+    return f"【🛡️ 拓扑安全校验反馈 (Local Rule-Gate)】: {local_warning}"
+
 class ChatMessage(BaseModel):
     sender: str
     text: str
@@ -483,6 +545,17 @@ def ai_chat_diagram(
         ]
         reply = f"我已经为您设计了一个基础的车载网络拓扑来响应“{req_data.prompt}”需求。它包含传感器节点、主控制器ECU and 执行器部件。数据流包括采集的‘采样信号’和发给执行器的‘控制信号’。您可以点击下方‘一键生成dfd图’应用到画布。"
 
+    # 尝试加载当前已有的拓扑快照，以支持增量模式
+    current_snapshot = {}
+    has_existing_nodes = False
+    if diagram.snapshot_json:
+        try:
+            current_snapshot = json.loads(diagram.snapshot_json)
+            if current_snapshot.get("nodes"):
+                has_existing_nodes = True
+        except Exception:
+            pass
+
     # 尝试调用 LLM (如果已配置)
     settings = db.query(SystemSettings).first()
     if settings and settings.api_key and settings.api_key != "mock_test_key":
@@ -510,6 +583,13 @@ def ai_chat_diagram(
                 "- 连线的 data.protocol 填数据流传输采用的协议；\n"
                 "- 连线的 data.transmitted_info 填传输的具体数据内容（如固件刷写包、诊断请求指令等，不要为空）。\n"
                 "\n"
+                "【⚡ 增量更新与位置保留规则 (Incremental Mode & Coordinates Preservation)】：\n"
+                "如果提供了当前画布已有的 DFD 拓扑数据，请务必执行以下增量修改规则，切勿盲目推倒重建：\n"
+                "1. **保留无关已有节点**：对于与用户最新需求或对话修改无关的已有节点 and 连线，必须原样保留在 JSON 中（包括其 id, type, data, style, position 属性），不可删除或重命名已有节点 ID。\n"
+                "2. **保留用户摆放位置**：已有节点的 position (坐标 x, y) 必须完全保持原样，以便保留用户的画布手动设计结果。\n"
+                "3. **增量放置新节点**：新生成的节点应当赋予唯一的 id（如已有 n1, n2，则新增 n3），其 position 坐标应放在已有节点附近（例如在最近的关联节点基础上 x 或 y 轴增加 150 到 200 像素以保持画布整洁）。\n"
+                "4. **更新与删除**：如果用户要求修改或删除某个节点/数据流，请按需修改其属性（如修改 protocol）或从 nodes/edges 列表中移除。\n"
+                "\n"
                 "你必须返回一个结构化的 JSON 对象，包含两个字段：\n"
                 '1. "reply": 你对用户需求的理解和设计方案的自然语言描述（请用中文回答，不要包含 markdown 格式，控制在200字以内）。\n'
                 '2. "snapshot_json": 一个包含 nodes 和 edges 的 JSON 对象，格式为：\n'
@@ -525,14 +605,26 @@ def ai_chat_diagram(
             )
             messages = [{"role": "system", "content": system_prompt}]
             
+            # Context Budget: 只保留最近 6 条历史消息，防止 Token 膨胀和冗余干扰
+            history_limit = 6
+            filtered_history = []
             if req_data.history:
                 for msg in req_data.history:
                     if "AI 拓扑助理" in msg.text or "一键生成 DFD 功能图" in msg.text:
                         continue
                     role = "user" if msg.sender == "user" else "assistant"
-                    messages.append({"role": role, "content": msg.text})
+                    filtered_history.append({"role": role, "content": msg.text})
             
-            messages.append({"role": "user", "content": f"我的画图需求是：{req_data.prompt}"})
+            if len(filtered_history) > history_limit:
+                filtered_history = filtered_history[-history_limit:]
+            
+            messages.extend(filtered_history)
+            
+            user_content = f"我的画图需求是：{req_data.prompt}"
+            if has_existing_nodes:
+                user_content += f"\n\n当前画布已有的 DFD 拓扑结构为：\n{json.dumps(current_snapshot, ensure_ascii=False)}"
+            
+            messages.append({"role": "user", "content": user_content})
             
             llm_payload = {
                 "model": settings.model_name,
@@ -548,6 +640,10 @@ def ai_chat_diagram(
                     reply = parsed["reply"]
                     nodes = parsed["snapshot_json"].get("nodes", nodes)
                     edges = parsed["snapshot_json"].get("edges", edges)
+                    
+                    # 运行独立的子代理校验并附加到回复末尾 (Context Budgeting & Sub-Agents)
+                    compliance_feedback = verify_dfd_compliance(db, nodes, edges)
+                    reply += f"\n\n{compliance_feedback}"
         except Exception as e:
             print(f"⚠️ LLM 拓扑对话失败，降级执行规则算法: {e}")
 

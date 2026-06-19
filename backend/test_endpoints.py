@@ -605,5 +605,49 @@ class TestTaraAPI(unittest.TestCase):
         self.assertEqual(response.status_code, 403)
         self.assertIn("只读", response.json()["detail"])
 
+    def test_05_diagram_compliance_sub_agent(self):
+        """
+        测试 DFD 拓扑合规校验子代理 (verify_dfd_compliance) 逻辑与底线安全规则校验
+        """
+        from app.api.diagram import verify_dfd_compliance
+        db_session = SessionLocal()
+        
+        # 1. 干净的拓扑：传感器直接连ECU，ECU直接连执行器，合规
+        clean_nodes = [
+            {"id": "n1", "type": "entity", "data": {"name": "传感器", "protocol": "LIN"}},
+            {"id": "n2", "type": "process", "data": {"name": "控制器", "protocol": "CAN"}},
+            {"id": "n3", "type": "entity", "data": {"name": "执行器", "protocol": "PWM"}}
+        ]
+        clean_edges = [
+            {"id": "e1", "source": "n1", "target": "n2", "data": {"protocol": "LIN", "transmitted_info": "采样"}},
+            {"id": "e2", "source": "n2", "target": "n3", "data": {"protocol": "CAN", "transmitted_info": "控制"}}
+        ]
+        res1 = verify_dfd_compliance(db_session, clean_nodes, clean_edges)
+        self.assertIn("初步校验通过", res1)
+
+        # 2. 不安全拓扑：外部接口可以直接写入存储/数据库，触发风险告警
+        unsafe_nodes = [
+            {"id": "n1", "type": "entity", "data": {"name": "外部诊断仪", "protocol": "CAN"}},
+            {"id": "n2", "type": "storage", "data": {"name": "安全密钥库", "protocol": "Memory"}}
+        ]
+        unsafe_edges = [
+            {"id": "e1", "source": "n1", "target": "n2", "data": {"protocol": "CAN", "transmitted_info": "写入诊断密钥"}}
+        ]
+        res2 = verify_dfd_compliance(db_session, unsafe_nodes, unsafe_edges)
+        self.assertIn("外部实体直接访问数据存储节点", res2)
+
+        # 3. 缺失属性：连线缺失协议或数据内容
+        incomplete_nodes = [
+            {"id": "n1", "type": "entity", "data": {"name": "传感器"}},
+            {"id": "n2", "type": "process", "data": {"name": "控制器"}}
+        ]
+        incomplete_edges = [
+            {"id": "e1", "source": "n1", "target": "n2", "data": {"protocol": "", "transmitted_info": ""}}
+        ]
+        res3 = verify_dfd_compliance(db_session, incomplete_nodes, incomplete_edges)
+        self.assertIn("传输协议或内容不完整", res3)
+        
+        db_session.close()
+
 if __name__ == "__main__":
     unittest.main()

@@ -71,6 +71,7 @@ def test_connection(
     if req.api_key == "mock_test_key":
         return {"success": True, "message": "连通性测试成功 [Mock Mode]"}
         
+    choice_text = ""
     try:
         url = f"{req.api_base_url.rstrip('/')}/chat/completions"
         headers = {
@@ -99,6 +100,6 @@ def test_connection(
             return {"success": False, "message": f"大模型返回了 JSON 但不符合 Schema 要求: {choice_text}"}
             
     except json.JSONDecodeError:
-        return {"success": False, "message": f"大模型连接测试失败：返回的内容不是有效的 JSON 结构。原始返回: {choice_text[:200]}"}
+        return {"success": False, "message": f"大模型连接测试失败：返回的内容不是有效的 JSON 结构。原始返回: {choice_text[:200] if choice_text else '无有效JSON内容'}"}
     except Exception as e:
         return {"success": False, "message": f"连接大模型服务发生网络异常: {str(e)}"}

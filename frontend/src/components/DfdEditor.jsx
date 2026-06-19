@@ -600,12 +600,15 @@ export default function DfdEditor({ setPage, diagramId }) {
 
   const handleApplySnapshotClick = async () => {
     if (isReadOnly || !lastSuggestedSnapshot) return;
-    if (window.confirm(t('一键生成 DFD 图会清空您当前的画布并用 AI 生成的图画上去！确定继续吗？'))) {
+    const confirmMessage = nodes.length > 0
+      ? t('确定应用 AI 建议的拓扑结构吗？增量模式下将保留您手动调整的节点位置与未修改的拓扑。')
+      : t('一键生成 DFD 图会清空您当前的画布并用 AI 生成的图画上去！确定继续吗？');
+    if (window.confirm(confirmMessage)) {
       setAiLoading(true);
       const res = await applySnapshot(lastSuggestedSnapshot);
       setAiLoading(false);
       if (res) {
-        alert('AI 画图拓扑应用成功，您可以继续在画布上修改了！');
+        alert(t('AI 画图拓扑应用成功，您可以继续在画布上修改了！'));
       }
     }
   };

@@ -1246,17 +1246,20 @@ def run_tara_analysis(self, domain_id: int, run_record_id: int, force: bool = Fa
         from app.api.project import recalculate_project_status
         recalculate_project_status(domain.project_id, db)
         
-        db.close()
         return {"status": "completed", "domain_id": domain_id}
         
     except Exception as e:
-        db.rollback()
-        run.status = "failed"
-        domain.status = "failed"
-        db.commit()
-        db.close()
+        try:
+            db.rollback()
+            run.status = "failed"
+            domain.status = "failed"
+            db.commit()
+        except Exception as commit_err:
+            print(f"❌ TARA 跑批失败回滚提交失败: {commit_err}")
         print(f"❌ TARA 跑批失败: {e}")
         return {"status": "failed", "detail": str(e)}
+    finally:
+        db.close()
 
 # ----------------- Celery 任务失败全局信号监听 (防止死锁) -----------------
 from celery.signals import task_failure

@@ -49,7 +49,9 @@ class DiagramConnectionManager:
         }
         
         dead_connections = []
-        for username, ws in self.active_users[diagram_id]:
+        # Create a copy of the connection list to prevent RuntimeError if connections mutate during async send_json calls
+        active_list = list(self.active_users[diagram_id])
+        for username, ws in active_list:
             try:
                 await ws.send_json(message)
             except Exception:

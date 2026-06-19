@@ -51,6 +51,7 @@ tara.db
 tara_test.db
 dump.rdb
 exports/
+exports_local/
 backups/
 
 # --- Secrets, API Keys & Environment Variables ---
