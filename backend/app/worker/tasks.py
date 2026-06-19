@@ -2,6 +2,8 @@ import time
 import hashlib
 import json
 import httpx
+import threading
+from concurrent.futures import ThreadPoolExecutor
 from celery import Celery
 from sqlalchemy.orm import Session
 from datetime import datetime
@@ -14,6 +16,9 @@ from app.models.asset import Asset
 from app.models.tara_run import TaraRun
 from app.models.tara_step import TaraStep
 from app.models.system_settings import SystemSettings
+
+# SQLite Single-Writer Lock to prevent "database is locked" errors during concurrent commits
+db_write_lock = threading.Lock()
 
 def calculate_md5(*args) -> str:
     """
@@ -756,11 +761,11 @@ def tara_ai_analysis_call(db: Session, stage: str, asset: Asset, prev_stages: di
                 }
                 msg_ts = json.dumps(msg_dict_ts, ensure_ascii=False)
                 prompt_ts = (
-                    "资产信息：根据资产的asset_id,asset_name, assigned_security_attribute, damage_scenario,safety,financial,operational, privacy信息，分析可能存在的威胁场景信息，\n"
+                    "资产信息：根据资产的asset_id, asset_name, assigned_security_attribute, damage_scenario, safety, financial, operational, privacy信息，分析可能存在的威胁场景信息，\n"
                     "每个威胁场景必须同时清晰包含以下四要素，并写成逻辑连贯的一句话，且描述必须是中英文对照的（采用“中文 / English”格式）：\n"
-                    "1. 目标资产（明确写J6P PCBA电路板）；\n"
-                    "2. 被破坏的网络安全属性（必须是Authenticity）；\n"
-                    "3. 导致真实性被破坏的具体原因/攻击方式（必须描述明确的攻击入口点和具体技术手段或缺失的防护措施）；\n"
+                    f"1. 目标资产（明确写 {asset.name}）；\n"
+                    f"2. 被破坏的网络安全属性（必须是 {ds['attribute']}）；\n"
+                    f"3. 导致该安全属性（{ds['attribute']}）被破坏的具体原因/攻击方式（必须描述明确的攻击入口点和具体技术手段或缺失的防护措施）；\n"
                     "4. 简要说明该威胁场景如何导致之前识别的某个或多个damage scenario。\n"
                     "输出请忽略输入的资产信息内容和格式要求，请按照输出格式参考内容和要求回复。\n"
                     '输出JSON结果示例:{"possible_threat_scenario_list":[{"threat_scenario_1":"中文威胁场景描述 / English threat scenario description."},{"threat_scenario_2":"中文威胁场景描述 / English threat scenario description."}]}'
@@ -1066,10 +1071,10 @@ def tara_ai_analysis_call(db: Session, stage: str, asset: Asset, prev_stages: di
                     }
                     msg_cs = json.dumps(msg_dict_cs, ensure_ascii=False)
                     prompt_cs = (
-                        "资产信息：根据资产的asset_id,asset_name, assigned_security_attribute, damage_scenario,threat_scenario,attack_path,attack_feasibility_rating,cybersecurity_goal信息，且risk_treatment为reduce，考虑编写信息安全目标cybersecurity_control与cybersecurity_requirement信息，编写规则：\n"
+                        "资产信息：根据资产的asset_id, asset_name, assigned_security_attribute, damage_scenario, threat_scenario, attack_path, attack_feasibility_rating, cybersecurity_goal信息，且risk_treatment为reduce，考虑编写信息安全目标cybersecurity_control与cybersecurity_requirement信息，编写规则：\n"
                         "所有生成的cybersecurity_control与cybersecurity_requirement描述均必须是中英文对照的（采用“中文 / English”格式）。\n"
                         "Cybersecurity Control描述必须包含：\n"
-                        "1. 说明控制措施cybersecurity_control是技术性（technical）还是操作性（operational），并给出具体实现方式（例如：AES-256-GCM、Secure Boot + HSM、消息MAC + Freshness、OTA双向证书认证等）。\n"
+                        "1. 说明控制措施cybersecurity_control是技术性（technical）还是操作性（operational），并给出具体防护机制类别（例如：部署安全传输协议、启用硬件安全屏障/安全隔离区、启用消息防伪/防重放校验、OTA双向证书认证等，避免直接写死具体的密码学算法及特定的硬件型号）。\n"
                         "2. 明确说明该控制措施在威胁场景中的作用（是预防、检测、响应、恢复，还是降低后果严重度）。\n"
                         "3. 必须说明依赖关系（dependencies）：\n"
                         "- 依赖 Item 的哪个功能？\n"
@@ -1088,7 +1093,7 @@ def tara_ai_analysis_call(db: Session, stage: str, asset: Asset, prev_stages: di
                         "a) 必须包含的具体特性：\n"
                         "- 更新能力 (update capabilities)\n"
                         "- 运行期间获取用户同意的能力 (user consent during operations)\n"
-                        "- 具体算法、协议、必须是现有的车联网安全中可以落地的设计，方法，并且可以验证其安全性。（例如secoc是没有加密的，can/canfd/uart等协议都是明文传输的，增加加密方式现阶段看起来是没法实施的）\n"
+                        "- 采用适合车联网安全的加密算法、协议、设计或校验方法（说明具体的安全技术手段，但在此网络安全需求阶段，仅需规定算法/协议的机制类别如“非对称签名校验”或“安全通道协议”，不需要强制绑定具体的密钥长度或具体算法实现如ECDSA P-256，相关设计交由系统设计阶段细化）。\n"
                         "b) 分配要求：\n"
                         "- 必须分配到项目\n"
                         "- 如适用，分配到项目的一个或多个组件\n"
@@ -1162,11 +1167,120 @@ def tara_ai_analysis_call(db: Session, stage: str, asset: Asset, prev_stages: di
         print(f"[TARA-AI] 警告: 大模型评估发生异常 ({e})，降级执行 Rules-based 模拟流程。")
         return mock_tara_ai_call(stage, asset, prev_stages)
 
+def process_single_asset(asset_id: int, domain_id: int, run_record_id: int, force: bool, stages: list, total_steps: int, progress_counter: list):
+    """
+    单资产多阶段安全分析的处理函数，运行在独立线程中 (BR-40, BR-41)
+    """
+    thread_db = SessionLocal()
+    try:
+        # 1. 查询当前线程的 Asset
+        asset = thread_db.query(Asset).filter(Asset.id == asset_id).first()
+        if not asset:
+            return
+            
+        asset_info_dict = {
+            "asset_id": f"ID{asset.id}",
+            "asset_name": asset.name,
+            "communication_protocol": asset.protocol or "无",
+            "asset_type": asset.asset_type.capitalize() if asset.asset_type else "Hardware",
+            "remarks": asset.description or "无"
+        }
+        
+        prev_stage_outputs = {} # 暂存当前资产的前置步骤最终结论
+        
+        for stage in stages:
+            # 检查任务是否在中途被撤销终止 (BR-70)
+            with db_write_lock:
+                current_run = thread_db.query(TaraRun).filter(TaraRun.id == run_record_id).first()
+                if not current_run:
+                    return
+                if current_run.status == "cancelled":
+                    print(f"检测到 TARA 任务 {run_record_id} 被用户手动取消，线程强制终止。")
+                    return
+            
+            # A. 计算 input_hash (BR-45)
+            if stage == "stage1":
+                input_hash_material = f"{asset.name}:{asset.asset_type}:{asset.protocol}:{asset.description}"
+            elif stage == "stage2":
+                input_hash_material = f"{asset.name}:{prev_stage_outputs.get('stage1')}"
+            elif stage == "stage3":
+                input_hash_material = f"{asset.name}:{prev_stage_outputs.get('stage1')}:{prev_stage_outputs.get('stage2')}"
+            elif stage == "stage4":
+                input_hash_material = f"{asset.name}:{prev_stage_outputs.get('stage1')}:{prev_stage_outputs.get('stage2')}:{prev_stage_outputs.get('stage3')}"
+            elif stage == "stage5":
+                input_hash_material = f"{asset.name}:{prev_stage_outputs.get('stage1')}:{prev_stage_outputs.get('stage2')}:{prev_stage_outputs.get('stage3')}:{prev_stage_outputs.get('stage4')}"
+            
+            current_hash = calculate_md5(input_hash_material)
+            
+            # B. 判断是否可以进行增量匹配或继承 (BR-45, BR-51/75)
+            prev_step = get_previous_completed_step(thread_db, asset.id, stage)
+            
+            step_result = None
+            if prev_step and prev_step.input_hash == current_hash:
+                prev_res = prev_step.analysis_result
+                if prev_res.get("is_human_modified"):
+                    # 无论是普通还是 force 模式，都继承历史人工修改结论
+                    step_result = prev_res
+                    print(f"资产 {asset.name} 阶段 {stage} 匹配哈希并成功继承人工修改。")
+                elif not force:
+                    # 只有在非 force 模式下，才继承历史 AI 结论并跳过调用
+                    step_result = prev_res
+                    print(f"资产 {asset.name} 阶段 {stage} 哈希匹配成功，跳过 AI 调用 (增量模式)。")
+                else:
+                    print(f"资产 {asset.name} 阶段 {stage} 虽哈希匹配，但处于 Force 强制重跑模式，重新调用 AI。")
+            
+            # C. 如果没有匹配到，或者哈希发生变化，调用 AI (或降级 Mock) 模块进行分析
+            if not step_result:
+                ai_raw = tara_ai_analysis_call(thread_db, stage, asset, prev_stage_outputs)
+                step_result = {
+                    "ai_output": ai_raw,
+                    "is_human_modified": False,
+                    "modification_reason": "",
+                    "final_output": ai_raw
+                }
+            
+            # 暂存当前阶段的 final_output 以作为后续阶段 of 输入 Hash 依赖
+            prev_stage_outputs[stage] = step_result["final_output"]
+            
+            # D. 写入 tara_steps 数据库表 (需要全局排他锁保护 SQLite 写入)
+            tara_step = TaraStep(
+                run_id=run_record_id,
+                asset_id=asset.id,
+                stage=stage,
+                status="completed",
+                input_hash=current_hash,
+                analysis_result=step_result
+            )
+            
+            with db_write_lock:
+                thread_db.add(tara_step)
+                thread_db.commit()
+                
+                # E. 更新进度条 (BR-看板)
+                progress_counter[0] += 1
+                progress_percentage = int((progress_counter[0] / total_steps) * 100)
+                
+                # 重新查询实例以防其在其它 session 被修改导致脏读冲突
+                run = thread_db.query(TaraRun).filter(TaraRun.id == run_record_id).first()
+                domain = thread_db.query(Domain).filter(Domain.id == domain_id).first()
+                if run:
+                    run.progress = progress_percentage
+                if domain:
+                    domain.progress = progress_percentage
+                thread_db.commit()
+                
+    except Exception as e:
+        print(f"❌ 线程执行资产 {asset_id} 分析发生异常: {e}")
+        raise e
+    finally:
+        thread_db.close()
+
 @celery_app.task(bind=True)
 def run_tara_analysis(self, domain_id: int, run_record_id: int, force: bool = False):
     """
-    Celery 异步任务：执行 TARA 5 阶段串行跑批核心逻辑 (BR-40, BR-41)
-    包含增量匹配 (BR-45)、人工修改继承 (BR-51/75)、决策联动 (BR-69)、最高可行性聚合 (BR-67)。
+    Celery 异步任务：执行 TARA 5 阶段跑批核心逻辑 (BR-40, BR-41)
+    方案B优化：并发多资产多线程执行大模型调用，提升效率；
+    利用全局 db_write_lock 锁确保 SQLite 的单写线程安全。
     """
     db = SessionLocal()
     run = db.query(TaraRun).filter(TaraRun.id == run_record_id).first()
@@ -1189,89 +1303,42 @@ def run_tara_analysis(self, domain_id: int, run_record_id: int, force: bool = Fa
             
         stages = ["stage1", "stage2", "stage3", "stage4", "stage5"]
         total_steps = total_assets * len(stages)
-        completed_steps = 0
+        progress_counter = [0]
         
-        # 2. 逐一资产执行分析
-        for asset in assets:
-            prev_stage_outputs = {} # 暂存当前资产的前置步骤最终结论
-            
-            for stage in stages:
-                # 检查任务是否在中途被撤销终止 (BR-70)
-                current_run = db.query(TaraRun).filter(TaraRun.id == run_record_id).first()
-                if current_run.status == "cancelled":
-                    print(f"检测到 TARA 任务 {run_record_id} 被用户手动取消，强制中止运行。")
-                    db.close()
-                    return {"status": "cancelled"}
-                
-                # A. 计算 input_hash (BR-45)
-                if stage == "stage1":
-                    input_hash_material = f"{asset.name}:{asset.asset_type}:{asset.protocol}:{asset.description}"
-                elif stage == "stage2":
-                    input_hash_material = f"{asset.name}:{prev_stage_outputs.get('stage1')}"
-                elif stage == "stage3":
-                    input_hash_material = f"{asset.name}:{prev_stage_outputs.get('stage1')}:{prev_stage_outputs.get('stage2')}"
-                elif stage == "stage4":
-                    input_hash_material = f"{asset.name}:{prev_stage_outputs.get('stage1')}:{prev_stage_outputs.get('stage2')}:{prev_stage_outputs.get('stage3')}"
-                elif stage == "stage5":
-                    input_hash_material = f"{asset.name}:{prev_stage_outputs.get('stage1')}:{prev_stage_outputs.get('stage2')}:{prev_stage_outputs.get('stage3')}:{prev_stage_outputs.get('stage4')}"
-                
-                current_hash = calculate_md5(input_hash_material)
-                
-                # B. 判断是否可以进行增量匹配或继承 (BR-45, BR-51/75)
-                prev_step = get_previous_completed_step(db, asset.id, stage)
-                
-                step_result = None
-                is_inherited = False
-                inherited_reason = ""
-                
-                if prev_step and prev_step.input_hash == current_hash:
-                    prev_res = prev_step.analysis_result
-                    if prev_res.get("is_human_modified"):
-                        # 无论是普通还是 force 模式，都继承历史人工修改结论
-                        is_inherited = True
-                        step_result = prev_res
-                        inherited_reason = prev_res.get("modification_reason", "")
-                        print(f"资产 {asset.name} 阶段 {stage} 匹配哈希并成功继承人工修改。")
-                    elif not force:
-                        # 只有在非 force 模式下，才继承历史 AI 结论并跳过调用
-                        step_result = prev_res
-                        print(f"资产 {asset.name} 阶段 {stage} 哈希匹配成功，跳过 AI 调用 (增量模式)。")
-                    else:
-                        print(f"资产 {asset.name} 阶段 {stage} 虽哈希匹配，但处于 Force 强制重跑模式，重新调用 AI。")
-                
-                # C. 如果没有匹配到，或者哈希发生变化，调用 AI (或降级 Mock) 模块进行分析
-                if not step_result:
-                    ai_raw = tara_ai_analysis_call(db, stage, asset, prev_stage_outputs)
-                    step_result = {
-                        "ai_output": ai_raw,
-                        "is_human_modified": False,
-                        "modification_reason": "",
-                        "final_output": ai_raw
-                    }
-                
-                # 暂存当前阶段的 final_output 以作为后续阶段的输入 Hash 依赖
-                prev_stage_outputs[stage] = step_result["final_output"]
-                
-                # D. 写入 tara_steps 数据库表
-                tara_step = TaraStep(
-                    run_id=run_record_id,
-                    asset_id=asset.id,
-                    stage=stage,
-                    status="completed",
-                    input_hash=current_hash,
-                    analysis_result=step_result
+        asset_ids = [asset.id for asset in assets]
+        
+        # 释放当前 session，避免独占连接池
+        db.close()
+        
+        # 2. 并发对不同资产进行多线程大模型调用 (最大并发为3，防 LLM Rate Limit)
+        with ThreadPoolExecutor(max_workers=3) as executor:
+            futures = [
+                executor.submit(
+                    process_single_asset,
+                    aid,
+                    domain_id,
+                    run_record_id,
+                    force,
+                    stages,
+                    total_steps,
+                    progress_counter
                 )
-                db.add(tara_step)
-                db.commit()
-                
-                # E. 更新进度条 (BR-看板)
-                completed_steps += 1
-                progress_percentage = int((completed_steps / total_steps) * 100)
-                run.progress = progress_percentage
-                domain.progress = progress_percentage
-                db.commit()
+                for aid in asset_ids
+            ]
+            # 阻塞等待所有资产评估线程完成，若有任何线程出错，则在 .result() 时抛出
+            for fut in futures:
+                fut.result()
                 
         # 3. 跑批完成，更新状态
+        db = SessionLocal()
+        run = db.query(TaraRun).filter(TaraRun.id == run_record_id).first()
+        domain = db.query(Domain).filter(Domain.id == domain_id).first()
+        
+        # 如果已被用户撤销
+        if run.status == "cancelled":
+            db.close()
+            return {"status": "cancelled"}
+            
         run.status = "completed"
         run.completed_at = datetime.now()
         domain.status = "completed"
@@ -1279,7 +1346,6 @@ def run_tara_analysis(self, domain_id: int, run_record_id: int, force: bool = Fa
         db.commit()
         
         # 4. 联动推导项目状态 (BR-03)
-        # 重新导入依赖推导项目状态
         from app.api.project import recalculate_project_status
         recalculate_project_status(domain.project_id, db)
         
@@ -1287,16 +1353,24 @@ def run_tara_analysis(self, domain_id: int, run_record_id: int, force: bool = Fa
         
     except Exception as e:
         try:
-            db.rollback()
-            run.status = "failed"
-            domain.status = "failed"
-            db.commit()
+            db_err = SessionLocal()
+            run_err = db_err.query(TaraRun).filter(TaraRun.id == run_record_id).first()
+            domain_err = db_err.query(Domain).filter(Domain.id == domain_id).first()
+            if run_err:
+                run_err.status = "failed"
+            if domain_err:
+                domain_err.status = "failed"
+            db_err.commit()
+            db_err.close()
         except Exception as commit_err:
-            print(f"❌ TARA 跑批失败回滚提交失败: {commit_err}")
+            print(f"❌ TARA 跑批失败状态重置失败: {commit_err}")
         print(f"❌ TARA 跑批失败: {e}")
         return {"status": "failed", "detail": str(e)}
     finally:
-        db.close()
+        try:
+            db.close()
+        except Exception:
+            pass
 
 # ----------------- Celery 任务失败全局信号监听 (防止死锁) -----------------
 from celery.signals import task_failure
