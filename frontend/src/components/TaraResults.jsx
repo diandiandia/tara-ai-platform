@@ -413,10 +413,14 @@ const buildExcelRowsFromSteps = (steps, assetsList) => {
               risk_treatment: rd.risk_treatment || rd.risk_decision || 'mitigate',
               
               // CSO, Claims, Control, ADCU, CSR
+              cybersecurity_claim_id: rd.cybersecurity_claim_id || (['accept', 'transfer'].includes((rd.risk_treatment || '').toLowerCase()) ? `CLM_${attr}_${ts.threat_id}` : 'N/A'),
               cybersecurity_claim: rd.cybersecurity_claim || '',
+              cso_id: rd.cybersecurity_goal_id || req.cybersecurity_control_id || (rd.risk_treatment === 'mitigate' ? `CSO_${attr}_${ts.threat_id}` : 'N/A'),
               cso: rd.cybersecurity_goal || req.cybersecurity_control || '',
+              cybersecurity_control_id: req.cybersecurity_control_id || (req.cybersecurity_control && req.cybersecurity_control !== 'N/A' ? `CSO_${attr}_${ts.threat_id}` : 'N/A'),
               cybersecurity_control: req.cybersecurity_control || '',
               allocated_to_device: req.allocated_to_device || 'No',
+              cybersecurity_requirement_id: req.cybersecurity_requirement_id || (req.cybersecurity_requirement && req.cybersecurity_requirement !== 'N/A' ? `CSR_${attr}_${ts.threat_id}_1` : 'N/A'),
               csr: req.cybersecurity_requirement || '',
             });
           });
@@ -702,10 +706,14 @@ export default function TaraResults({ setPage, domainId }) {
       cafOverridden: false,
       risk_value: 1, // calculated
       risk_treatment: 'mitigate',
+      cybersecurity_claim_id: 'N/A',
       cybersecurity_claim: '',
+      cso_id: `CSO_Integrity_${Date.now()}`,
       cso: '',
+      cybersecurity_control_id: `CSO_Integrity_${Date.now()}`,
       cybersecurity_control: '',
       allocated_to_device: 'Yes',
+      cybersecurity_requirement_id: `CSR_Integrity_${Date.now()}_1`,
       csr: ''
     };
     
@@ -1151,10 +1159,14 @@ export default function TaraResults({ setPage, domainId }) {
                   <th style={{ minWidth: '95px', padding: '10px' }}>{t("处理决策")}</th>
                   
                   {/* Cybersecurity Goals and Requirements */}
+                  <th style={{ minWidth: '130px', padding: '10px' }}>{t("安全声称 ID (Claims ID)")}</th>
                   <th style={{ minWidth: '140px', padding: '10px' }}>{t("安全声称 (Claims)")}</th>
+                  <th style={{ minWidth: '130px', padding: '10px' }}>{t("安全目标 ID (CSO ID)")}</th>
                   <th style={{ minWidth: '140px', padding: '10px' }}>{t("安全目标 (CSO)")}</th>
+                  <th style={{ minWidth: '130px', padding: '10px' }}>{t("安全控制 ID (Control ID)")}</th>
                   <th style={{ minWidth: '140px', padding: '10px' }}>{t("安全控制")}</th>
                   <th style={{ width: '80px', padding: '10px' }}>{t("分配至ADCU")}</th>
+                  <th style={{ minWidth: '130px', padding: '10px' }}>{t("安全要求 ID (CSR ID)")}</th>
                   <th style={{ minWidth: '160px', padding: '10px' }}>{t("安全要求 (CSR)")}</th>
                   <th style={{ minWidth: '90px', padding: '10px', textAlign: 'center', position: 'sticky', right: 0, background: 'var(--bg-card)', zIndex: 10 }}>{t("操作")}</th>
                 </tr>
@@ -1490,6 +1502,21 @@ export default function TaraResults({ setPage, domainId }) {
                         )}
                       </td>
 
+                      {/* Cybersecurity Claims ID */}
+                      <td style={{ padding: '8px' }}>
+                        {isEditing ? (
+                          <input
+                            type="text"
+                            value={row.cybersecurity_claim_id}
+                            onChange={(e) => handleRowChange(row.key, 'cybersecurity_claim_id', e.target.value)}
+                            className="input-field"
+                            style={{ width: '100%', fontSize: '11px', padding: '4px' }}
+                          />
+                        ) : (
+                          <span style={{ fontWeight: '500', color: 'var(--text-secondary)' }}>{row.cybersecurity_claim_id || '-'}</span>
+                        )}
+                      </td>
+
                       {/* Cybersecurity Claims */}
                       <td style={{ padding: '8px' }}>
                         {isEditing ? (
@@ -1505,6 +1532,21 @@ export default function TaraResults({ setPage, domainId }) {
                         )}
                       </td>
 
+                      {/* CSO ID (Cybersecurity Goal ID) */}
+                      <td style={{ padding: '8px' }}>
+                        {isEditing ? (
+                          <input
+                            type="text"
+                            value={row.cso_id}
+                            onChange={(e) => handleRowChange(row.key, 'cso_id', e.target.value)}
+                            className="input-field"
+                            style={{ width: '100%', fontSize: '11px', padding: '4px' }}
+                          />
+                        ) : (
+                          <span style={{ fontWeight: '500', color: 'var(--text-secondary)' }}>{row.cso_id || '-'}</span>
+                        )}
+                      </td>
+
                       {/* CSO (Cybersecurity Goal) */}
                       <td style={{ padding: '8px' }}>
                         {isEditing ? (
@@ -1517,6 +1559,21 @@ export default function TaraResults({ setPage, domainId }) {
                           />
                         ) : (
                           <p style={{ margin: 0, maxWidth: '160px', whiteSpace: 'normal', wordBreak: 'break-all' }}>{row.cso || '-'}</p>
+                        )}
+                      </td>
+
+                      {/* Cybersecurity Control ID */}
+                      <td style={{ padding: '8px' }}>
+                        {isEditing ? (
+                          <input
+                            type="text"
+                            value={row.cybersecurity_control_id}
+                            onChange={(e) => handleRowChange(row.key, 'cybersecurity_control_id', e.target.value)}
+                            className="input-field"
+                            style={{ width: '100%', fontSize: '11px', padding: '4px' }}
+                          />
+                        ) : (
+                          <span style={{ fontWeight: '500', color: 'var(--text-secondary)' }}>{row.cybersecurity_control_id || '-'}</span>
                         )}
                       </td>
 
@@ -1551,6 +1608,21 @@ export default function TaraResults({ setPage, domainId }) {
                           <span style={{ fontWeight: '500', color: row.allocated_to_device === 'Yes' ? '#10b981' : 'var(--text-secondary)' }}>
                             {t(row.allocated_to_device === 'Yes' ? '是' : '否')}
                           </span>
+                        )}
+                      </td>
+
+                      {/* CSR ID (Cybersecurity Requirement ID) */}
+                      <td style={{ padding: '8px' }}>
+                        {isEditing ? (
+                          <input
+                            type="text"
+                            value={row.cybersecurity_requirement_id}
+                            onChange={(e) => handleRowChange(row.key, 'cybersecurity_requirement_id', e.target.value)}
+                            className="input-field"
+                            style={{ width: '100%', fontSize: '11px', padding: '4px' }}
+                          />
+                        ) : (
+                          <span style={{ fontWeight: '500', color: 'var(--text-secondary)' }}>{row.cybersecurity_requirement_id || '-'}</span>
                         )}
                       </td>
 

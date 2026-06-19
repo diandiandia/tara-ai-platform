@@ -218,28 +218,40 @@ def collect_report_data(steps: List[TaraStep], assets: List[Asset], desensitize:
                     }
                     rt_disp = rt_map.get(str(rt).lower(), rt)
                     
+                    cybersecurity_control_id_val = "N/A"
                     cybersecurity_control_val = "N/A"
                     allocated_to_device_val = "No"
+                    cybersecurity_requirement_id_val = "N/A"
                     cybersecurity_requirement_val = "N/A"
                     
                     if rt_disp == "Reduce":
+                        control_ids = []
                         controls = []
                         allocs = []
+                        req_ids = []
                         reqs = []
                         for r_idx, req in enumerate(matching_reqs):
+                            c_id_val = req.get("cybersecurity_control_id") or "N/A"
                             c_val = req.get("cybersecurity_control") or "N/A"
                             a_val = "Yes" if str(req.get("allocated_to_device", "No")).lower() in ["yes", "true"] else "No"
+                            rq_id_val = req.get("cybersecurity_requirement_id") or "N/A"
                             rq_val = req.get("cybersecurity_requirement") or "N/A"
                             if len(matching_reqs) > 1:
+                                control_ids.append(f"({r_idx+1}) {c_id_val}")
                                 controls.append(f"({r_idx+1}) {c_val}")
                                 allocs.append(f"({r_idx+1}) {a_val}")
+                                req_ids.append(f"({r_idx+1}) {rq_id_val}")
                                 reqs.append(f"({r_idx+1}) {rq_val}")
                             else:
+                                control_ids.append(c_id_val)
                                 controls.append(c_val)
                                 allocs.append(a_val)
+                                req_ids.append(rq_id_val)
                                 reqs.append(rq_val)
+                        cybersecurity_control_id_val = "\n".join(control_ids)
                         cybersecurity_control_val = "\n".join(controls)
                         allocated_to_device_val = "\n".join(allocs)
+                        cybersecurity_requirement_id_val = "\n".join(req_ids)
                         cybersecurity_requirement_val = "\n".join(reqs)
                     elif rt_disp == "Avoid":
                         cybersecurity_requirement_val = rd.get("item_change") or "N/A"
@@ -368,10 +380,20 @@ def collect_report_data(steps: List[TaraStep], assets: List[Asset], desensitize:
                         row_data["risk_treatment"] = rt_disp
                         row_data["cybersecurity_claim_id"] = rd.get("cybersecurity_claim_id", "N/A") if rt_disp in ["Share", "Retain"] else "N/A"
                         row_data["cybersecurity_claim"] = rd.get("cybersecurity_claim", "N/A") if rt_disp in ["Share", "Retain"] else "N/A"
+                        
+                        goal_id_val = rd.get("cybersecurity_goal_id") or rd.get("cso_id")
+                        if not goal_id_val or goal_id_val == "N/A":
+                            if matching_reqs and matching_reqs[0].get("cybersecurity_control_id"):
+                                goal_id_val = matching_reqs[0].get("cybersecurity_control_id")
+                            else:
+                                goal_id_val = f"CSO_{attr}_{ts.get('threat_id')}"
+                        row_data["cybersecurity_goal_id"] = goal_id_val if rt_disp == "Reduce" else "N/A"
                         row_data["cybersecurity_goal"] = rd.get("cybersecurity_goal", "N/A") if rt_disp == "Reduce" else "N/A"
                         
+                        row_data["cybersecurity_control_id"] = cybersecurity_control_id_val
                         row_data["cybersecurity_control"] = cybersecurity_control_val
                         row_data["allocated_to_device"] = allocated_to_device_val
+                        row_data["cybersecurity_requirement_id"] = cybersecurity_requirement_id_val
                         row_data["cybersecurity_requirement"] = cybersecurity_requirement_val
                         
                         rows.append(row_data)
@@ -492,7 +514,7 @@ def create_excel_report(domain: Domain, steps: List[TaraStep], assets: List[Asse
         ws.row_dimensions[2].height = 35
         
         # 填充所有表头单元格默认格式
-        for col_idx in range(1, 30):
+        for col_idx in range(1, 33):
             cell_r1 = ws.cell(row=1, column=col_idx)
             cell_r1.fill = header_fill_r1
             cell_r1.font = header_font
@@ -522,7 +544,7 @@ def create_excel_report(domain: Domain, steps: List[TaraStep], assets: List[Asse
             "Threat Scenarios", "Attack Path",
             "Time Consuming", "Expertise", "Knowledge about TOE", "Window of opportunity", "Equipment", "Difficulty", "AF Level", "CAF Level",
             "Risk Value", "Risk Treatment Recommend",
-            "Cybersecurity Claims ID", "Cybersecurity Claims", "Cybersecurity Goal", "Cybersecurity Control", "Allocated to ADCU", "Cybersecurity Requirement"
+            "Cybersecurity Claims ID", "Cybersecurity Claims", "Cybersecurity Goal ID", "Cybersecurity Goal", "Cybersecurity Control ID", "Cybersecurity Control", "Allocated to ADCU", "Cybersecurity Requirement ID", "Cybersecurity Requirement"
         ]
         
         for col_idx, h in enumerate(headers_r2, 1):
@@ -538,7 +560,7 @@ def create_excel_report(domain: Domain, steps: List[TaraStep], assets: List[Asse
             "threat_scenario", "attack_path",
             "time_consuming", "expertise", "knowledge_about_toe", "window_of_opportunity", "equipment", "difficulty", "af_level", "caf_level",
             "risk_value", "risk_treatment",
-            "cybersecurity_claim_id", "cybersecurity_claim", "cybersecurity_goal", "cybersecurity_control", "allocated_to_device", "cybersecurity_requirement"
+            "cybersecurity_claim_id", "cybersecurity_claim", "cybersecurity_goal_id", "cybersecurity_goal", "cybersecurity_control_id", "cybersecurity_control", "allocated_to_device", "cybersecurity_requirement_id", "cybersecurity_requirement"
         ]
         
         for row_data in rows:
@@ -673,7 +695,7 @@ def create_csv_report(domain: Domain, steps: List[TaraStep], assets: List[Asset]
             "Threat Scenarios", "Attack Path",
             "Time Consuming", "Expertise", "Knowledge about TOE", "Window of opportunity", "Equipment", "Difficulty", "AF Level", "CAF Level",
             "Risk Value", "Risk Treatment Recommend",
-            "Cybersecurity Claims ID", "Cybersecurity Claims", "Cybersecurity Goal", "Cybersecurity Control", "Allocated to ADCU", "Cybersecurity Requirement"
+            "Cybersecurity Claims ID", "Cybersecurity Claims", "Cybersecurity Goal ID", "Cybersecurity Goal", "Cybersecurity Control ID", "Cybersecurity Control", "Allocated to ADCU", "Cybersecurity Requirement ID", "Cybersecurity Requirement"
         ]
         keys = [
             "number", "asset_sn", "asset_name",
@@ -682,7 +704,7 @@ def create_csv_report(domain: Domain, steps: List[TaraStep], assets: List[Asset]
             "threat_scenario", "attack_path",
             "time_consuming", "expertise", "knowledge_about_toe", "window_of_opportunity", "equipment", "difficulty", "af_level", "caf_level",
             "risk_value", "risk_treatment",
-            "cybersecurity_claim_id", "cybersecurity_claim", "cybersecurity_goal", "cybersecurity_control", "allocated_to_device", "cybersecurity_requirement"
+            "cybersecurity_claim_id", "cybersecurity_claim", "cybersecurity_goal_id", "cybersecurity_goal", "cybersecurity_control_id", "cybersecurity_control", "allocated_to_device", "cybersecurity_requirement_id", "cybersecurity_requirement"
         ]
         rows = collect_report_data(steps, assets, desensitize)
     
