@@ -1,7 +1,7 @@
 import { useI18n } from '../stores/i18nStore';
 import React from 'react';
 import { Handle, Position, NodeResizer } from 'reactflow';
-import { User, Cpu, Database, Shield } from 'lucide-react';
+import { User, Cpu, Database, Shield, Link } from 'lucide-react';
 import { useCanvasStore } from '../stores/canvasStore';
 
 export default function CustomDfdNode({ id, type, data, selected }) {
@@ -68,6 +68,18 @@ export default function CustomDfdNode({ id, type, data, selected }) {
       subTextColor = 'rgba(153, 27, 27, 0.7)';
       iconBg = 'transparent';
       icon = <Shield size={iconSize} style={{ color: '#dc2626' }} />;
+      break;
+    case 'interface':
+      containerStyle = {
+        background: '#fffbeb', // Amber 50
+        borderColor: '#d97706', // Amber 600
+        borderStyle: 'solid',
+        borderRadius: '8px',
+      };
+      textColor = '#78350f'; // Amber 950
+      subTextColor = '#d97706'; // Amber 600
+      iconBg = 'rgba(217, 119, 6, 0.1)';
+      icon = <Link size={iconSize} style={{ color: '#d97706' }} />;
       break;
     default:
       containerStyle = {

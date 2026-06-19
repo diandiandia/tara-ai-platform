@@ -201,7 +201,7 @@ def extract_assets(
                 
                 raw_type = node.get("type", "process")
                 asset_type = "software"
-                if raw_type == "entity":
+                if raw_type in ("entity", "interface"):
                     asset_type = "hardware"
                 elif raw_type == "storage":
                     asset_type = "data"
@@ -253,7 +253,7 @@ def extract_assets(
                 if is_inside:
                     selected_node_ids.add(node.get("id"))
                     asset_type = "software"
-                    if raw_type == "entity":
+                    if raw_type in ("entity", "interface"):
                         asset_type = "hardware"
                     elif raw_type == "storage":
                         asset_type = "data"
@@ -352,13 +352,32 @@ def deduplicate_assets(
     # 读取 AI 大模型配置
     settings = db.query(SystemSettings).first()
     
+    # 建立 (diagram_id, node_name) -> node_type 的映射以区分更细致的节点类型 (如 entity, interface)
+    node_type_map = {}
+    diagrams = db.query(Diagram).filter(Diagram.domain_id == domain_id).all()
+    for diag in diagrams:
+        try:
+            snapshot = json.loads(diag.snapshot_json)
+            for node in snapshot.get("nodes", []):
+                n_name = node.get("data", {}).get("name")
+                n_type = node.get("type")
+                if n_name and n_type:
+                    node_type_map[(diag.id, n_name)] = n_type
+        except Exception:
+            continue
+
+    def get_actual_type(asset):
+        if asset.diagram_id and (asset.diagram_id, asset.name) in node_type_map:
+            return node_type_map[(asset.diagram_id, asset.name)]
+        return asset.asset_type
+    
     # 降级备用逻辑：如果是单元测试或未配置大模型，基于字符串相似度规则给出建议
     if not settings or not settings.api_key:
         print("未检测到大模型配置，使用静态文本匹配算法进行资产去重建议。")
         suggestions = []
         visited = set()
         
-        # 简单相似度规则：若名字长度大于4且有包含关系且类型相同，视为重复
+        # 简单相似度规则：若名字长度大于4且有包含关系且实际类型相同，视为重复
         for i in range(len(assets)):
             if assets[i].id in visited:
                 continue
@@ -366,7 +385,7 @@ def deduplicate_assets(
                 if assets[j].id in visited:
                     continue
                 a1, a2 = assets[i], assets[j]
-                if a1.asset_type == a2.asset_type:
+                if get_actual_type(a1) == get_actual_type(a2):
                     # 去除前缀后缀做简单包含校验
                     n1, n2 = a1.name.lower(), a2.name.lower()
                     if (len(n1) > 3 and len(n2) > 3) and (n1 in n2 or n2 in n1):
@@ -391,12 +410,12 @@ def deduplicate_assets(
             "Content-Type": "application/json"
         }
         system_prompt = (
-            "你是一个车载网络安全分析专家。你的任务是分析给出的资产列表，识别并合并冗余的、意思重复的或可以归并为同一物理/逻辑实体的资产（尤其是那些因画图习惯或不同视角而重复提取的资产，如‘https数据流’与‘https下载数据’）。\n\n"
+            "你是一个车载网络安全专家。你的任务是分析给出的资产列表，识别并合并冗余的、意思重复的或可以归并为同一物理/逻辑实体的资产（尤其是那些因画图习惯或不同视角而重复提取的资产，如‘https数据流’与‘https下载数据’）。\n\n"
             "【判定与合并准则】：\n"
             "1. 语义相近合并：如果两个资产指代同一个网络通信、数据流或者物理组件（例如：一个从发送方命名为数据流，另一个从接收方命名为下载数据，且都用于HTTPS传输/OTA下载），应当进行合并。\n"
             "2. 归并原则：\n"
             "   - 通信资产：若协议相同、传输数据类型和用途高度重合，合并为一个。\n"
-            "   - 软硬件资产：指代同一个控制器或服务但命名略有差异的，合并为一个。\n"
+            "   - 软硬件及接口资产：指代同一个控制器或服务但命名略有差异的，合并为一个。特别注意：同一物理实体设备的控制器（如 'MCU'，Type 为 'entity'）与其对外物理暴露接口（如 'MCU_JTAG'，Type 为 'interface'）是不同维度的资产，有完全不同的威胁暴露面，切勿将控制器与物理接口资产进行合并。\n"
             "3. 保持简洁：保留最具体、表意最完整的一个作为 `keep_asset_id`，将冗余的放在 `remove_asset_ids`。\n\n"
             "请给出你的合并去重建议，并严格以 JSON 格式输出，格式必须为：\n"
             "{\n"
@@ -410,7 +429,9 @@ def deduplicate_assets(
         )
         prompt_content = f"分析以下资产列表，找出命名类似且属于同一实体的冗余合并去重资产：\n"
         for a in assets:
-            prompt_content += f"- ID: {a.id}, Name: {a.name}, Type: {a.asset_type}, Protocol: {a.protocol or 'N/A'}\n"
+            actual_type = get_actual_type(a)
+            type_str = f"{a.asset_type} ({actual_type})" if actual_type != a.asset_type else a.asset_type
+            prompt_content += f"- ID: {a.id}, Name: {a.name}, Type: {type_str}, Protocol: {a.protocol or 'N/A'}\n"
             
         llm_payload = {
             "model": settings.model_name,
@@ -446,7 +467,7 @@ def deduplicate_assets(
                 if assets[j].id in visited:
                     continue
                 a1, a2 = assets[i], assets[j]
-                if a1.asset_type == a2.asset_type and a1.name.split('_')[0] == a2.name.split('_')[0]:
+                if get_actual_type(a1) == get_actual_type(a2) and a1.name.split('_')[0] == a2.name.split('_')[0]:
                     keep = a1
                     remove = a2
                     suggestions.append(DeduplicateSuggestionItem(

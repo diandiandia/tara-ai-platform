@@ -248,6 +248,7 @@ def ai_generate_topology(
     # 检查域控锁定状态
     check_domain_idle(diagram.domain_id, db)
     
+    reasoning_steps = {}
     # 规则算法生成 Mock 数据作为降级 (当大模型不可用或没有 API_KEY 时)
     p = req_data.prompt.lower()
     if "诊断" in p or "diagnostic" in p:
@@ -370,7 +371,7 @@ def ai_generate_topology(
                 "你是一个车载网络安全拓扑设计助手。请根据用户的需求，输出一个标准的 JSON。\n"
                 "本系统将根据你设计的 DFD 拓扑自动提取安全资产，请仔细遵循以下映射关系来绘制并填写属性，以便自动提取完整正确的资产：\n"
                 "- 节点类型 type='process' 代表【软件资产】；\n"
-                "- 节点类型 type='entity' 代表【硬件资产】（如OBD接口、网关控制器、物理设备）；\n"
+                "- 节点类型 type='entity' 代表【硬件资产】（如OBD接口、网关控制器、物理设备）；\n- 节点类型 type='interface' 代表【接口资产】（属于硬件资产，如串口、USB、JTAG等）；\n"
                 "- 节点类型 type='storage' 代表【数据资产】（如数据库、本地配置文件、内存数据）；\n"
                 "- 节点类型 type='boundary' 代表【物理安全边界】；\n"
                 "- 连线 edges 代表【数据流/通信资产】。\n"
@@ -384,10 +385,23 @@ def ai_generate_topology(
                 "- 连线的 data.protocol 填数据流传输采用的协议；\n"
                 "- 连线的 data.transmitted_info 填传输的具体数据内容（如固件刷写包、诊断请求指令等，不要为空）。\n"
                 "\n"
+                "【🧠 结构化推理思维链 (Chain of Thought)】：\n"
+                "为了提高输出拓扑的安全严谨性与合理性，你必须在输出中包含一个 `reasoning_steps` 字段。在输出 `nodes` 和 `edges` 之前，在 `reasoning_steps` 里严格按照以下四个步骤按顺序进行分析：\n"
+                "1. elements_analysis (元素分析): 分析并识别该场景中应包含哪些节点资产；\n"
+                "2. relationships_analysis (关系分析): 分析这些节点应处于什么网段与物理边界关系中（如外部网络、车身网段、安全边界等）；\n"
+                "3. data_flows_analysis (数据流分析): 梳理节点之间的数据交互方向与所采用的通信协议；\n"
+                "4. properties_fill_analysis (属性填充分析): 说明如何为节点和数据流的 data 字段填充真实的属性名称、详细安全功能描述与通信内容备注。\n"
+                "\n"
                 "你必须输出标准的 JSON，格式为：\n"
                 "{\n"
+                '  "reasoning_steps": {\n'
+                '    "elements_analysis": "第一步分析车载拓扑元素及类型...",\n'
+                '    "relationships_analysis": "第二步分析网卡与安全边界拓扑位置...",\n'
+                '    "data_flows_analysis": "第三步分析通信交互数据流与传输协议...",\n'
+                '    "properties_fill_analysis": "第四步分析各节点和连线的详细属性说明..."\n'
+                '  },\n'
                 '  "nodes": [\n'
-                '    {"id": "n1", "type": "entity|process|storage|boundary", "position": {"x": 100, "y": 150}, "style": {"width": 100, "height": 100}, "data": {"name": "节点名", "description": "描述", "protocol": "协议", "remarks": "备注"}}\n'
+                '    {"id": "n1", "type": "entity|process|storage|boundary|interface", "position": {"x": 100, "y": 150}, "style": {"width": 100, "height": 100}, "data": {"name": "节点名", "description": "描述", "protocol": "协议", "remarks": "备注"}}\n'
                 "  ],\n"
                 '  "edges": [\n'
                 '    {"id": "e1", "source": "n1", "target": "n2", "data": {"name": "连线名", "protocol": "协议", "transmitted_info": "传输数据"}}\n'
@@ -411,11 +425,14 @@ def ai_generate_topology(
                 if "nodes" in parsed and "edges" in parsed:
                     nodes = parsed["nodes"]
                     edges = parsed["edges"]
+                    reasoning_steps = parsed.get("reasoning_steps", {})
         except Exception as e:
             print(f"⚠️ LLM 拓扑生成失败，降级执行规则算法: {e}")
 
     # 保存并更新 version_no 自增
     snapshot = {"nodes": nodes, "edges": edges}
+    if reasoning_steps:
+        snapshot["reasoning_steps"] = reasoning_steps
     diagram.snapshot_json = json.dumps(snapshot, ensure_ascii=False)
     diagram.version_no += 1
     db.commit()
@@ -508,6 +525,7 @@ def ai_chat_diagram(
     if not diagram:
         raise HTTPException(status_code=404, detail="功能图不存在")
         
+    reasoning_steps = {}
     p = req_data.prompt.lower()
     
     # 默认降级规则数据
@@ -569,7 +587,7 @@ def ai_chat_diagram(
                 "你是一个车载网络安全拓扑设计助手。请针对用户的聊天和画图需求进行解答，并同时输出数据流图DFD设计。\n"
                 "本系统将根据你设计的 DFD 拓扑自动提取安全资产，请仔细遵循以下映射关系来绘制并填写属性，以便自动提取完整正确的资产：\n"
                 "- 节点类型 type='process' 代表【软件资产】；\n"
-                "- 节点类型 type='entity' 代表【硬件资产】（如OBD接口、网关控制器、物理设备）；\n"
+                "- 节点类型 type='entity' 代表【硬件资产】（如OBD接口、网关控制器、物理设备）；\n- 节点类型 type='interface' 代表【接口资产】（属于硬件资产，如串口、USB、JTAG等）；\n"
                 "- 节点类型 type='storage' 代表【数据资产】（如数据库、本地配置文件、内存数据）；\n"
                 "- 节点类型 type='boundary' 代表【物理安全边界】；\n"
                 "- 连线 edges 代表【数据流/通信资产】。\n"
@@ -583,6 +601,13 @@ def ai_chat_diagram(
                 "- 连线的 data.protocol 填数据流传输采用的协议；\n"
                 "- 连线的 data.transmitted_info 填传输的具体数据内容（如固件刷写包、诊断请求指令等，不要为空）。\n"
                 "\n"
+                "【🧠 结构化推理思维链 (Chain of Thought)】：\n"
+                "为了提高输出拓扑的安全严谨性与合理性，你必须在输出的 `snapshot_json` 中包含一个 `reasoning_steps` 字段。在输出 `nodes` 和 `edges` 之前，在 `reasoning_steps` 里严格按照以下四个步骤按顺序进行分析：\n"
+                "1. elements_analysis (元素分析): 分析并识别该场景中应包含哪些节点资产；\n"
+                "2. relationships_analysis (关系分析): 分析这些节点应处于什么网段与物理边界关系中（如外部网络、车身网段、安全边界等）；\n"
+                "3. data_flows_analysis (数据流分析): 梳理节点之间的数据交互方向与所采用的通信协议；\n"
+                "4. properties_fill_analysis (属性填充分析): 说明如何为节点和数据流的 data 字段填充真实的属性名称、详细安全功能描述与通信内容备注。\n"
+                "\n"
                 "【⚡ 增量更新与位置保留规则 (Incremental Mode & Coordinates Preservation)】：\n"
                 "如果提供了当前画布已有的 DFD 拓扑数据，请务必执行以下增量修改规则，切勿盲目推倒重建：\n"
                 "1. **保留无关已有节点**：对于与用户最新需求或对话修改无关的已有节点 and 连线，必须原样保留在 JSON 中（包括其 id, type, data, style, position 属性），不可删除或重命名已有节点 ID。\n"
@@ -591,11 +616,17 @@ def ai_chat_diagram(
                 "4. **更新与删除**：如果用户要求修改或删除某个节点/数据流，请按需修改其属性（如修改 protocol）或从 nodes/edges 列表中移除。\n"
                 "\n"
                 "你必须返回一个结构化的 JSON 对象，包含两个字段：\n"
-                '1. "reply": 你对用户需求的理解和设计方案的自然语言描述（请用中文回答，不要包含 markdown 格式，控制在200字以内）。\n'
-                '2. "snapshot_json": 一个包含 nodes 和 edges 的 JSON 对象，格式为：\n'
+                '1. "reply": 你对用户需求的理解 and 设计方案的自然语言描述（请用中文回答，不要包含 markdown 格式，控制在200字以内）。\n'
+                '2. "snapshot_json": 一个包含 reasoning_steps、nodes 和 edges 的 JSON 对象，格式为：\n'
                 '{\n'
+                '  "reasoning_steps": {\n'
+                '    "elements_analysis": "第一步分析车载拓扑元素及类型...",\n'
+                '    "relationships_analysis": "第二步分析网卡与安全边界拓扑位置...",\n'
+                '    "data_flows_analysis": "第三步分析通信交互数据流与传输协议...",\n'
+                '    "properties_fill_analysis": "第四步分析各节点和连线的详细属性说明..."\n'
+                '  },\n'
                 '  "nodes": [\n'
-                '    {"id": "n1", "type": "entity|process|storage|boundary", "position": {"x": 100, "y": 150}, "style": {"width": 100, "height": 100}, "data": {"name": "节点名", "description": "描述", "protocol": "协议", "remarks": "备注"}}\n'
+                '    {"id": "n1", "type": "entity|process|storage|boundary|interface", "position": {"x": 100, "y": 150}, "style": {"width": 100, "height": 100}, "data": {"name": "节点名", "description": "描述", "protocol": "协议", "remarks": "备注"}}\n'
                 '  ],\n'
                 '  "edges": [\n'
                 '    {"id": "e1", "source": "n1", "target": "n2", "data": {"name": "连线名", "protocol": "协议", "transmitted_info": "传输数据"}}\n'
@@ -638,8 +669,15 @@ def ai_chat_diagram(
                 parsed = json.loads(choice_text)
                 if "reply" in parsed and "snapshot_json" in parsed:
                     reply = parsed["reply"]
-                    nodes = parsed["snapshot_json"].get("nodes", nodes)
-                    edges = parsed["snapshot_json"].get("edges", edges)
+                    snapshot_obj = parsed["snapshot_json"]
+                    if isinstance(snapshot_obj, str):
+                        try:
+                            snapshot_obj = json.loads(snapshot_obj)
+                        except Exception:
+                            snapshot_obj = {}
+                    nodes = snapshot_obj.get("nodes", nodes)
+                    edges = snapshot_obj.get("edges", edges)
+                    reasoning_steps = snapshot_obj.get("reasoning_steps", {})
                     
                     # 运行独立的子代理校验并附加到回复末尾 (Context Budgeting & Sub-Agents)
                     compliance_feedback = verify_dfd_compliance(db, nodes, edges)
@@ -647,7 +685,10 @@ def ai_chat_diagram(
         except Exception as e:
             print(f"⚠️ LLM 拓扑对话失败，降级执行规则算法: {e}")
 
-    snapshot_str = json.dumps({"nodes": nodes, "edges": edges}, ensure_ascii=False)
+    snapshot_payload = {"nodes": nodes, "edges": edges}
+    if reasoning_steps:
+        snapshot_payload["reasoning_steps"] = reasoning_steps
+    snapshot_str = json.dumps(snapshot_payload, ensure_ascii=False)
     return {
         "reply": reply,
         "snapshot_json": snapshot_str

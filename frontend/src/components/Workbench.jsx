@@ -513,7 +513,7 @@ export default function Workbench({ setPage, setDomainId, setDiagramId, projectI
   const isProjectCompleted = currentProject?.is_archived === 1;
 
   return (
-    <div style={{ display: 'flex', flexGrow: 1, minHeight: 'calc(100vh - 64px)' }}>
+    <div style={{ display: 'flex', flexGrow: 1, height: 'calc(100vh - 64px)', overflow: 'hidden' }}>
       {/* Left Sidebar */}
       <div className="glass" style={{
         width: '320px',
@@ -626,7 +626,7 @@ export default function Workbench({ setPage, setDomainId, setDiagramId, projectI
       </div>
 
       {/* Right Work Area */}
-      <div style={{ flexGrow: 1, padding: '32px', overflowY: 'auto' }}>
+      <div style={{ flexGrow: 1, padding: '32px 32px 16px 32px', display: 'flex', flexDirection: 'column', height: '100%', overflow: 'hidden' }}>
         {taraError && (
           <div style={{
             background: 'rgba(244, 63, 94, 0.1)',
@@ -638,7 +638,8 @@ export default function Workbench({ setPage, setDomainId, setDiagramId, projectI
             marginBottom: '24px',
             display: 'flex',
             justifyContent: 'space-between',
-            alignItems: 'center'
+            alignItems: 'center',
+            flexShrink: 0
           }}>
             <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
               <AlertTriangle size={16} />
@@ -665,8 +666,8 @@ export default function Workbench({ setPage, setDomainId, setDiagramId, projectI
             </p>
           </div>
         ) : (
-          <div>
-            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '28px' }}>
+          <div style={{ display: 'flex', flexDirection: 'column', flexGrow: 1, minHeight: 0 }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '20px', flexShrink: 0 }}>
               <div>
                 <h2 style={{ fontSize: '24px', color: 'var(--text-primary)', fontWeight: '600', display: 'flex', alignItems: 'center', gap: '8px' }}>
                   {activeDomain.name} {t("工作台")}
@@ -675,13 +676,11 @@ export default function Workbench({ setPage, setDomainId, setDiagramId, projectI
                   {t("在此管理该域控的数据流拓扑画布图，以及核对自动提取的安全资产")}
                 </p>
               </div>
-
-
             </div>
 
             {/* DFD Diagrams Grid */}
-            <div style={{ marginBottom: '40px' }}>
-              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '16px' }}>
+            <div style={{ flex: '1 1 35%', display: 'flex', flexDirection: 'column', minHeight: 0, marginBottom: '24px' }}>
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '12px', flexShrink: 0 }}>
                 <h3 style={{ fontSize: '16px', fontWeight: '600', color: 'var(--text-primary)' }}>{t("功能图 (DFD)")}</h3>
                 <button 
                   onClick={() => setShowDfdModal(true)} 
@@ -693,55 +692,57 @@ export default function Workbench({ setPage, setDomainId, setDiagramId, projectI
                 </button>
               </div>
 
-              {diagrams.length === 0 ? (
-                <div className="glass" style={{ padding: '36px', textAlign: 'center', borderStyle: 'dashed', color: 'var(--text-secondary)' }}>
-                  {t("暂无功能数据流图，请点击右上角“新建 DFD 画布”进行绘制。")}
-                </div>
-              ) : (
-                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(220px, 1fr))', gap: '16px' }}>
-                  {diagrams.map((diag) => (
-                    <div
-                      key={diag.id}
-                      className="glass-interactive"
-                      onClick={() => {
-                        setDomainId(activeDomain.id);
-                        setDiagramId(diag.id);
-                        setPage('dfd-editor');
-                      }}
-                      style={{
-                        padding: '16px',
-                        cursor: 'pointer',
-                        display: 'flex',
-                        flexDirection: 'column',
-                        minHeight: '120px',
-                        justifyContent: 'space-between'
-                      }}
-                    >
-                      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' }}>
-                        <span style={{ fontSize: '14px', fontWeight: '600', color: 'var(--text-primary)' }}>
-                          {diag.title}
-                        </span>
-                        {!isProjectCompleted && activeDomain.status !== 'running' && (
-                          <Trash2
-                            size={14}
-                            onClick={(e) => handleDeleteDfdClick(e, diag.id, diag.title)}
-                            style={{ color: 'var(--text-muted)', cursor: 'pointer' }}
-                          />
-                        )}
+              <div style={{ overflowY: 'auto', flexGrow: 1, minHeight: 0, paddingRight: '4px' }}>
+                {diagrams.length === 0 ? (
+                  <div className="glass" style={{ padding: '36px', textAlign: 'center', borderStyle: 'dashed', color: 'var(--text-secondary)' }}>
+                    {t("暂无功能数据流图，请点击右上角“新建 DFD 画布”进行绘制。")}
+                  </div>
+                ) : (
+                  <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(220px, 1fr))', gap: '16px' }}>
+                    {diagrams.map((diag) => (
+                      <div
+                        key={diag.id}
+                        className="glass-interactive"
+                        onClick={() => {
+                          setDomainId(activeDomain.id);
+                          setDiagramId(diag.id);
+                          setPage('dfd-editor');
+                        }}
+                        style={{
+                          padding: '16px',
+                          cursor: 'pointer',
+                          display: 'flex',
+                          flexDirection: 'column',
+                          minHeight: '120px',
+                          justifyContent: 'space-between'
+                        }}
+                      >
+                        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' }}>
+                          <span style={{ fontSize: '14px', fontWeight: '600', color: 'var(--text-primary)' }}>
+                            {diag.title}
+                          </span>
+                          {!isProjectCompleted && activeDomain.status !== 'running' && (
+                            <Trash2
+                              size={14}
+                              onClick={(e) => handleDeleteDfdClick(e, diag.id, diag.title)}
+                              style={{ color: 'var(--text-muted)', cursor: 'pointer' }}
+                            />
+                          )}
+                        </div>
+                        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', fontSize: '12px', color: 'var(--text-secondary)' }}>
+                          <span>{t("版本")}: v{diag.version_no}</span>
+                          <span>{t("去画图 DFD →")}</span>
+                        </div>
                       </div>
-                      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', fontSize: '12px', color: 'var(--text-secondary)' }}>
-                        <span>{t("版本")}: v{diag.version_no}</span>
-                        <span>{t("去画图 DFD →")}</span>
-                      </div>
-                    </div>
-                  ))}
-                </div>
-              )}
+                    ))}
+                  </div>
+                )}
+              </div>
             </div>
 
             {/* Assets Table */}
-            <div>
-              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '16px' }}>
+            <div style={{ flex: '1 1 65%', display: 'flex', flexDirection: 'column', minHeight: 0, paddingBottom: '8px' }}>
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '12px', flexShrink: 0 }}>
                 <h3 style={{ fontSize: '16px', fontWeight: '600', color: 'var(--text-primary)', display: 'flex', alignItems: 'center', gap: '6px' }}>
                   <Table size={16} /> {t("提取资产汇总表")}
                 </h3>
@@ -784,132 +785,134 @@ export default function Workbench({ setPage, setDomainId, setDiagramId, projectI
                 </div>
               </div>
 
-              {assets.length === 0 ? (
-                <div className="glass" style={{ padding: '36px', textAlign: 'center', borderStyle: 'dashed', color: 'var(--text-secondary)' }}>
-                  {t("暂无提取出的资产，请在绘制画布后点击上方“提取资产”按钮，或点击“+ 手动添加资产”手动录入。")}
-                </div>
-              ) : (
-                <div>
-                  <div style={{ fontSize: '12px', color: 'var(--text-secondary)', marginBottom: '10px', padding: '6px 12px', background: 'rgba(99, 102, 241, 0.05)', borderRadius: '6px', border: '1px solid rgba(99, 102, 241, 0.15)', display: 'inline-block' }}>
-                    💡 <b>{t("提示：")}</b>{t("直接点击下表中的“资产名称”、“资产类型”、“通信协议”、“备注说明”输入框即可直接修改，失焦（点击别处）即可自动保存同步。")}
+              <div style={{ overflowY: 'auto', flexGrow: 1, minHeight: 0, display: 'flex', flexDirection: 'column' }}>
+                {assets.length === 0 ? (
+                  <div className="glass" style={{ padding: '36px', textAlign: 'center', borderStyle: 'dashed', color: 'var(--text-secondary)', flexGrow: 1, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                    {t("暂无提取出的资产，请在绘制画布后点击上方“提取资产”按钮，或点击“+ 手动添加资产”手动录入。")}
                   </div>
-                  <div className="table-container" style={{ maxHeight: '56vh', overflowY: 'auto', border: '1px solid var(--border-color)', borderRadius: '6px' }}>
-                  <table className="custom-table">
-                    <thead>
-                      <tr>
-                        <th style={{ width: '5%' }}>{t("序号")}</th>
-                        <th style={{ width: '25%' }}>{t("资产名称")}</th>
-                        <th style={{ width: '15%' }}>{t("资产类型")}</th>
-                        <th style={{ width: '15%' }}>{t("通信协议")}</th>
-                        <th style={{ width: '25%' }}>{t("备注说明")}</th>
-                        <th style={{ width: '12%' }}>{t("专家核对状态")}</th>
-                        <th style={{ width: '3%', textAlign: 'center' }}>{t("操作")}</th>
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {assets.map((asset, index) => {
-                        const isAutoAsset = asset.diagram_id !== null && asset.diagram_id !== undefined;
-                        const isConfirmedOrRejected = asset.status === 'confirmed' || asset.status === 'rejected';
-                        const isFieldDisabled = isProjectCompleted || activeDomain.status === 'running' || (isAutoAsset && isConfirmedOrRejected);
-                        
-                        return (
-                          <tr key={asset.id} style={{ opacity: asset.status === 'rejected' ? 0.5 : 1 }}>
-                            <td>{index + 1}</td>
-                            <td>
-                              <input
-                                type="text"
-                                className="editable-cell-input"
-                                style={{ fontWeight: '600' }}
-                                value={asset.name}
-                                onChange={(e) => handleAssetFieldChange(asset.id, 'name', e.target.value)}
-                                onBlur={(e) => handleAssetFieldBlur(asset.id, 'name', e.target.value)}
-                                disabled={isFieldDisabled}
-                              />
-                            </td>
-                            <td>
-                              <select
-                                className="editable-cell-select"
-                                value={asset.asset_type}
-                                onChange={(e) => {
-                                  handleAssetFieldChange(asset.id, 'asset_type', e.target.value);
-                                  handleAssetFieldBlur(asset.id, 'asset_type', e.target.value);
-                                }}
-                                disabled={isFieldDisabled}
-                                style={{ paddingRight: '12px' }}
-                              >
-                                <option value="data">{t("数据资产")}</option>
-                                <option value="software">{t("软件资产")}</option>
-                                <option value="hardware">{t("硬件资产")}</option>
-                                <option value="communication">{t("通信资产")}</option>
-                              </select>
-                            </td>
-                            <td>
-                              <input
-                                type="text"
-                                className="editable-cell-input"
-                                style={{ fontFamily: 'monospace' }}
-                                value={asset.protocol || ''}
-                                onChange={(e) => handleAssetFieldChange(asset.id, 'protocol', e.target.value)}
-                                onBlur={(e) => handleAssetFieldBlur(asset.id, 'protocol', e.target.value)}
-                                placeholder="N/A"
-                                disabled={isFieldDisabled}
-                              />
-                            </td>
-                            <td>
-                              <input
-                                type="text"
-                                className="editable-cell-input"
-                                value={asset.description || ''}
-                                onChange={(e) => handleAssetFieldChange(asset.id, 'description', e.target.value)}
-                                onBlur={(e) => handleAssetFieldBlur(asset.id, 'description', e.target.value)}
-                                placeholder={t("无备注")}
-                                disabled={isFieldDisabled}
-                              />
-                            </td>
-                            <td>
-                              <select
-                                value={asset.status}
-                                onChange={(e) => handleAssetStatusChange(asset.id, e.target.value)}
-                                disabled={isProjectCompleted || activeDomain.status === 'running'}
-                                style={{
-                                  background: 'var(--bg-card)',
-                                  border: '1px solid var(--border-color)',
-                                  borderRadius: '4px',
-                                  color: asset.status === 'confirmed' ? 'var(--success)' : asset.status === 'rejected' ? 'var(--accent)' : 'var(--text-primary)',
-                                  padding: '4px 8px',
-                                  outline: 'none',
-                                  fontSize: '13px',
-                                  cursor: 'pointer',
-                                  width: '100%'
-                                }}
-                              >
-                                <option value="draft" style={{ color: 'var(--text-primary)', background: 'var(--bg-dark)' }}>{t("待核对 (Draft)")}</option>
-                                <option value="confirmed" style={{ color: 'var(--success)', background: 'var(--bg-dark)' }}>{t("已确认 (Confirmed)")}</option>
-                                <option value="rejected" style={{ color: 'var(--accent)', background: 'var(--bg-dark)' }}>{t("已拒绝 (Rejected)")}</option>
-                              </select>
-                            </td>
-                            <td style={{ textAlign: 'center' }}>
-                              <button
-                                onClick={() => handleDeleteAsset(asset)}
-                                className="btn-icon"
-                                style={{ color: 'var(--accent)', cursor: 'pointer', background: 'none', border: 'none', padding: '4px' }}
-                                title={t("彻底删除资产")}
-                                disabled={isFieldDisabled}
-                              >
-                                <Trash2 size={13} />
-                              </button>
-                            </td>
+                ) : (
+                  <div style={{ display: 'flex', flexDirection: 'column', flexGrow: 1, minHeight: 0 }}>
+                    <div style={{ fontSize: '12px', color: 'var(--text-secondary)', marginBottom: '10px', padding: '6px 12px', background: 'rgba(99, 102, 241, 0.05)', borderRadius: '6px', border: '1px solid rgba(99, 102, 241, 0.15)', alignSelf: 'flex-start', flexShrink: 0 }}>
+                      💡 <b>{t("提示：")}</b>{t("直接点击下表中的“资产名称”、“资产类型”、“通信协议”、“备注说明”输入框即可直接修改，失焦（点击别处）即可自动保存同步。")}
+                    </div>
+                    <div className="table-container" style={{ flexGrow: 1, overflowY: 'auto', border: '1px solid var(--border-color)', borderRadius: '6px', minHeight: 0 }}>
+                      <table className="custom-table">
+                        <thead>
+                          <tr>
+                            <th style={{ width: '5%' }}>{t("序号")}</th>
+                            <th style={{ width: '25%' }}>{t("资产名称")}</th>
+                            <th style={{ width: '15%' }}>{t("资产类型")}</th>
+                            <th style={{ width: '15%' }}>{t("通信协议")}</th>
+                            <th style={{ width: '25%' }}>{t("备注说明")}</th>
+                            <th style={{ width: '12%' }}>{t("专家核对状态")}</th>
+                            <th style={{ width: '3%', textAlign: 'center' }}>{t("操作")}</th>
                           </tr>
-                        );
-                      })}
-                    </tbody>
-                  </table>
-                </div>
+                        </thead>
+                        <tbody>
+                          {assets.map((asset, index) => {
+                            const isAutoAsset = asset.diagram_id !== null && asset.diagram_id !== undefined;
+                            const isConfirmedOrRejected = asset.status === 'confirmed' || asset.status === 'rejected';
+                            const isFieldDisabled = isProjectCompleted || activeDomain.status === 'running' || (isAutoAsset && isConfirmedOrRejected);
+                            
+                            return (
+                              <tr key={asset.id} style={{ opacity: asset.status === 'rejected' ? 0.5 : 1 }}>
+                                <td>{index + 1}</td>
+                                <td>
+                                  <input
+                                    type="text"
+                                    className="editable-cell-input"
+                                    style={{ fontWeight: '600' }}
+                                    value={asset.name}
+                                    onChange={(e) => handleAssetFieldChange(asset.id, 'name', e.target.value)}
+                                    onBlur={(e) => handleAssetFieldBlur(asset.id, 'name', e.target.value)}
+                                    disabled={isFieldDisabled}
+                                  />
+                                </td>
+                                <td>
+                                  <select
+                                    className="editable-cell-select"
+                                    value={asset.asset_type}
+                                    onChange={(e) => {
+                                      handleAssetFieldChange(asset.id, 'asset_type', e.target.value);
+                                      handleAssetFieldBlur(asset.id, 'asset_type', e.target.value);
+                                    }}
+                                    disabled={isFieldDisabled}
+                                    style={{ paddingRight: '12px' }}
+                                  >
+                                    <option value="data">{t("数据资产")}</option>
+                                    <option value="software">{t("软件资产")}</option>
+                                    <option value="hardware">{t("硬件资产")}</option>
+                                    <option value="communication">{t("通信资产")}</option>
+                                  </select>
+                                </td>
+                                <td>
+                                  <input
+                                    type="text"
+                                    className="editable-cell-input"
+                                    style={{ fontFamily: 'monospace' }}
+                                    value={asset.protocol || ''}
+                                    onChange={(e) => handleAssetFieldChange(asset.id, 'protocol', e.target.value)}
+                                    onBlur={(e) => handleAssetFieldBlur(asset.id, 'protocol', e.target.value)}
+                                    placeholder="N/A"
+                                    disabled={isFieldDisabled}
+                                  />
+                                </td>
+                                <td>
+                                  <input
+                                    type="text"
+                                    className="editable-cell-input"
+                                    value={asset.description || ''}
+                                    onChange={(e) => handleAssetFieldChange(asset.id, 'description', e.target.value)}
+                                    onBlur={(e) => handleAssetFieldBlur(asset.id, 'description', e.target.value)}
+                                    placeholder={t("无备注")}
+                                    disabled={isFieldDisabled}
+                                  />
+                                </td>
+                                <td>
+                                  <select
+                                    value={asset.status}
+                                    onChange={(e) => handleAssetStatusChange(asset.id, e.target.value)}
+                                    disabled={isProjectCompleted || activeDomain.status === 'running'}
+                                    style={{
+                                      background: 'var(--bg-card)',
+                                      border: '1px solid var(--border-color)',
+                                      borderRadius: '4px',
+                                      color: asset.status === 'confirmed' ? 'var(--success)' : asset.status === 'rejected' ? 'var(--accent)' : 'var(--text-primary)',
+                                      padding: '4px 8px',
+                                      outline: 'none',
+                                      fontSize: '13px',
+                                      cursor: 'pointer',
+                                      width: '100%'
+                                    }}
+                                  >
+                                    <option value="draft" style={{ color: 'var(--text-primary)', background: 'var(--bg-dark)' }}>{t("待核对 (Draft)")}</option>
+                                    <option value="confirmed" style={{ color: 'var(--success)', background: 'var(--bg-dark)' }}>{t("已确认 (Confirmed)")}</option>
+                                    <option value="rejected" style={{ color: 'var(--accent)', background: 'var(--bg-dark)' }}>{t("已拒绝 (Rejected)")}</option>
+                                  </select>
+                                </td>
+                                <td style={{ textAlign: 'center' }}>
+                                  <button
+                                    onClick={() => handleDeleteAsset(asset)}
+                                    className="btn-icon"
+                                    style={{ color: 'var(--accent)', cursor: 'pointer', background: 'none', border: 'none', padding: '4px' }}
+                                    title={t("彻底删除资产")}
+                                    disabled={isFieldDisabled}
+                                  >
+                                    <Trash2 size={13} />
+                                  </button>
+                                </td>
+                              </tr>
+                            );
+                          })}
+                        </tbody>
+                      </table>
+                    </div>
+                  </div>
+                )}
               </div>
-              )}
 
               {/* Action Buttons Section under the Assets Table */}
-              <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '16px', marginTop: '24px' }}>
+              <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '16px', marginTop: '16px', flexShrink: 0 }}>
                 <button
                   onClick={handleTriggerDeduplicate}
                   className="btn btn-secondary"

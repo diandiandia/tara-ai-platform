@@ -261,6 +261,16 @@ class TestTaraAPI(unittest.TestCase):
                     "id": "node_3",
                     "type": "storage",
                     "data": {"name": "UserData_DB", "description": "用户本地数据"}
+                },
+                {
+                    "id": "node_4",
+                    "type": "interface",
+                    "data": {"name": "JTAG_Debug_Port", "protocol": "JTAG", "description": "芯片物理调试接口"}
+                },
+                {
+                    "id": "node_5",
+                    "type": "entity",
+                    "data": {"name": "JTAG", "protocol": "N/A", "description": "芯片内嵌物理调试模块"}
                 }
             ],
             "edges": [
@@ -284,8 +294,12 @@ class TestTaraAPI(unittest.TestCase):
         self.assertEqual(ext_resp.status_code, 200)
         assets = ext_resp.json()
         
-        # 检查是否成功提取 4 个资产 (3个节点，1个连线)
-        self.assertEqual(len(assets), 4)
+        # 检查是否成功提取 6 个资产 (5个节点，1个连线)
+        self.assertEqual(len(assets), 6)
+        
+        # 检查 interface 类型的节点是否正确提取为硬件资产 (hardware)
+        jtag_asset = next(a for a in assets if a["name"] == "JTAG_Debug_Port")
+        self.assertEqual(jtag_asset["asset_type"], "hardware")
         
         # 获取 IVI_Bluetooth_Receiver 资产 ID 并设为 confirmed
         receiver_asset = next(a for a in assets if a["name"] == "IVI_Bluetooth_Receiver")
@@ -314,13 +328,21 @@ class TestTaraAPI(unittest.TestCase):
             "snapshot_json": json.dumps(snapshot_data)
         })
         assets_final = self.client.post(f"/api/domains/{domain_id}/extract-assets", headers=headers).json()
-        self.assertEqual(len(assets_final), 4)
+        self.assertEqual(len(assets_final), 6)
         
         # 4. 触发域控内 AI 去重建议 (BR-33)
         dedup_suggestions_resp = self.client.post(f"/api/domains/{domain_id}/deduplicate", headers=headers)
         self.assertEqual(dedup_suggestions_resp.status_code, 200)
         suggestions = dedup_suggestions_resp.json()
         self.assertTrue(len(suggestions) >= 1)
+        
+        # 验证 entity (JTAG) 与 interface (JTAG_Debug_Port) 不会被合并
+        jtag_dev_asset = next(a for a in assets_final if a["name"] == "JTAG")
+        jtag_port_asset = next(a for a in assets_final if a["name"] == "JTAG_Debug_Port")
+        for sug in suggestions:
+            merged_ids = sug["remove_asset_ids"] + [sug["keep_asset_id"]]
+            self.assertFalse(jtag_dev_asset["id"] in merged_ids and jtag_port_asset["id"] in merged_ids,
+                             "Entity 'JTAG' and Interface 'JTAG_Debug_Port' should not be merged!")
         
         # 5. 确认去重合并并保留轨迹 (BR-35)
         confirm_dedup_resp = self.client.post(f"/api/domains/{domain_id}/deduplicate/confirm", headers=headers, json={

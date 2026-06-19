@@ -26,7 +26,7 @@ import {
 } from 'lucide-react';
 
 import CustomDfdNode from './CustomDfdNode';
-import { User, Database, Shield } from 'lucide-react';
+import { User, Database, Shield, Link } from 'lucide-react';
 
 function ParallelBezierEdge({
   id,
@@ -66,15 +66,43 @@ function ParallelBezierEdge({
     });
   } else {
     const curvature = data?.curvature !== undefined ? data.curvature : 0.25;
-    [edgePath, labelX, labelY] = getBezierPath({
-      sourceX,
-      sourceY,
-      sourcePosition,
-      targetX,
-      targetY,
-      targetPosition,
-      curvature
-    });
+    const isHorizontal = sourcePosition === 'left' || sourcePosition === 'right';
+    
+    if (curvature !== 0) {
+      if (isHorizontal) {
+        // Horizontal connection: offset Y coordinate to bend up/down
+        const dx = targetX - sourceX;
+        const cX1 = sourceX + (sourcePosition === 'right' ? Math.max(30, Math.abs(dx) * 0.25) : -Math.max(30, Math.abs(dx) * 0.25));
+        const cY1 = sourceY + curvature * 120;
+        const cX2 = targetX + (targetPosition === 'right' ? Math.max(30, Math.abs(dx) * 0.25) : -Math.max(30, Math.abs(dx) * 0.25));
+        const cY2 = targetY + curvature * 120;
+        
+        edgePath = `M ${sourceX} ${sourceY} C ${cX1} ${cY1}, ${cX2} ${cY2}, ${targetX} ${targetY}`;
+        labelX = 0.125 * sourceX + 0.375 * cX1 + 0.375 * cX2 + 0.125 * targetX;
+        labelY = 0.125 * sourceY + 0.375 * cY1 + 0.375 * cY2 + 0.125 * targetY;
+      } else {
+        // Vertical connection: offset X coordinate to bend left/right
+        const dy = targetY - sourceY;
+        const cX1 = sourceX + curvature * 120;
+        const cY1 = sourceY + (sourcePosition === 'bottom' ? Math.max(30, Math.abs(dy) * 0.25) : -Math.max(30, Math.abs(dy) * 0.25));
+        const cX2 = targetX + curvature * 120;
+        const cY2 = targetY + (targetPosition === 'bottom' ? Math.max(30, Math.abs(dy) * 0.25) : -Math.max(30, Math.abs(dy) * 0.25));
+        
+        edgePath = `M ${sourceX} ${sourceY} C ${cX1} ${cY1}, ${cX2} ${cY2}, ${targetX} ${targetY}`;
+        labelX = 0.125 * sourceX + 0.375 * cX1 + 0.375 * cX2 + 0.125 * targetX;
+        labelY = 0.125 * sourceY + 0.375 * cY1 + 0.375 * cY2 + 0.125 * targetY;
+      }
+    } else {
+      [edgePath, labelX, labelY] = getBezierPath({
+        sourceX,
+        sourceY,
+        sourcePosition,
+        targetX,
+        targetY,
+        targetPosition,
+        curvature: 0
+      });
+    }
   }
 
   return (
@@ -246,7 +274,8 @@ const nodeTypes = {
   entity: CustomDfdNode,
   process: CustomDfdNode,
   storage: CustomDfdNode,
-  boundary: CustomDfdNode
+  boundary: CustomDfdNode,
+  interface: CustomDfdNode
 };
 
 export default function DfdEditor({ setPage, diagramId }) {
@@ -469,6 +498,7 @@ export default function DfdEditor({ setPage, diagramId }) {
     if (type === 'process') typeName = t('处理过程');
     if (type === 'storage') typeName = t('数据存储');
     if (type === 'boundary') typeName = t('物理边界');
+    if (type === 'interface') typeName = t('接口');
 
     let width = 150;
     let height = 80;
@@ -867,6 +897,42 @@ export default function DfdEditor({ setPage, diagramId }) {
                 - - - - - - - -
               </div>
             </div>
+
+            {/* Interface Card */}
+            <div
+              onClick={() => !isReadOnly && handleAddNode('interface')}
+              style={{
+                padding: '12px',
+                background: 'rgba(217, 119, 6, 0.05)',
+                border: '1.5px solid rgba(217, 119, 6, 0.25)',
+                borderRadius: '8px',
+                cursor: isReadOnly ? 'not-allowed' : 'pointer',
+                display: 'flex',
+                flexDirection: 'column',
+                gap: '8px',
+                transition: 'all 0.2s ease',
+                opacity: isReadOnly ? 0.5 : 1,
+              }}
+              className="toolbox-card interface-card"
+            >
+              <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                <Link size={15} style={{ color: '#fbbf24' }} />
+                <span style={{ fontSize: '13px', fontWeight: '600', color: 'var(--text-primary)' }}>{t("接口 (Interface)")}</span>
+              </div>
+              <div style={{
+                height: '32px',
+                border: '2px solid #d97706',
+                background: 'rgba(217, 119, 6, 0.1)',
+                borderRadius: '4px',
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'center',
+                fontSize: '10px',
+                color: '#fbbf24',
+              }}>
+                [ Interface ]
+              </div>
+            </div>
           </div>
 
           <div style={{ marginTop: 'auto', fontSize: '12px', color: 'var(--text-secondary)', lineHeight: '1.4' }}>
@@ -904,6 +970,7 @@ export default function DfdEditor({ setPage, diagramId }) {
                 if (n.type === 'process') return '#d946ef';
                 if (n.type === 'storage') return '#10b981';
                 if (n.type === 'boundary') return '#f43f5e';
+                if (n.type === 'interface') return '#d97706';
                 return '#ccc';
               }}
               nodeColor={(n) => {
@@ -911,6 +978,7 @@ export default function DfdEditor({ setPage, diagramId }) {
                 if (n.type === 'process') return 'rgba(217, 70, 239, 0.2)';
                 if (n.type === 'storage') return 'rgba(16, 185, 129, 0.2)';
                 if (n.type === 'boundary') return 'rgba(244, 63, 150, 0.2)';
+                if (n.type === 'interface') return 'rgba(217, 119, 6, 0.2)';
                 return '#222';
               }}
               style={{ background: 'var(--bg-dark)', border: '1px solid var(--border-color)' }}
@@ -1187,7 +1255,7 @@ export default function DfdEditor({ setPage, diagramId }) {
                 <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
                   <input
                     type="range"
-                    min="0.0"
+                    min="-0.8"
                     max="0.8"
                     step="0.05"
                     style={{ flexGrow: 1, accentColor: 'var(--primary)', cursor: 'pointer' }}

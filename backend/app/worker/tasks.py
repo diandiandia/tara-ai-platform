@@ -43,6 +43,7 @@ def clean_and_parse_json(text: str) -> dict:
     """
     清除 LLM 返回的 Markdown 代码块标记并解析为 JSON
     """
+    import re
     text = text.strip()
     if text.startswith("```"):
         lines = text.split("\n")
@@ -51,7 +52,49 @@ def clean_and_parse_json(text: str) -> dict:
         if lines and lines[-1].strip() == "```":
             lines = lines[:-1]
         text = "\n".join(lines).strip()
-    return json.loads(text)
+    
+    # 1. 尝试清除 JSON 里的尾随逗号 (Trailing Commas)
+    text = re.sub(r',\s*([\]}])', r'\1', text)
+    
+    # 2. 使用 strict=False 解析以容忍控制字符 (如未转义的换行、制表符等)
+    parsed = json.loads(text, strict=False)
+    
+    # 3. 校验解析结果类型是否为字典
+    if not isinstance(parsed, dict):
+        raise TypeError(f"大模型返回的 JSON 解析结果不是 Dict 字典类型，而是 {type(parsed).__name__}")
+        
+    return parsed
+
+def post_llm_request_with_retry(url: str, headers: dict, payload: dict, max_retries: int = 3, initial_delay: float = 1.0) -> httpx.Response:
+    """
+    带有自动重试机制的 HTTP POST 请求，用于弹性调用外部大模型接口
+    """
+    delay = initial_delay
+    last_exc = None
+    for attempt in range(max_retries):
+        try:
+            with httpx.Client(timeout=60.0) as client:
+                resp = client.post(url, headers=headers, json=payload)
+            if resp.status_code == 200:
+                return resp
+            
+            # 如果遇到 429 或 5xx 状态码，进行指数退避重试
+            if resp.status_code in [429, 500, 502, 503, 504]:
+                print(f"[TARA-AI] 大模型服务响应 {resp.status_code}，将在 {delay} 秒后重试 (第 {attempt + 1}/{max_retries} 次)...")
+                time.sleep(delay)
+                delay *= 2
+            else:
+                # 400/401/403/404 等非临时性错误不进行重试，直接抛出
+                raise RuntimeError(f"API HTTP {resp.status_code}: {resp.text[:150]}")
+        except (httpx.HTTPError, httpx.NetworkError, httpx.TimeoutException) as exc:
+            last_exc = exc
+            print(f"[TARA-AI] 网络异常 ({exc})，将在 {delay} 秒后重试 (第 {attempt + 1}/{max_retries} 次)...")
+            time.sleep(delay)
+            delay *= 2
+            
+    if last_exc:
+        raise last_exc
+    raise RuntimeError("API 调用重试失败")
 
 def get_time_consuming_points(val: str) -> int:
     v = str(val).lower().strip().replace(" ", "").replace("_", "").replace("-", "")
@@ -133,10 +176,7 @@ def call_llm_json(db: Session, system_prompt: str, messages: list, mock_fallback
     
     try:
         print(f"[TARA-AI] 发起大模型服务请求 ({settings.model_name}) 执行 API 调用...")
-        with httpx.Client(timeout=60.0) as client:
-            resp = client.post(url, headers=headers, json=payload)
-        if resp.status_code != 200:
-            raise RuntimeError(f"API HTTP {resp.status_code}: {resp.text[:150]}")
+        resp = post_llm_request_with_retry(url, headers, payload)
         resp_data = resp.json()
         raw_text = resp_data["choices"][0]["message"]["content"]
         return clean_and_parse_json(raw_text)
@@ -525,10 +565,7 @@ def tara_ai_analysis_call(db: Session, stage: str, asset: Asset, prev_stages: di
             "response_format": {"type": "json_object"}
         }
         print(f"[TARA-AI] 发起大模型服务请求 ({settings.model_name}) 执行 API 调用...")
-        with httpx.Client(timeout=60.0) as client:
-            resp = client.post(url, headers=headers, json=payload)
-        if resp.status_code != 200:
-            raise RuntimeError(f"API HTTP {resp.status_code}: {resp.text[:150]}")
+        resp = post_llm_request_with_retry(url, headers, payload)
         resp_data = resp.json()
         raw_text = resp_data["choices"][0]["message"]["content"]
         return clean_and_parse_json(raw_text)
