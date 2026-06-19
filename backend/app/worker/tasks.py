@@ -201,6 +201,7 @@ def mock_stage5_summary(asset: Asset, device_reqs: list) -> dict:
             "csr_id": req_id,
             "title": f"针对 {asset.name} 的安全要求 / Security requirement for {asset.name}",
             "sub_title": f"网络安全防护 / Cybersecurity protection for {asset.name}",
+            "security_domain": "安全通信 / Secure Transmission" if "通信" in req_text or "message" in req_text else "系统安全 / System Security",
             "cybersecurity_requirement": req_text
         })
     return {"asset_cybersecurity_requirement_list": summarized}
@@ -247,9 +248,13 @@ def mock_tara_ai_call(stage: str, asset: Asset, prev_stages: dict) -> dict:
         return {
             "attributes": scores,
             "selected_attributes": selected,
-            "confidentiality": get_rating(c),
+            "authenticity": get_rating(auth),
             "integrity": get_rating(i),
+            "non-repudiation": get_rating(non_rep),
+            "confidentiality": get_rating(c),
             "availability": get_rating(a),
+            "authorization": get_rating(authz),
+            "privacy": get_rating(priv),
             "description": f"已选定高相关安全属性: {', '.join(selected)} 进行后续分析。 / Selected highly relevant security attributes: {', '.join(selected)} for subsequent analysis." if selected else "无高相关(分数>2)安全属性，未选择属性。 / No highly relevant (score > 2) security attributes, none selected."
         }
         
@@ -507,6 +512,7 @@ def mock_tara_ai_call(stage: str, asset: Asset, prev_stages: dict) -> dict:
                     "cybersecurity_requirement": req_text
                 })
                 
+                s_dom = "安全通信 / Secure Transmission" if dec.get('attribute') in ["Integrity", "Authenticity", "Non-repudiation"] else "系统安全 / System Security"
                 device_requirements.append({
                     "asset_id": f"ID{asset.id}",
                     "asset_name": asset.name,
@@ -514,6 +520,7 @@ def mock_tara_ai_call(stage: str, asset: Asset, prev_stages: dict) -> dict:
                     "csr_id": req_id,
                     "title": f"针对 {asset.name} {dec['attribute']} 的报文防伪要求 / Packet anti-counterfeiting requirements targeting {asset.name} {dec['attribute']}",
                     "sub_title": "双向通信安全签名 / Bidirectional secure communication signature",
+                    "security_domain": s_dom,
                     "cybersecurity_requirement": req_text
                 })
                 
@@ -615,9 +622,13 @@ def tara_ai_analysis_call(db: Session, stage: str, asset: Asset, prev_stages: di
             return {
                 "attributes": ai_res,
                 "selected_attributes": selected,
-                "confidentiality": get_rating(ai_res.get("Confidentiality", 0)),
+                "authenticity": get_rating(ai_res.get("Authenticity", 0)),
                 "integrity": get_rating(ai_res.get("Integrity", 0)),
+                "non-repudiation": get_rating(ai_res.get("Non-repudiation", 0)),
+                "confidentiality": get_rating(ai_res.get("Confidentiality", 0)),
                 "availability": get_rating(ai_res.get("Availability", 0)),
+                "authorization": get_rating(ai_res.get("Authorization", 0)),
+                "privacy": get_rating(ai_res.get("Privacy", 0)),
                 "description": f"已选定高相关安全属性: {', '.join(selected)} 进行后续分析。 / Selected highly relevant security attributes: {', '.join(selected)} for subsequent analysis." if selected else "无高相关(分数>2)安全属性，未选择属性。 / No highly relevant (score > 2) security attributes, none selected."
             }
 
@@ -1125,9 +1136,10 @@ def tara_ai_analysis_call(db: Session, stage: str, asset: Asset, prev_stages: di
                 msg_list_str = "\n".join([json.dumps(req, ensure_ascii=False) for req in device_reqs])
                 prompt_sum = (
                     "请对以下资产的网络安全需求列表进行整理与总结，原子化拆解并归并去重，生成最终的项目级网络安全控制需求列表。\n"
-                    "生成的每一个需求项的title、sub_title、cybersecurity_requirement描述均必须是中英文对照的（采用“中文 / English”格式）。\n"
+                    "生成的每一个需求项 of title、sub_title、cybersecurity_requirement描述均必须是中英文对照的（采用“中文 / English”格式）。\n"
+                    "对于每个安全需求，请合理分配一个“安全功能分类/安全领域（security_domain）”（中英文对照，如“安全升级 / Secure Update”、“安全通信 / Secure Transmission”、“访问控制 / Access Control”、“密码学与存储安全 / Cryptography & Storage Security”、“诊断安全 / Diagnostics Security”等）。\n"
                     "输出请忽略输入的资产信息内容和格式要求，请按照输出格式参考内容和要求回复。\n"
-                    '输出JSON结果示例:{"asset_cybersecurity_requirement_list":[{"asset_id":"资产ID","asset_name":"资产名称","cybersecurity_requirement_id":"网络安全要求ID","csr_id":"CSR ID","title":"要求标题 / Requirement Title","sub_title":"要求副标题 / Requirement Subtitle","cybersecurity_requirement":"网络安全要求内容 / Cybersecurity requirement content."}]}'
+                    '输出JSON结果示例:{"asset_cybersecurity_requirement_list":[{"asset_id":"资产ID","asset_name":"资产名称","cybersecurity_requirement_id":"网络安全要求ID","csr_id":"CSR ID","title":"要求标题 / Requirement Title","sub_title":"要求副标题 / Requirement Subtitle","security_domain":"安全功能分类 / Security Domain","cybersecurity_requirement":"网络安全要求内容 / Cybersecurity requirement content."}]}'
                 )
                 
                 # Build mock fallback for summary
@@ -1148,6 +1160,7 @@ def tara_ai_analysis_call(db: Session, stage: str, asset: Asset, prev_stages: di
                         "csr_id": item.get("csr_id", ""),
                         "title": item.get("title", ""),
                         "sub_title": item.get("sub_title", ""),
+                        "security_domain": item.get("security_domain", "通用安全 / General Security"),
                         "cybersecurity_requirement": item.get("cybersecurity_requirement", "")
                     })
             

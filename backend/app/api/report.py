@@ -160,13 +160,33 @@ def collect_report_data(steps: List[TaraStep], assets: List[Asset], desensitize:
                     requirements = stage5_out.get("requirements", [])
                     matching_reqs = [r for r in requirements if r.get("threat_id") == ts.get("threat_id")]
                     if not matching_reqs:
-                        matching_reqs = [{
-                            "cybersecurity_control_id": "N/A",
-                            "cybersecurity_control": "N/A",
-                            "allocated_to_device": "No",
-                            "cybersecurity_requirement_id": "N/A",
-                            "cybersecurity_requirement": "N/A"
-                        }]
+                        # 兜底：如果为空，但顶级存在 cso 或是 csr，代表这可能是手工录入/人工修改的结构
+                        cso_val = stage5_out.get("cso") or "N/A"
+                        csr_list = stage5_out.get("csr") or []
+                        if cso_val != "N/A" or csr_list:
+                            if isinstance(csr_list, list) and csr_list:
+                                matching_reqs = []
+                                for idx, csr_text in enumerate(csr_list):
+                                    matching_reqs.append({
+                                        "cybersecurity_control": cso_val if idx == 0 else "N/A",
+                                        "allocated_to_device": "yes",
+                                        "cybersecurity_requirement": csr_text
+                                    })
+                            else:
+                                csr_val = str(csr_list) if csr_list else "N/A"
+                                matching_reqs = [{
+                                    "cybersecurity_control": cso_val,
+                                    "allocated_to_device": "yes",
+                                    "cybersecurity_requirement": csr_val
+                                }]
+                        else:
+                            matching_reqs = [{
+                                "cybersecurity_control_id": "N/A",
+                                "cybersecurity_control": "N/A",
+                                "allocated_to_device": "No",
+                                "cybersecurity_requirement_id": "N/A",
+                                "cybersecurity_requirement": "N/A"
+                            }]
                         
                     # 攻击路径
                     attack_paths = ts.get("attack_paths", [])
@@ -187,7 +207,15 @@ def collect_report_data(steps: List[TaraStep], assets: List[Asset], desensitize:
                             
                     # Consolidated Requirements (Stage 5) for the columns
                     rt = rd.get("risk_treatment", "Retain")
-                    rt_map = {"avoid": "Avoid", "reduce": "Reduce", "share": "Share", "retain": "Retain"}
+                    rt_map = {
+                        "avoid": "Avoid",
+                        "reduce": "Reduce",
+                        "mitigate": "Reduce",
+                        "share": "Share",
+                        "transfer": "Share",
+                        "retain": "Retain",
+                        "accept": "Retain"
+                    }
                     rt_disp = rt_map.get(str(rt).lower(), rt)
                     
                     cybersecurity_control_val = "N/A"
@@ -230,15 +258,20 @@ def collect_report_data(steps: List[TaraStep], assets: List[Asset], desensitize:
                         row_data["damage_scenario"] = ds.get("damage_scenario", "")
                         
                         impact_rat = ds.get("impact_rating", {})
-                        row_data["safety"] = impact_rat.get("safety", "Negligible")
-                        row_data["financial"] = impact_rat.get("financial", "Negligible")
-                        row_data["operational"] = impact_rat.get("operational", "Negligible")
-                        row_data["privacy"] = impact_rat.get("privacy", "Negligible")
-                        
-                        overall_imp_val = ds.get("overall_impact", "Negligible")
-                        if isinstance(overall_imp_val, int):
-                            overall_imp_val = ["Negligible", "Moderate", "Major", "Severe"][min(max(overall_imp_val, 0), 3)]
-                        row_data["overall_impact"] = overall_imp_val
+                        def to_str_rating(val):
+                            if isinstance(val, int):
+                                return ["Negligible", "Moderate", "Major", "Severe"][min(max(val, 0), 3)]
+                            if isinstance(val, str) and val.isdigit():
+                                return ["Negligible", "Moderate", "Major", "Severe"][min(max(int(val), 0), 3)]
+                            if isinstance(val, str) and val.strip().lower() in ["negligible", "moderate", "major", "severe"]:
+                                return val.strip().capitalize()
+                            return str(val) if val else "Negligible"
+
+                        row_data["safety"] = to_str_rating(impact_rat.get("safety"))
+                        row_data["financial"] = to_str_rating(impact_rat.get("financial"))
+                        row_data["operational"] = to_str_rating(impact_rat.get("operational"))
+                        row_data["privacy"] = to_str_rating(impact_rat.get("privacy"))
+                        row_data["overall_impact"] = to_str_rating(ds.get("overall_impact"))
                         
                         row_data["threat_scenario"] = ts.get("threat_scenario", "")
                         
@@ -326,7 +359,10 @@ def collect_report_data(steps: List[TaraStep], assets: List[Asset], desensitize:
                         feas_map = {"verylow": "Very Low", "low": "Low", "medium": "Medium", "high": "High"}
                         feas_disp = feas_map.get(str(feas).lower().replace(" ", ""), feas)
                         row_data["af_level"] = feas_disp
-                        row_data["caf_level"] = feas_disp
+                        
+                        caf = rd.get("caf_level") or feas_disp
+                        caf_disp = feas_map.get(str(caf).lower().replace(" ", ""), caf)
+                        row_data["caf_level"] = caf_disp
                         
                         row_data["risk_value"] = rd.get("risk_value", "")
                         row_data["risk_treatment"] = rt_disp
@@ -343,15 +379,91 @@ def collect_report_data(steps: List[TaraStep], assets: List[Asset], desensitize:
                         
     return rows
 
-def create_excel_report(domain: Domain, steps: List[TaraStep], assets: List[Asset], desensitize: bool) -> str:
+def collect_csr_report_data(steps: List[TaraStep], assets: List[Asset]) -> List[dict]:
     """
-    生成高度美观的 ISO 21434 TARA XLSX 格式报表，支持脱敏过滤，布局完全对齐 J6P_TARA_Analysis.xlsx
+    收集并去重汇总所有资产在 Stage 5 生成的 summarized_csrs 网络安全需求列表
+    """
+    steps_by_asset = {}
+    for step in steps:
+        if step.asset_id not in steps_by_asset:
+            steps_by_asset[step.asset_id] = {}
+        steps_by_asset[step.asset_id][step.stage] = step
+        
+    rows = []
+    csr_num = 1
+    
+    # 动态推断 security_domain 的辅助函数，兼容较早未打标 security_domain 的数据
+    def infer_security_domain(req_text: str) -> str:
+        req_lower = req_text.lower()
+        if any(w in req_lower for w in ["ota", "update", "升级"]):
+            return "安全升级 / Secure Update"
+        if any(w in req_lower for w in ["secoc", "transmission", "通信", "message", "bus"]):
+            return "安全通信 / Secure Transmission"
+        if any(w in req_lower for w in ["crypt", "encrypt", "key", "signature", "sign", "verify", "hash", "算法", "密码", "秘钥", "密钥"]):
+            return "密码学与存储安全 / Cryptography & Storage Security"
+        if any(w in req_lower for w in ["diag", "diagnose", "诊断"]):
+            return "诊断安全 / Diagnostics Security"
+        if any(w in req_lower for w in ["access", "auth", "login", "permission", "访问", "授权", "身份"]):
+            return "访问控制 / Access Control"
+        return "通用安全 / General Security"
+
+    for asset in sorted(assets, key=lambda x: x.id):
+        asset_steps = steps_by_asset.get(asset.id, {})
+        if not asset_steps:
+            continue
+            
+        stage5_out = asset_steps.get("stage5").analysis_result.get("final_output", {}) if asset_steps.get("stage5") else {}
+        summarized_csrs = stage5_out.get("summarized_csrs", [])
+        
+        # 兜底：如果 summarized_csrs 为空，从 requirements 中提取 allocated_to_device == "yes" 的项进行拼装
+        if not summarized_csrs:
+            requirements = stage5_out.get("requirements", [])
+            device_reqs = [req for req in requirements if str(req.get("allocated_to_device", "")).lower().strip() in ["yes", "true"]]
+            
+            seen_req_texts = set()
+            summarized_csrs = []
+            for req in device_reqs:
+                req_text = req.get("cybersecurity_requirement") or ""
+                if not req_text or req_text in seen_req_texts:
+                    continue
+                seen_req_texts.add(req_text)
+                
+                req_id = req.get("cybersecurity_requirement_id") or f"CSR-{asset.id:03d}-{len(seen_req_texts):02d}"
+                domain_val = req.get("security_domain") or infer_security_domain(req_text)
+                
+                summarized_csrs.append({
+                    "asset_id": f"ID{asset.id}",
+                    "asset_name": asset.name,
+                    "cybersecurity_requirement_id": req_id,
+                    "csr_id": req_id,
+                    "title": f"针对 {asset.name} 的安全要求 / Security requirement for {asset.name}",
+                    "sub_title": f"网络安全防护 / Cybersecurity protection for {asset.name}",
+                    "security_domain": domain_val,
+                    "cybersecurity_requirement": req_text
+                })
+                
+        for csr in summarized_csrs:
+            c_id = csr.get("csr_id") or csr.get("cybersecurity_requirement_id") or f"CSR_{csr_num:04d}"
+            rows.append({
+                "number": f"CSR_{csr_num:04d}",
+                "csr_id": c_id,
+                "security_domain": csr.get("security_domain") or "通用安全 / General Security",
+                "asset_sn": get_asset_sn(asset),
+                "asset_name": asset.name,
+                "title": csr.get("title") or "N/A",
+                "sub_title": csr.get("sub_title") or "N/A",
+                "cybersecurity_requirement": csr.get("cybersecurity_requirement") or "N/A"
+            })
+            csr_num += 1
+            
+    return rows
+
+def create_excel_report(domain: Domain, steps: List[TaraStep], assets: List[Asset], desensitize: bool, export_type: str = "all") -> str:
+    """
+    生成高度美观的 ISO 21434 TARA XLSX 格式报表，支持脱敏过滤，并支持导出安全需求 (CSR_Requirements) 的混合模型 sheet 页
     """
     wb = openpyxl.Workbook()
-    ws = wb.active
-    ws.title = "TARA"
-    
-    ws.views.sheetView[0].showGridLines = True
+    default_ws = wb.active
     
     # 颜色与样式设定 (Dark Gray Header Theme)
     header_fill_r1 = PatternFill(start_color="1F2937", end_color="1F2937", fill_type="solid")
@@ -366,123 +478,213 @@ def create_excel_report(domain: Domain, steps: List[TaraStep], assets: List[Asse
         bottom=Side(style='thin', color='D1D5DB')
     )
     
-    # 1. 标题行高度
-    ws.row_dimensions[1].height = 30
-    ws.row_dimensions[2].height = 35
+    has_tara = export_type in ["all", "tara"]
+    has_csr = export_type in ["all", "csr"]
     
-    # 填充所有表头单元格默认格式
-    for col_idx in range(1, 30):
-        cell_r1 = ws.cell(row=1, column=col_idx)
-        cell_r1.fill = header_fill_r1
-        cell_r1.font = header_font
-        cell_r1.alignment = Alignment(horizontal="center", vertical="center", wrap_text=True)
-        cell_r1.border = thin_border
+    # 导出 TARA Sheet
+    if has_tara:
+        ws = default_ws
+        ws.title = "TARA"
+        ws.views.sheetView[0].showGridLines = True
         
-        cell_r2 = ws.cell(row=2, column=col_idx)
-        cell_r2.fill = header_fill_r2
-        cell_r2.font = header_font
-        cell_r2.alignment = Alignment(horizontal="center", vertical="center", wrap_text=True)
-        cell_r2.border = thin_border
+        # 1. 标题行高度
+        ws.row_dimensions[1].height = 30
+        ws.row_dimensions[2].height = 35
         
-    # 第一层合并表头 (Row 1)
-    ws.merge_cells('B1:C1')
-    ws['B1'] = 'Assets'
-    
-    ws['D1'] = 'Cybersecurity Attributes Result'
-    
-    ws.merge_cells('E1:K1')
-    ws['E1'] = 'Damage Scenarios and Impact Category'
-    
-    ws.merge_cells('L1:U1')
-    ws['L1'] = 'Threat Scenarios and Attack Feasibility Assessment'
-    
-    # 第二层标题名称 (Row 2)
-    headers_r2 = [
-        "Number", "Assets SN", "Assets Name",
-        "Cybersecurity Attributes Result",
-        "Damage Scenarios SN", "Damage Scenarios", "Safety", "Financial", "Operational", "Privacy", "Impact Level",
-        "Threat Scenarios", "Attack Path",
-        "Time Consuming", "Expertise", "Knowledge about TOE", "Window of opportunity", "Equipment", "Difficulty", "AF Level", "CAF Level",
-        "Risk Value", "Risk Treatment Recommend",
-        "Cybersecurity Claims ID", "Cybersecurity Claims", "Cybersecurity Goal", "Cybersecurity Control", "Allocated to ADCU", "Cybersecurity Requirement"
-    ]
-    
-    for col_idx, h in enumerate(headers_r2, 1):
-        ws.cell(row=2, column=col_idx, value=h)
-        
-    rows = collect_report_data(steps, assets, desensitize)
-    
-    current_row = 3
-    keys = [
-        "number", "asset_sn", "asset_name",
-        "attribute_result",
-        "damage_scenario_sn", "damage_scenario", "safety", "financial", "operational", "privacy", "overall_impact",
-        "threat_scenario", "attack_path",
-        "time_consuming", "expertise", "knowledge_about_toe", "window_of_opportunity", "equipment", "difficulty", "af_level", "caf_level",
-        "risk_value", "risk_treatment",
-        "cybersecurity_claim_id", "cybersecurity_claim", "cybersecurity_goal", "cybersecurity_control", "allocated_to_device", "cybersecurity_requirement"
-    ]
-    
-    for row_data in rows:
-        for col_idx, key in enumerate(keys, 1):
-            val = row_data.get(key, "")
-            cell = ws.cell(row=current_row, column=col_idx, value=val)
-            cell.font = cell_font
-            cell.border = thin_border
+        # 填充所有表头单元格默认格式
+        for col_idx in range(1, 30):
+            cell_r1 = ws.cell(row=1, column=col_idx)
+            cell_r1.fill = header_fill_r1
+            cell_r1.font = header_font
+            cell_r1.alignment = Alignment(horizontal="center", vertical="center", wrap_text=True)
+            cell_r1.border = thin_border
             
-            # 描述文本左对齐，其它代号及评价指标等均居中对齐
-            if key in ["damage_scenario", "threat_scenario", "attack_path", "cybersecurity_requirement", "cybersecurity_control", "cybersecurity_claim", "cybersecurity_goal"]:
-                cell.alignment = Alignment(horizontal="left", vertical="center", wrap_text=True)
-            else:
-                cell.alignment = Alignment(horizontal="center", vertical="center", wrap_text=True)
+            cell_r2 = ws.cell(row=2, column=col_idx)
+            cell_r2.fill = header_fill_r2
+            cell_r2.font = header_font
+            cell_r2.alignment = Alignment(horizontal="center", vertical="center", wrap_text=True)
+            cell_r2.border = thin_border
+            
+        # 第一层合并表头 (Row 1)
+        ws.merge_cells('B1:C1')
+        ws['B1'] = 'Assets'
+        ws['D1'] = 'Cybersecurity Attributes Result'
+        ws.merge_cells('E1:K1')
+        ws['E1'] = 'Damage Scenarios and Impact Category'
+        ws.merge_cells('L1:U1')
+        ws['L1'] = 'Threat Scenarios and Attack Feasibility Assessment'
+        
+        # 第二层标题名称 (Row 2)
+        headers_r2 = [
+            "Number", "Assets SN", "Assets Name",
+            "Cybersecurity Attributes Result",
+            "Damage Scenarios SN", "Damage Scenarios", "Safety", "Financial", "Operational", "Privacy", "Impact Level",
+            "Threat Scenarios", "Attack Path",
+            "Time Consuming", "Expertise", "Knowledge about TOE", "Window of opportunity", "Equipment", "Difficulty", "AF Level", "CAF Level",
+            "Risk Value", "Risk Treatment Recommend",
+            "Cybersecurity Claims ID", "Cybersecurity Claims", "Cybersecurity Goal", "Cybersecurity Control", "Allocated to ADCU", "Cybersecurity Requirement"
+        ]
+        
+        for col_idx, h in enumerate(headers_r2, 1):
+            ws.cell(row=2, column=col_idx, value=h)
+            
+        rows = collect_report_data(steps, assets, desensitize)
+        
+        current_row = 3
+        keys = [
+            "number", "asset_sn", "asset_name",
+            "attribute_result",
+            "damage_scenario_sn", "damage_scenario", "safety", "financial", "operational", "privacy", "overall_impact",
+            "threat_scenario", "attack_path",
+            "time_consuming", "expertise", "knowledge_about_toe", "window_of_opportunity", "equipment", "difficulty", "af_level", "caf_level",
+            "risk_value", "risk_treatment",
+            "cybersecurity_claim_id", "cybersecurity_claim", "cybersecurity_goal", "cybersecurity_control", "allocated_to_device", "cybersecurity_requirement"
+        ]
+        
+        for row_data in rows:
+            for col_idx, key in enumerate(keys, 1):
+                val = row_data.get(key, "")
+                cell = ws.cell(row=current_row, column=col_idx, value=val)
+                cell.font = cell_font
+                cell.border = thin_border
                 
-        ws.row_dimensions[current_row].height = 24
-        current_row += 1
+                # 描述文本左对齐，其它代号及评价指标等均居中对齐
+                if key in ["damage_scenario", "threat_scenario", "attack_path", "cybersecurity_requirement", "cybersecurity_control", "cybersecurity_claim", "cybersecurity_goal"]:
+                    cell.alignment = Alignment(horizontal="left", vertical="center", wrap_text=True)
+                else:
+                    cell.alignment = Alignment(horizontal="center", vertical="center", wrap_text=True)
+                    
+            ws.row_dimensions[current_row].height = 24
+            current_row += 1
+                
+        # 自适应列宽设定
+        for col in ws.columns:
+            max_len = 0
+            for cell in col:
+                if cell.row in [1, 2]:
+                    continue
+                val_str = str(cell.value or "")
+                if len(val_str) > max_len:
+                    max_len = len(val_str)
+            col_letter = openpyxl.utils.get_column_letter(col[0].column)
+            ws.column_dimensions[col_letter].width = min(max(max_len + 3, 11), 35)
+
+    # 导出 CSR Sheet (混合模式)
+    if has_csr:
+        if has_tara:
+            ws2 = wb.create_sheet(title="CSR_Requirements")
+        else:
+            ws2 = default_ws
+            ws2.title = "CSR_Requirements"
             
-    # 自适应列宽设定
-    for col in ws.columns:
-        max_len = 0
-        for cell in col:
-            if cell.row in [1, 2]:
-                continue
-            val_str = str(cell.value or "")
-            if len(val_str) > max_len:
-                max_len = len(val_str)
-        col_letter = openpyxl.utils.get_column_letter(col[0].column)
-        ws.column_dimensions[col_letter].width = min(max(max_len + 3, 11), 35)
+        ws2.views.sheetView[0].showGridLines = True
         
-    file_path = os.path.join(EXPORTS_DIR, f"TARA_Report_{domain.id}_{'desensitized' if desensitize else 'full'}.xlsx")
+        # 填充所有表头单元格默认格式
+        for col_idx in range(1, 8):
+            cell_r1 = ws2.cell(row=1, column=col_idx)
+            cell_r1.fill = header_fill_r1
+            cell_r1.font = header_font
+            cell_r1.alignment = Alignment(horizontal="center", vertical="center", wrap_text=True)
+            cell_r1.border = thin_border
+            
+            cell_r2 = ws2.cell(row=2, column=col_idx)
+            cell_r2.fill = header_fill_r2
+            cell_r2.font = header_font
+            cell_r2.alignment = Alignment(horizontal="center", vertical="center", wrap_text=True)
+            cell_r2.border = thin_border
+
+        ws2.row_dimensions[1].height = 30
+        ws2.row_dimensions[2].height = 35
+        
+        # 第一层合并表头 (Row 1 for Sheet 2)
+        ws2['A1'] = 'CSR ID'
+        ws2['B1'] = 'Security Domain'
+        ws2.merge_cells('C1:D1')
+        ws2['C1'] = 'Assets Allocation'
+        ws2.merge_cells('E1:G1')
+        ws2['E1'] = 'Cybersecurity Requirements Details'
+        
+        # 第二层标题名称 (Row 2 for Sheet 2)
+        headers2_r2 = [
+            "CSR ID", "Security Domain", "Asset SN", "Asset Name",
+            "Requirement Title", "Requirement Subtitle", "Cybersecurity Requirement"
+        ]
+        for col_idx, h in enumerate(headers2_r2, 1):
+            ws2.cell(row=2, column=col_idx, value=h)
+            
+        csr_rows = collect_csr_report_data(steps, assets)
+        
+        current_row = 3
+        csr_keys = ["csr_id", "security_domain", "asset_sn", "asset_name", "title", "sub_title", "cybersecurity_requirement"]
+        
+        for row_data in csr_rows:
+            for col_idx, key in enumerate(csr_keys, 1):
+                val = row_data.get(key, "")
+                cell = ws2.cell(row=current_row, column=col_idx, value=val)
+                cell.font = cell_font
+                cell.border = thin_border
+                
+                # 描述文本左对齐，其它居中对齐
+                if key in ["title", "sub_title", "cybersecurity_requirement"]:
+                    cell.alignment = Alignment(horizontal="left", vertical="center", wrap_text=True)
+                else:
+                    cell.alignment = Alignment(horizontal="center", vertical="center", wrap_text=True)
+                    
+            ws2.row_dimensions[current_row].height = 24
+            current_row += 1
+            
+        # 自适应列宽设定 (Sheet 2)
+        for col in ws2.columns:
+            max_len = 0
+            for cell in col:
+                if cell.row in [1, 2]:
+                    continue
+                val_str = str(cell.value or "")
+                if len(val_str) > max_len:
+                    max_len = len(val_str)
+            col_letter = openpyxl.utils.get_column_letter(col[0].column)
+            ws2.column_dimensions[col_letter].width = min(max(max_len + 3, 12), 40)
+            
+    filename_suffix = f"{export_type}_{'desensitized' if desensitize else 'full'}"
+    file_path = os.path.join(EXPORTS_DIR, f"TARA_Report_{domain.id}_{filename_suffix}.xlsx")
     wb.save(file_path)
     return file_path
 
-def create_csv_report(domain: Domain, steps: List[TaraStep], assets: List[Asset], desensitize: bool) -> str:
+def create_csv_report(domain: Domain, steps: List[TaraStep], assets: List[Asset], desensitize: bool, export_type: str = "tara") -> str:
     """
-    生成 ISO 21434 TARA CSV 格式报表，支持脱敏过滤
+    生成 ISO 21434 TARA CSV 格式报表，根据 export_type 可选导出 TARA 威胁分析 或 CSR 需求列表
     使用 utf-8-sig 编码，防止中文在 Excel 中打开时显示乱码
     """
-    file_path = os.path.join(EXPORTS_DIR, f"TARA_Report_{domain.id}_{'desensitized' if desensitize else 'full'}.csv")
+    filename_suffix = f"{export_type}_{'desensitized' if desensitize else 'full'}"
+    file_path = os.path.join(EXPORTS_DIR, f"TARA_Report_{domain.id}_{filename_suffix}.csv")
     
-    headers_r2 = [
-        "Number", "Assets SN", "Assets Name",
-        "Cybersecurity Attributes Result",
-        "Damage Scenarios SN", "Damage Scenarios", "Safety", "Financial", "Operational", "Privacy", "Impact Level",
-        "Threat Scenarios", "Attack Path",
-        "Time Consuming", "Expertise", "Knowledge about TOE", "Window of opportunity", "Equipment", "Difficulty", "AF Level", "CAF Level",
-        "Risk Value", "Risk Treatment Recommend",
-        "Cybersecurity Claims ID", "Cybersecurity Claims", "Cybersecurity Goal", "Cybersecurity Control", "Allocated to ADCU", "Cybersecurity Requirement"
-    ]
-    
-    keys = [
-        "number", "asset_sn", "asset_name",
-        "attribute_result",
-        "damage_scenario_sn", "damage_scenario", "safety", "financial", "operational", "privacy", "overall_impact",
-        "threat_scenario", "attack_path",
-        "time_consuming", "expertise", "knowledge_about_toe", "window_of_opportunity", "equipment", "difficulty", "af_level", "caf_level",
-        "risk_value", "risk_treatment",
-        "cybersecurity_claim_id", "cybersecurity_claim", "cybersecurity_goal", "cybersecurity_control", "allocated_to_device", "cybersecurity_requirement"
-    ]
-    
-    rows = collect_report_data(steps, assets, desensitize)
+    if export_type == "csr":
+        headers_r2 = [
+            "CSR ID", "Security Domain", "Asset SN", "Asset Name",
+            "Requirement Title", "Requirement Subtitle", "Cybersecurity Requirement"
+        ]
+        keys = ["csr_id", "security_domain", "asset_sn", "asset_name", "title", "sub_title", "cybersecurity_requirement"]
+        rows = collect_csr_report_data(steps, assets)
+    else:
+        headers_r2 = [
+            "Number", "Assets SN", "Assets Name",
+            "Cybersecurity Attributes Result",
+            "Damage Scenarios SN", "Damage Scenarios", "Safety", "Financial", "Operational", "Privacy", "Impact Level",
+            "Threat Scenarios", "Attack Path",
+            "Time Consuming", "Expertise", "Knowledge about TOE", "Window of opportunity", "Equipment", "Difficulty", "AF Level", "CAF Level",
+            "Risk Value", "Risk Treatment Recommend",
+            "Cybersecurity Claims ID", "Cybersecurity Claims", "Cybersecurity Goal", "Cybersecurity Control", "Allocated to ADCU", "Cybersecurity Requirement"
+        ]
+        keys = [
+            "number", "asset_sn", "asset_name",
+            "attribute_result",
+            "damage_scenario_sn", "damage_scenario", "safety", "financial", "operational", "privacy", "overall_impact",
+            "threat_scenario", "attack_path",
+            "time_consuming", "expertise", "knowledge_about_toe", "window_of_opportunity", "equipment", "difficulty", "af_level", "caf_level",
+            "risk_value", "risk_treatment",
+            "cybersecurity_claim_id", "cybersecurity_claim", "cybersecurity_goal", "cybersecurity_control", "allocated_to_device", "cybersecurity_requirement"
+        ]
+        rows = collect_report_data(steps, assets, desensitize)
     
     with open(file_path, mode="w", encoding="utf-8-sig", newline="") as f:
         writer = csv.writer(f)
@@ -499,11 +701,12 @@ def export_report(
     domain_id: int,
     format: str = "xlsx", # xlsx 或 csv
     desensitize: bool = False, # 是否脱敏导出 (BR-57, BR-77)
+    export_type: str = "all", # all (导出全部Sheets，仅对xlsx有效), tara (只导出威胁分析), csr (只导出安全需求汇总)
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user)
 ):
     """
-    导出网络安全 TARA 评估报告 (XLSX/CSV，支持数据脱敏，BR-57, BR-77)
+    导出网络安全 TARA 评估报告与 CSR 安全需求汇总 (XLSX/CSV，支持数据脱敏与混合模型导出，BR-57, BR-77)
     """
     domain = db.query(Domain).filter(Domain.id == domain_id).first()
     if not domain:
@@ -521,14 +724,22 @@ def export_report(
     steps = db.query(TaraStep).filter(TaraStep.run_id == last_run.id).all()
     assets = db.query(Asset).filter(Asset.domain_id == domain_id).all()
     
+    export_type_lower = export_type.lower().strip()
+    if format.lower() == "csv" and export_type_lower == "all":
+        # CSV不支持多sheet，默认设置为 tara 导出
+        export_type_lower = "tara"
+        
+    if export_type_lower not in ["all", "tara", "csr"]:
+        raise HTTPException(status_code=400, detail="不支持的导出类型，可选值: all, tara, csr。")
+    
     if format.lower() == "xlsx":
-        file_path = create_excel_report(domain, steps, assets, desensitize)
+        file_path = create_excel_report(domain, steps, assets, desensitize, export_type_lower)
         media_type = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
-        filename = f"TARA_Report_{domain.name}_{'desensitized' if desensitize else 'full'}.xlsx"
+        filename = f"TARA_Report_{domain.name}_{export_type_lower}_{'desensitized' if desensitize else 'full'}.xlsx"
     elif format.lower() == "csv":
-        file_path = create_csv_report(domain, steps, assets, desensitize)
+        file_path = create_csv_report(domain, steps, assets, desensitize, export_type_lower)
         media_type = "text/csv; charset=utf-8-sig"
-        filename = f"TARA_Report_{domain.name}_{'desensitized' if desensitize else 'full'}.csv"
+        filename = f"TARA_Report_{domain.name}_{export_type_lower}_{'desensitized' if desensitize else 'full'}.csv"
     else:
         raise HTTPException(status_code=400, detail="不支持的导出文件格式，仅支持 'xlsx' 或 'csv'。")
         

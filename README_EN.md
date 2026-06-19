@@ -12,6 +12,9 @@ TARA AI Platform is a professional Threat Analysis and Risk Assessment (TARA) pl
 - **Risk Level & Decision Logic Coupling**: Automatically determines the Risk Value (1-5) via look-up tables and links it to risk treatment strategies (Avoid, Reduce, Share, Retain).
 - **Cybersecurity Requirement (CSR/CSO) Deduplication & Convergence**: Automatically extracts Cybersecurity Goals (CSO) and utilizes AI algorithms to refine and deduplicate Cybersecurity Requirements (CSR) allocated to devices.
 - **Incremental Analysis & Human override Inheritance**: Employs hash fingerprint matching to skip LLM calls when asset attributes remain unchanged, and seamlessly inherits confirmed or overridden conclusions from safety engineers.
+- **Excel-Aligned TARA Table & Security Matrix**: Features newly designed "TARA Assessment Details Table (Aligned with Excel)" and "Project-Level Security Control Requirements Matrix" dashboards, supporting 100% matched flat columns as exported Excel sheets and instant Chinese-English multilingual toggle.
+- **Inline Editing & Row Operations Sync**: Allows security analysts to edit any cell inline (damage scenarios, feasibility factors, risk decisions, CSO, Claims, Controls, ADCU, CSR) and delete/add rows directly; changes are atomically persisted and synchronized to the database.
+- **CAF Level Manual Calibration & Normalization**: Automatically initializes CAF Level from AF Level and recalculates Risk Values, while supporting manual expert calibration overrides with smart case-insensitivity mapping (e.g. 'Medium' vs 'medium').
 
 ### 2. Interactive Data Flow Diagram (DFD) Canvas
 - Supports drag-and-drop placement of **External Entity**, **Process**, **Data Store**, **Interface**, and **Trust Boundary** DFD elements. The newly introduced "Interface" node is designed to represent JTAG, USB, serial, and other physical or debug interfaces under the Hardware asset category.

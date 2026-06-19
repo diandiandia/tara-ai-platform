@@ -3,8 +3,620 @@ import React, { useEffect, useState } from 'react';
 import { useTaraStore } from '../stores/taraStore';
 import { 
   ArrowLeft, CheckSquare, ShieldAlert, Edit3, 
-  Download, Plus, BookOpen, Layers, CheckCircle2
+  Download, Plus, BookOpen, Layers, Save, Trash2, X, ChevronLeft, ChevronRight
 } from 'lucide-react';
+
+// --- MAPPING AND CALCULATION HELPER FUNCTIONS (ISO 21434) ---
+
+const calculateDifficultyAndFeasibility = (tc, exp, kn, win, eq) => {
+  let score = 0;
+  
+  // 1. Time Consuming
+  if (tc === 'no_more_than_1d') score += 0;
+  else if (tc === 'no_more_than_1w') score += 1;
+  else if (tc === 'no_more_than_1m') score += 4;
+  else if (tc === 'no_more_than_6m') score += 17;
+  else if (tc === 'more_than_6m') score += 19;
+  else score += 1; // default fallback
+  
+  // 2. Expertise
+  if (exp === 'layman') score += 0;
+  else if (exp === 'proficient') score += 3;
+  else if (exp === 'expert') score += 6;
+  else if (exp === 'expert_multiple') score += 8;
+  else score += 3;
+  
+  // 3. Knowledge about TOE
+  if (kn === 'public') score += 0;
+  else if (kn === 'restricted') score += 3;
+  else if (kn === 'confidential') score += 7;
+  else if (kn === 'strictly_confidential') score += 11;
+  else score += 3;
+  
+  // 4. Window of Opportunity
+  if (win === 'unlimited') score += 0;
+  else if (win === 'easy') score += 1;
+  else if (win === 'moderate') score += 4;
+  else if (win === 'difficult') score += 10;
+  else score += 1;
+  
+  // 5. Equipment
+  if (eq === 'standard') score += 0;
+  else if (eq === 'special' || eq === 'specialized') score += 4;
+  else if (eq === 'bespoke') score += 7;
+  else if (eq === 'bespoke_multiple') score += 9;
+  else score += 0;
+  
+  // Determine feasibility Level
+  let feas = 'High';
+  if (score >= 25) feas = 'Very Low';
+  else if (score >= 20) feas = 'Low';
+  else if (score >= 14) feas = 'Medium';
+  else feas = 'High';
+  
+  return { difficulty: score, feasibility: feas };
+};
+
+// Auto-calculate Risk Value based on ISO 21434 Risk Matrix
+const calculateRiskValue = (overallImpact, feasibility) => {
+  const feasKey = String(feasibility).toLowerCase().replace(/\s+/g, '');
+  const riskMatrix = {
+    'verylow': [1, 1, 1, 2],
+    'low': [1, 2, 2, 3],
+    'medium': [1, 2, 3, 4],
+    'high': [1, 3, 4, 5]
+  };
+  const list = riskMatrix[feasKey] || [1, 2, 3, 4];
+  const idx = Math.min(Math.max(parseInt(overallImpact) || 0, 0), 3);
+  return list[idx];
+};
+
+const tcLabels = {
+  'no_more_than_1d': '< 1d',
+  'no_more_than_1w': '< 1w',
+  'no_more_than_1m': '< 1m',
+  'no_more_than_6m': '< 6m',
+  'more_than_6m': '> 6m'
+};
+const expLabels = {
+  'layman': 'Layman',
+  'proficient': 'Proficient',
+  'expert': 'Expert',
+  'expert_multiple': 'Multi-Expert'
+};
+const knLabels = {
+  'public': 'Public',
+  'restricted': 'Restricted',
+  'confidential': 'Confidential',
+  'strictly_confidential': 'Strict-Confid'
+};
+const winLabels = {
+  'unlimited': 'Unlimited',
+  'easy': 'Easy',
+  'moderate': 'Moderate',
+  'difficult': 'Difficult'
+};
+const eqLabels = {
+  'standard': 'Standard',
+  'special': 'Specialized',
+  'specialized': 'Specialized',
+  'bespoke': 'Bespoke',
+  'bespoke_multiple': 'Multi-Bespoke'
+};
+
+const getExpLabel = (key, t) => {
+  const mapping = {
+    'layman': t('无专业知识'),
+    'proficient': t('熟悉'),
+    'expert': t('专家'),
+    'expert_multiple': t('多个专家')
+  };
+  return mapping[key] || key;
+};
+
+const getKnLabel = (key, t) => {
+  const mapping = {
+    'public': t('公开'),
+    'restricted': t('受限'),
+    'confidential': t('机密'),
+    'strictly_confidential': t('严格机密')
+  };
+  return mapping[key] || key;
+};
+
+const getWinLabel = (key, t) => {
+  const mapping = {
+    'unlimited': t('无限制'),
+    'easy': t('易'),
+    'moderate': t('中等'),
+    'difficult': t('难')
+  };
+  return mapping[key] || key;
+};
+
+const getEqLabel = (key, t) => {
+  const mapping = {
+    'standard': t('标准'),
+    'special': t('专用'),
+    'specialized': t('专用'),
+    'bespoke': t('定制'),
+    'bespoke_multiple': t('多个定制')
+  };
+  return mapping[key] || key;
+};
+
+const getRiskTreatmentLabel = (value, t) => {
+  const mapping = {
+    'mitigate': t('缓解风险'),
+    'accept': t('接受风险'),
+    'transfer': t('转移风险'),
+    'avoid': t('规避风险')
+  };
+  return mapping[value] || value;
+};
+
+const getImpactLabel = (value, t) => {
+  const mapping = {
+    'Negligible': t('轻微'),
+    'Moderate': t('中等'),
+    'Major': t('重要'),
+    'Severe': t('严重')
+  };
+  return mapping[value] || value;
+};
+
+const normalizeFeas = (val) => {
+  const mapping = {
+    'veryhigh': 'Very High',
+    'high': 'High',
+    'medium': 'Medium',
+    'low': 'Low',
+    'verylow': 'Very Low'
+  };
+  const key = String(val || '').toLowerCase().replace(/\s+/g, '');
+  return mapping[key] || val || 'Medium';
+};
+
+const getAssetSn = (asset) => {
+  const prefixMap = {
+    "hardware": "H",
+    "software": "S",
+    "data": "D",
+    "communication": "C"
+  };
+  const t = String(asset.asset_type || '').toLowerCase().trim();
+  const prefix = prefixMap[t] || "A";
+  const idStr = String(asset.id).padStart(3, '0');
+  return `${prefix}-001_${idStr}`;
+};
+
+const inferSecurityDomain = (reqText) => {
+  const reqLower = String(reqText || '').toLowerCase();
+  if (reqLower.includes("ota") || reqLower.includes("update") || reqLower.includes("升级")) {
+    return "安全升级 / Secure Update";
+  }
+  if (reqLower.includes("secoc") || reqLower.includes("transmission") || reqLower.includes("通信") || reqLower.includes("message") || reqLower.includes("bus")) {
+    return "安全通信 / Secure Transmission";
+  }
+  if (reqLower.includes("crypt") || reqLower.includes("encrypt") || reqLower.includes("key") || reqLower.includes("signature") || reqLower.includes("sign") || reqLower.includes("verify") || reqLower.includes("hash") || reqLower.includes("算法") || reqLower.includes("密码") || reqLower.includes("秘钥") || reqLower.includes("密钥")) {
+    return "密码学与存储安全 / Cryptography & Storage Security";
+  }
+  if (reqLower.includes("diag") || reqLower.includes("diagnose") || reqLower.includes("诊断")) {
+    return "诊断安全 / Diagnostics Security";
+  }
+  if (reqLower.includes("access") || reqLower.includes("auth") || reqLower.includes("login") || reqLower.includes("permission") || reqLower.includes("访问") || reqLower.includes("授权") || reqLower.includes("身份")) {
+    return "访问控制 / Access Control";
+  }
+  return "通用安全 / General Security";
+};
+
+const collectCsrReportData = (steps, assetsList) => {
+  const stepsByAsset = {};
+  steps.forEach(step => {
+    if (!stepsByAsset[step.asset_id]) {
+      stepsByAsset[step.asset_id] = {};
+    }
+    stepsByAsset[step.asset_id][step.stage] = step;
+  });
+
+  const rows = [];
+  let csrNum = 1;
+  const sortedAssets = [...assetsList].sort((a, b) => a.id - b.id);
+
+  sortedAssets.forEach(asset => {
+    const assetSteps = stepsByAsset[asset.id];
+    if (!assetSteps) return;
+
+    const stage5Out = assetSteps['stage5']?.analysis_result?.final_output || {};
+    let summarizedCsrs = stage5Out.summarized_csrs || [];
+
+    if (summarizedCsrs.length === 0) {
+      const requirements = stage5Out.requirements || [];
+      const deviceReqs = requirements.filter(req => {
+        const alloc = String(req.allocated_to_device || '').toLowerCase().trim();
+        return alloc === 'yes' || alloc === 'true';
+      });
+
+      const seenReqTexts = new Set();
+      summarizedCsrs = [];
+      deviceReqs.forEach(req => {
+        const reqText = req.cybersecurity_requirement || '';
+        if (!reqText || seenReqTexts.has(reqText)) return;
+        seenReqTexts.add(reqText);
+
+        const assetIdStr = String(asset.id).padStart(3, '0');
+        const countStr = String(seenReqTexts.size).padStart(2, '0');
+        const reqId = req.cybersecurity_requirement_id || `CSR-${assetIdStr}-${countStr}`;
+        const domainVal = req.security_domain || inferSecurityDomain(reqText);
+
+        summarizedCsrs.push({
+          asset_id: `ID${asset.id}`,
+          asset_name: asset.name,
+          cybersecurity_requirement_id: reqId,
+          csr_id: reqId,
+          title: `针对 ${asset.name} 的安全要求 / Security requirement for ${asset.name}`,
+          sub_title: `网络安全防护 / Cybersecurity protection for ${asset.name}`,
+          security_domain: domainVal,
+          cybersecurity_requirement: reqText
+        });
+      });
+    }
+
+    summarizedCsrs.forEach(csr => {
+      const padNum = String(csrNum).padStart(4, '0');
+      const cId = csr.csr_id || csr.cybersecurity_requirement_id || `CSR_${padNum}`;
+      rows.push({
+        number: `CSR_${padNum}`,
+        csr_id: cId,
+        security_domain: csr.security_domain || "通用安全 / General Security",
+        asset_sn: getAssetSn(asset),
+        asset_name: asset.name,
+        title: csr.title || "N/A",
+        sub_title: csr.sub_title || "N/A",
+        cybersecurity_requirement: csr.cybersecurity_requirement || "N/A"
+      });
+      csrNum++;
+    });
+  });
+
+  return rows;
+};
+
+// --- HELPERS FOR SERIALIZATION & DESERIALIZATION ---
+
+const buildExcelRowsFromSteps = (steps, assetsList) => {
+  const rows = [];
+  
+  // Group steps by asset
+  const stepsByAsset = {};
+  steps.forEach(step => {
+    if (!stepsByAsset[step.asset_id]) {
+      stepsByAsset[step.asset_id] = {};
+    }
+    stepsByAsset[step.asset_id][step.stage] = step;
+  });
+  
+  // For each asset, build the rows
+  assetsList.forEach(asset => {
+    const assetSteps = stepsByAsset[asset.id];
+    if (!assetSteps) return;
+    
+    const s1 = assetSteps['stage1']?.analysis_result?.final_output || {};
+    const s2 = assetSteps['stage2']?.analysis_result?.final_output || {};
+    const s3 = assetSteps['stage3']?.analysis_result?.final_output || {};
+    const s4 = assetSteps['stage4']?.analysis_result?.final_output || {};
+    const s5 = assetSteps['stage5']?.analysis_result?.final_output || {};
+    
+    // Get selected attributes
+    const selectedAttrs = s1.selected_attributes || [];
+    if (selectedAttrs.length === 0) return;
+    
+    selectedAttrs.forEach(attr => {
+      // Find matching damage scenarios
+      const dscs = s2.damage_scenarios || [];
+      let matchingDs = dscs.filter(d => d.attribute === attr);
+      if (matchingDs.length === 0) {
+        matchingDs = [{
+          attribute: attr,
+          damage_scenario_sn: `DS_${attr}_1`,
+          damage_scenario: s2.damage_scenario || '',
+          impact_rating: s2.impact_rating || { safety: 'Negligible', financial: 'Negligible', operational: 'Negligible', privacy: 'Negligible' },
+          overall_impact: s2.overall_impact || 0
+        }];
+      }
+      
+      matchingDs.forEach((ds, dsIdx) => {
+        // Find matching threat scenarios
+        const tscs = s3.threat_scenarios || [];
+        let matchingTs = tscs.filter(t => t.attribute === attr && t.damage_scenario_sn === ds.damage_scenario_sn);
+        if (matchingTs.length === 0) {
+          matchingTs = [{
+            attribute: attr,
+            damage_scenario_sn: ds.damage_scenario_sn,
+            threat_id: `TS_${attr}_${dsIdx + 1}`,
+            threat_scenario: s3.threat_scenario || '',
+            attack_paths: s3.attack_paths || [],
+            final_feasibility: normalizeFeas(s3.final_feasibility || 'Medium')
+          }];
+        }
+        
+        matchingTs.forEach((ts) => {
+          // Find matching risk decision
+          const rdec = s4.risk_decisions || [];
+          let rd = rdec.find(r => r.threat_id === ts.threat_id);
+          if (!rd) {
+            rd = {
+              risk_value: s4.risk_rating || 1,
+              risk_treatment: s4.risk_decision || 'mitigate',
+              justification: s4.justification || '',
+              caf_level: normalizeFeas(ts.final_feasibility || 'Medium'),
+              cybersecurity_claim: s4.cybersecurity_claim || '',
+              cybersecurity_goal: s4.cybersecurity_goal || ''
+            };
+          }
+          
+          // Find matching requirements
+          const reqs = s5.requirements || [];
+          let matchingReqs = reqs.filter(r => r.threat_id === ts.threat_id);
+          if (matchingReqs.length === 0) {
+            const csrList = s5.csr || [];
+            if (csrList.length > 0) {
+              matchingReqs = csrList.map(c => ({
+                cybersecurity_control: s5.cso || '',
+                cybersecurity_requirement: c
+              }));
+            } else {
+              matchingReqs = [{
+                cybersecurity_control: s5.cso || '',
+                cybersecurity_requirement: ''
+              }];
+            }
+          }
+          
+          const apDetail = ts.attack_paths?.[0] || {};
+          const attackPathVal = apDetail.attack_path || '';
+          const tc = apDetail.time_consuming || 'no_more_than_1w';
+          const exp = apDetail.expertise || 'proficient';
+          const kn = apDetail.knowledge_about_toe || 'restricted';
+          const win = apDetail.window_of_opportunity || 'easy';
+          const eq = apDetail.equipment || 'standard';
+          const diff = apDetail.difficulty !== undefined ? apDetail.difficulty : 1;
+          
+          const afVal = normalizeFeas(ts.final_feasibility || 'Medium');
+          const cafVal = normalizeFeas(rd.caf_level || afVal);
+          const calculatedRisk = calculateRiskValue(ds.overall_impact || 0, cafVal);
+          
+          matchingReqs.forEach((req, reqIdx) => {
+            rows.push({
+              key: `${asset.id}-${attr}-${ds.damage_scenario_sn}-${ts.threat_id}-${req.cybersecurity_requirement_id || reqIdx}`,
+              asset_id: asset.id,
+              asset_name: asset.name,
+              attribute: attr,
+              damage_scenario: ds.damage_scenario || '',
+              safety: typeof ds.impact_rating?.safety === 'number' ? ['Negligible', 'Moderate', 'Major', 'Severe'][ds.impact_rating?.safety] || 'Negligible' : ds.impact_rating?.safety || 'Negligible',
+              financial: typeof ds.impact_rating?.financial === 'number' ? ['Negligible', 'Moderate', 'Major', 'Severe'][ds.impact_rating?.financial] || 'Negligible' : ds.impact_rating?.financial || 'Negligible',
+              operational: typeof ds.impact_rating?.operational === 'number' ? ['Negligible', 'Moderate', 'Major', 'Severe'][ds.impact_rating?.operational] || 'Negligible' : ds.impact_rating?.operational || 'Negligible',
+              privacy: typeof ds.impact_rating?.privacy === 'number' ? ['Negligible', 'Moderate', 'Major', 'Severe'][ds.impact_rating?.privacy] || 'Negligible' : ds.impact_rating?.privacy || 'Negligible',
+              overall_impact: ds.overall_impact || 0,
+              threat_scenario: ts.threat_scenario || '',
+              attack_path: attackPathVal || '',
+              time_consuming: tc,
+              expertise: exp,
+              knowledge_about_toe: kn,
+              window_of_opportunity: win,
+              equipment: eq,
+              difficulty: diff,
+              final_feasibility: afVal,
+              caf_level: cafVal,
+              cafOverridden: cafVal !== afVal,
+              risk_value: calculatedRisk,
+              risk_treatment: rd.risk_treatment || rd.risk_decision || 'mitigate',
+              
+              // CSO, Claims, Control, ADCU, CSR
+              cybersecurity_claim: rd.cybersecurity_claim || '',
+              cso: rd.cybersecurity_goal || req.cybersecurity_control || '',
+              cybersecurity_control: req.cybersecurity_control || '',
+              allocated_to_device: req.allocated_to_device || 'No',
+              csr: req.cybersecurity_requirement || '',
+            });
+          });
+        });
+      });
+    });
+  });
+  
+  return rows;
+};
+
+const compile5StagesForAsset = (assetId, assetRows) => {
+  const selectedAttrs = Array.from(new Set(assetRows.map(r => r.attribute)));
+  
+  // 1. Stage 1
+  const s1Output = {
+    confidentiality: selectedAttrs.includes('Confidentiality') ? 'High' : 'None',
+    integrity: selectedAttrs.includes('Integrity') ? 'High' : 'None',
+    availability: selectedAttrs.includes('Availability') ? 'High' : 'None',
+    authenticity: selectedAttrs.includes('Authenticity') ? 'High' : 'None',
+    'non-repudiation': selectedAttrs.includes('Non-repudiation') ? 'High' : 'None',
+    authorization: selectedAttrs.includes('Authorization') ? 'High' : 'None',
+    privacy: selectedAttrs.includes('Privacy') ? 'High' : 'None',
+    selected_attributes: selectedAttrs,
+    description: '手动故障备用属性分析'
+  };
+  
+  // 2. Stage 2
+  const order = { 'Negligible': 0, 'Moderate': 1, 'Major': 2, 'Severe': 3 };
+  const dscs = [];
+  const processedAttrs = new Set();
+  
+  assetRows.forEach((row) => {
+    const attrKey = `${row.attribute}-${row.damage_scenario}`;
+    if (!processedAttrs.has(attrKey)) {
+      processedAttrs.add(attrKey);
+      dscs.push({
+        attribute: row.attribute,
+        damage_scenario_sn: `DS_${row.attribute}_${dscs.length + 1}`,
+        damage_scenario: row.damage_scenario || '手工定义损害场景',
+        impact_rating: {
+          safety: row.safety,
+          financial: row.financial,
+          operational: row.operational,
+          privacy: row.privacy
+        },
+        overall_impact: row.overall_impact
+      });
+    }
+  });
+  
+  let max_s = 0, max_f = 0, max_o = 0, max_p = 0;
+  dscs.forEach(d => {
+    max_s = Math.max(max_s, order[d.impact_rating.safety] || 0);
+    max_f = Math.max(max_f, order[d.impact_rating.financial] || 0);
+    max_o = Math.max(max_o, order[d.impact_rating.operational] || 0);
+    max_p = Math.max(max_p, order[d.impact_rating.privacy] || 0);
+  });
+  const max_overall = Math.max(max_s, max_f, max_o, max_p);
+  
+  const s2Output = {
+    damage_scenarios: dscs,
+    damage_scenario: dscs.map(d => d.damage_scenario).join('; '),
+    impact_rating: {
+      safety: max_s,
+      financial: max_f,
+      operational: max_o,
+      privacy: max_p
+    },
+    overall_impact: max_overall
+  };
+  
+  // 3. Stage 3
+  const tscs = [];
+  const processedThreats = new Set();
+  
+  assetRows.forEach((row) => {
+    const threatKey = `${row.attribute}-${row.threat_scenario}`;
+    if (!processedThreats.has(threatKey)) {
+      processedThreats.add(threatKey);
+      
+      const dsObj = dscs.find(d => d.attribute === row.attribute) || {};
+      const dsSn = dsObj.damage_scenario_sn || `DS_${row.attribute}_1`;
+      
+      tscs.push({
+        attribute: row.attribute,
+        damage_scenario_sn: dsSn,
+        threat_id: `TS_${row.attribute}_${tscs.length + 1}`,
+        threat_scenario: row.threat_scenario || '手工定义威胁场景',
+        attack_paths: [
+          {
+            path_id: `P_${row.attribute}_${tscs.length + 1}`,
+            attack_path: row.attack_path || '手工定义攻击路径',
+            time_consuming: row.time_consuming || 'no_more_than_1w',
+            expertise: row.expertise || 'proficient',
+            knowledge_about_toe: row.knowledge_about_toe || 'restricted',
+            window_of_opportunity: row.window_of_opportunity || 'easy',
+            equipment: row.equipment || 'standard',
+            difficulty: parseInt(row.difficulty) || 1,
+            feasibility: row.final_feasibility
+          }
+        ],
+        final_feasibility: row.final_feasibility
+      });
+    }
+  });
+  
+  const s3Output = {
+    threat_scenarios: tscs,
+    threat_scenario: tscs.map(t => t.threat_scenario).join('; '),
+    attack_paths: tscs.flatMap(t => t.attack_paths),
+    final_feasibility: tscs[0]?.final_feasibility || 'Medium'
+  };
+  
+  // 4. Stage 4
+  const rdecs = [];
+  tscs.forEach((ts) => {
+    const row = assetRows.find(r => r.attribute === ts.attribute && r.threat_scenario === ts.threat_scenario) || assetRows[0];
+    const isExempted = ['accept', 'transfer'].includes(row.risk_treatment);
+    rdecs.push({
+      threat_id: ts.threat_id,
+      attribute: ts.attribute,
+      risk_value: parseInt(row.risk_value) || 1,
+      risk_treatment: row.risk_treatment || 'mitigate',
+      caf_level: row.caf_level || ts.final_feasibility || 'Medium',
+      justification: '手工录入决策',
+      cybersecurity_claim: isExempted ? (row.cybersecurity_claim || '接受/转移网络安全风险') : '',
+      cybersecurity_goal: isExempted ? '' : (row.cso || '保护资产不受威胁')
+    });
+  });
+  
+  const max_risk = rdecs.length > 0 ? Math.max(...rdecs.map(r => r.risk_value)) : 1;
+  const s4Output = {
+    risk_decisions: rdecs,
+    risk_rating: max_risk,
+    risk_decision: rdecs[0]?.risk_treatment || 'mitigate',
+    justification: '手工录入风险决策'
+  };
+  
+  // 5. Stage 5
+  const reqs = [];
+  tscs.forEach((ts, idx) => {
+    const row = assetRows.find(r => r.attribute === ts.attribute && r.threat_scenario === ts.threat_scenario) || assetRows[0];
+    const isExempted = ['accept', 'transfer'].includes(row.risk_treatment);
+    const csrList = row.csr ? row.csr.split('\n').filter(line => line.trim()) : [];
+    
+    if (isExempted) {
+      reqs.push({
+        threat_id: ts.threat_id,
+        cybersecurity_control_id: 'N/A',
+        cybersecurity_control: 'N/A',
+        allocated_to_device: 'No',
+        cybersecurity_requirement_id: 'N/A',
+        cybersecurity_requirement: 'N/A'
+      });
+    } else {
+      if (csrList.length > 0) {
+        csrList.forEach((csrText, cIdx) => {
+          reqs.push({
+            threat_id: ts.threat_id,
+            cybersecurity_control_id: `CSO_${ts.attribute}_${idx + 1}`,
+            cybersecurity_control: row.cybersecurity_control || '实施安全控制手段',
+            allocated_to_device: row.allocated_to_device || 'Yes',
+            cybersecurity_requirement_id: `CSR_${ts.attribute}_${idx + 1}_${cIdx + 1}`,
+            cybersecurity_requirement: csrText
+          });
+        });
+      } else {
+        reqs.push({
+          threat_id: ts.threat_id,
+          cybersecurity_control_id: `CSO_${ts.attribute}_${idx + 1}`,
+          cybersecurity_control: row.cybersecurity_control || '实施安全控制手段',
+          allocated_to_device: row.allocated_to_device || 'Yes',
+          cybersecurity_requirement_id: `CSR_${ts.attribute}_${idx + 1}_1`,
+          cybersecurity_requirement: '手工安全要求'
+        });
+      }
+    }
+  });
+  
+  const cso_val = rdecs.find(r => r.cybersecurity_goal)?.cybersecurity_goal || '手工定义安全目标';
+  const csr_list_val = reqs.map(r => r.cybersecurity_requirement).filter(c => c && c !== 'N/A');
+  const is_exempt = rdecs.every(r => ['accept', 'transfer'].includes(r.risk_treatment));
+  
+  const s5Output = {
+    requirements: reqs,
+    cso: cso_val,
+    csr: csr_list_val,
+    exempted: is_exempt,
+    reason: is_exempt ? '手工分析免除安全控制目标' : ''
+  };
+  
+  return [
+    { asset_id: assetId, stage: 'stage1', output: s1Output },
+    { asset_id: assetId, stage: 'stage2', output: s2Output },
+    { asset_id: assetId, stage: 'stage3', output: s3Output },
+    { asset_id: assetId, stage: 'stage4', output: s4Output },
+    { asset_id: assetId, stage: 'stage5', output: s5Output }
+  ];
+};
 
 export default function TaraResults({ setPage, domainId }) {
   const { t, language } = useI18n();
@@ -13,7 +625,6 @@ export default function TaraResults({ setPage, domainId }) {
     assets,
     fetchTaraResults,
     fetchAssets,
-    updateTaraStep,
     submitManualOfflineResults,
     exportReport,
     loading,
@@ -23,43 +634,19 @@ export default function TaraResults({ setPage, domainId }) {
 
   const [activeTab, setActiveTab] = useState('review'); // 'review' or 'matrix'
 
-  // Edit Step Modal States
-  const [showEditModal, setShowEditModal] = useState(false);
-  const [editingStep, setEditingStep] = useState(null);
-  const [editReason, setEditReason] = useState('');
-  const [editFormData, setEditFormData] = useState({});
+  // Excel layout flat rows
+  const [taraRows, setTaraRows] = useState([]);
+  const [editingRowKey, setEditingRowKey] = useState(null);
+  const [originalRowBackup, setOriginalRowBackup] = useState(null);
+
+  // Pagination states
+  const [currentPage, setCurrentPage] = useState(1);
+  const itemsPerPage = 10;
 
   // Export States
   const [exportFormat, setExportFormat] = useState('xlsx');
   const [exportDesensitize, setExportDesensitize] = useState(false);
   const [exporting, setExporting] = useState(false);
-
-  // Manual Input States (Fail-Safe Offline Mode)
-  const [showManualModal, setShowManualModal] = useState(false);
-  const [manualAssetId, setManualAssetId] = useState('');
-  const [manualStage, setManualStage] = useState('stage1');
-  
-  // Manual form values
-  const [mS1Conf, setMS1Conf] = useState('High');
-  const [mS1Int, setMS1Int] = useState('High');
-  const [mS1Avail, setMS1Avail] = useState('Medium');
-  const [mS1Desc, setMS1Desc] = useState('');
-
-  const [mS2Scenario, setMS2Scenario] = useState('');
-  const [mS2Saf, setMS2Saf] = useState(1);
-  const [mS2Fin, setMS2Fin] = useState(1);
-  const [mS2Ops, setMS2Ops] = useState(1);
-  const [mS2Priv, setMS2Priv] = useState(1);
-
-  const [mS3Threat, setMS3Threat] = useState('');
-  const [mS3Feas, setMS3Feas] = useState('Medium');
-
-  const [mS4Rating, setMS4Rating] = useState(3);
-  const [mS4Decision, setMS4Decision] = useState('mitigate');
-  const [mS4Justify, setMS4Justify] = useState('');
-
-  const [mS5Cso, setMS5Cso] = useState('');
-  const [mS5Csr, setMS5Csr] = useState('');
 
   useEffect(() => {
     if (domainId) {
@@ -68,99 +655,257 @@ export default function TaraResults({ setPage, domainId }) {
     }
   }, [domainId]);
 
-  const handleEditClick = (step) => {
-    setEditingStep(step);
-    setEditReason('');
+  useEffect(() => {
+    if (taraResults.length > 0 && assets.length > 0) {
+      const rows = buildExcelRowsFromSteps(taraResults, assets);
+      setTaraRows(rows);
+    } else {
+      setTaraRows([]);
+    }
+  }, [taraResults, assets]);
+
+  // Handle adding an empty row inline
+  const handleAddRow = () => {
+    const confirmedAssets = assets.filter(a => a.status === 'confirmed');
+    if (confirmedAssets.length === 0) {
+      alert(t('暂无确认状态的资产，请先在画布确认资产后添加行。'));
+      return;
+    }
     
-    // Clone step's final output
-    const finalOut = JSON.parse(JSON.stringify(step.analysis_result.final_output || {}));
-    setEditFormData(finalOut);
-    setShowEditModal(true);
+    const newRow = {
+      key: `new-${Date.now()}`,
+      isNew: true,
+      asset_id: confirmedAssets[0].id,
+      asset_name: confirmedAssets[0].name,
+      attribute: 'Integrity',
+      damage_scenario: '',
+      safety: 'Negligible',
+      financial: 'Negligible',
+      operational: 'Negligible',
+      privacy: 'Negligible',
+      overall_impact: 0,
+      threat_scenario: '',
+      attack_path: '',
+      time_consuming: 'no_more_than_1w',
+      expertise: 'proficient',
+      knowledge_about_toe: 'restricted',
+      window_of_opportunity: 'easy',
+      equipment: 'standard',
+      difficulty: 8,
+      final_feasibility: 'Medium',
+      caf_level: 'Medium',
+      cafOverridden: false,
+      risk_value: 1, // calculated
+      risk_treatment: 'mitigate',
+      cybersecurity_claim: '',
+      cso: '',
+      cybersecurity_control: '',
+      allocated_to_device: 'Yes',
+      csr: ''
+    };
+    
+    setTaraRows(prev => [...prev, newRow]);
+    setOriginalRowBackup(null);
+    setEditingRowKey(newRow.key);
+    
+    // Jump to the last page where the new row will be placed
+    const totalPages = Math.ceil((taraRows.length + 1) / itemsPerPage);
+    setCurrentPage(totalPages);
   };
 
-  const handleEditSubmit = async (e) => {
-    e.preventDefault();
-    if (!editReason.trim()) {
-      alert('请填写修改原因为何以满足专家审计审计审计审计审计规则！');
+  // Handle in-line changes
+  const handleRowChange = (key, field, value) => {
+    setTaraRows(prev => prev.map(row => {
+      if (row.key === key) {
+        let updatedRow = { ...row, [field]: value };
+        
+        // If S/F/O/P changed, automatically recalculate overall impact
+        if (['safety', 'financial', 'operational', 'privacy'].includes(field)) {
+          const order = { 'Negligible': 0, 'Moderate': 1, 'Major': 2, 'Severe': 3 };
+          const s = order[updatedRow.safety] || 0;
+          const f = order[updatedRow.financial] || 0;
+          const o = order[updatedRow.operational] || 0;
+          const p = order[updatedRow.privacy] || 0;
+          updatedRow.overall_impact = Math.max(s, f, o, p);
+        }
+        
+        // If Feasibility Factors changed, automatically recalculate Difficulty points and AF Level
+        if (['time_consuming', 'expertise', 'knowledge_about_toe', 'window_of_opportunity', 'equipment'].includes(field)) {
+          const tc = field === 'time_consuming' ? value : updatedRow.time_consuming;
+          const exp = field === 'expertise' ? value : updatedRow.expertise;
+          const kn = field === 'knowledge_about_toe' ? value : updatedRow.knowledge_about_toe;
+          const win = field === 'window_of_opportunity' ? value : updatedRow.window_of_opportunity;
+          const eq = field === 'equipment' ? value : updatedRow.equipment;
+          
+          const calc = calculateDifficultyAndFeasibility(tc, exp, kn, win, eq);
+          updatedRow.difficulty = calc.difficulty;
+          updatedRow.final_feasibility = calc.feasibility;
+          
+          // Auto sync CAF level with calculated AF level if not manually calibrated
+          if (!updatedRow.cafOverridden) {
+            updatedRow.caf_level = calc.feasibility;
+          }
+        }
+        
+        // Track manual calibration of CAF Level
+        if (field === 'caf_level') {
+          updatedRow.cafOverridden = true;
+        }
+        
+        // Automatically calculate Risk Value based on overall_impact and caf_level
+        updatedRow.risk_value = calculateRiskValue(updatedRow.overall_impact, updatedRow.caf_level);
+        
+        return updatedRow;
+      }
+      return row;
+    }));
+  };
+
+  // Handle in-line editing trigger
+  const handleEditRowClick = (row) => {
+    setEditingRowKey(row.key);
+    setOriginalRowBackup({ ...row });
+  };
+
+  // Cancel edit
+  const handleCancelEdit = (rowKey) => {
+    if (rowKey.startsWith('new-')) {
+      // Remove temp row
+      setTaraRows(prev => prev.filter(r => r.key !== rowKey));
+    } else if (originalRowBackup) {
+      // Restore previous values
+      setTaraRows(prev => prev.map(r => r.key === rowKey ? originalRowBackup : r));
+    }
+    setEditingRowKey(null);
+    setOriginalRowBackup(null);
+  };
+
+  // Save changes to database
+  const handleSaveRow = async (rowKey) => {
+    const row = taraRows.find(r => r.key === rowKey);
+    if (!row) return;
+
+    if (!row.damage_scenario?.trim()) {
+      alert(t('损害场景不能为空！'));
+      return;
+    }
+    if (!row.threat_scenario?.trim()) {
+      alert(t('威胁场景不能为空！'));
       return;
     }
 
-    const updated = await updateTaraStep(editingStep.id, editFormData, editReason.trim());
-    if (updated) {
-      setShowEditModal(false);
-      setEditingStep(null);
-      // Re-fetch step results to sync risk decisions to stage 5 (BR-69)
+    // Group local state rows by asset_id
+    const rowsByAsset = {};
+    taraRows.forEach(r => {
+      if (!rowsByAsset[r.asset_id]) {
+        rowsByAsset[r.asset_id] = [];
+      }
+      rowsByAsset[r.asset_id].push(r);
+    });
+
+    // Compile steps for all present assets
+    const allStepsPayload = [];
+    Object.keys(rowsByAsset).forEach(assetIdStr => {
+      const aId = parseInt(assetIdStr);
+      const assetRows = rowsByAsset[assetIdStr];
+      const steps = compile5StagesForAsset(aId, assetRows);
+      allStepsPayload.push(...steps);
+    });
+
+    // Merge any existing assets from the DB that are not in the current table rows
+    const presentAssetIds = Object.keys(rowsByAsset).map(id => parseInt(id));
+    
+    // Deduplicate existing steps from taraResults by run
+    const stepsByAssetDB = {};
+    taraResults.forEach(step => {
+      if (!stepsByAssetDB[step.asset_id]) {
+        stepsByAssetDB[step.asset_id] = [];
+      }
+      stepsByAssetDB[step.asset_id].push(step);
+    });
+
+    Object.keys(stepsByAssetDB).forEach(assetIdStr => {
+      const aId = parseInt(assetIdStr);
+      if (!presentAssetIds.includes(aId)) {
+        stepsByAssetDB[assetIdStr].forEach(step => {
+          allStepsPayload.push({
+            asset_id: step.asset_id,
+            stage: step.stage,
+            output: step.analysis_result.final_output
+          });
+        });
+      }
+    });
+
+    const res = await submitManualOfflineResults(domainId, allStepsPayload);
+    if (res) {
+      setEditingRowKey(null);
+      setOriginalRowBackup(null);
+      alert(t('手动修订数据保存成功！'));
       fetchTaraResults(domainId);
     }
   };
 
-  const handleManualSubmit = async (e) => {
-    e.preventDefault();
-    if (!manualAssetId) {
-      alert('请选择需要录入数据的资产项');
-      return;
-    }
+  // Delete row
+  const handleDeleteRow = async (rowKey) => {
+    if (window.confirm(t('您确定要彻底删除这一行分析场景吗？保存后对应的数据将被清除。'))) {
+      const originalAssetIds = Array.from(new Set(taraRows.map(r => r.asset_id)));
+      const remainingRows = taraRows.filter(r => r.key !== rowKey);
+      setTaraRows(remainingRows);
+      
+      // If it was a temp unsaved row, just hide it
+      if (rowKey.startsWith('new-')) {
+        setEditingRowKey(null);
+        return;
+      }
 
-    let finalOutput = {};
-    if (manualStage === 'stage1') {
-      finalOutput = {
-        confidentiality: mS1Conf,
-        integrity: mS1Int,
-        availability: mS1Avail,
-        description: mS1Desc || t('手工安全属性分析。')
-      };
-    } else if (manualStage === 'stage2') {
-      const s = parseInt(mS2Saf);
-      const f = parseInt(mS2Fin);
-      const o = parseInt(mS2Ops);
-      const p = parseInt(mS2Priv);
-      finalOutput = {
-        damage_scenario: mS2Scenario || t('手工录入损害场景。'),
-        impact_rating: { safety: s, financial: f, operational: o, privacy: p },
-        overall_impact: Math.max(s, f, o, p)
-      };
-    } else if (manualStage === 'stage3') {
-      finalOutput = {
-        threat_scenario: mS3Threat || t('手工录入威胁场景。'),
-        attack_paths: [
-          { path_id: "P_MANUAL", method: t("手工定义攻击方法"), feasibility: mS3Feas }
-        ],
-        final_feasibility: mS3Feas
-      };
-    } else if (manualStage === 'stage4') {
-      finalOutput = {
-        risk_rating: parseInt(mS4Rating),
-        risk_decision: mS4Decision,
-        justification: mS4Justify || t('手工录入决策。')
-      };
-    } else if (manualStage === 'stage5') {
-      const isExempted = mS4Decision === 'accept' || mS4Decision === 'transfer';
-      finalOutput = {
-        cso: isExempted ? t('无需制定安全目标') : (mS5Cso || t('手工定义安全目标。')),
-        csr: isExempted ? [] : mS5Csr.split('\n').filter(line => line.trim()),
-        exempted: isExempted,
-        reason: isExempted ? t('人工选择免除安全控制目标') : ''
-      };
-    }
+      // Compile remaining rows to save
+      const rowsByAsset = {};
+      remainingRows.forEach(r => {
+        if (!rowsByAsset[r.asset_id]) {
+          rowsByAsset[r.asset_id] = [];
+        }
+        rowsByAsset[r.asset_id].push(r);
+      });
 
-    const payload = {
-      asset_id: parseInt(manualAssetId),
-      stage: manualStage,
-      output: finalOutput
-    };
+      const allStepsPayload = [];
+      Object.keys(rowsByAsset).forEach(assetIdStr => {
+        const aId = parseInt(assetIdStr);
+        const assetRows = rowsByAsset[assetIdStr];
+        const steps = compile5StagesForAsset(aId, assetRows);
+        allStepsPayload.push(...steps);
+      });
 
-    const res = await submitManualOfflineResults(domainId, [payload]);
-    if (res) {
-      setShowManualModal(false);
-      setManualAssetId('');
-      // reset manual states
-      setMS1Desc('');
-      setMS2Scenario('');
-      setMS3Threat('');
-      setMS4Justify('');
-      setMS5Cso('');
-      setMS5Csr('');
-      alert('手工故障备用数据导入成功！');
+      // Maintain other untouched asset steps
+      const stepsByAssetDB = {};
+      taraResults.forEach(step => {
+        if (!stepsByAssetDB[step.asset_id]) {
+          stepsByAssetDB[step.asset_id] = [];
+        }
+        stepsByAssetDB[step.asset_id].push(step);
+      });
+
+      Object.keys(stepsByAssetDB).forEach(assetIdStr => {
+        const aId = parseInt(assetIdStr);
+        if (!originalAssetIds.includes(aId)) {
+          stepsByAssetDB[assetIdStr].forEach(step => {
+            allStepsPayload.push({
+              asset_id: step.asset_id,
+              stage: step.stage,
+              output: step.analysis_result.final_output
+            });
+          });
+        }
+      });
+
+      // Submit manual update
+      const res = await submitManualOfflineResults(domainId, allStepsPayload);
+      if (res) {
+        setEditingRowKey(null);
+        setOriginalRowBackup(null);
+        alert(t('场景行删除成功并已同步到评估库！'));
+        fetchTaraResults(domainId);
+      }
     }
   };
 
@@ -173,23 +918,11 @@ export default function TaraResults({ setPage, domainId }) {
     }
   };
 
-  const getStageLabel = (stage) => {
-    switch (stage) {
-      case 'stage1': return t('① 安全属性分析');
-      case 'stage2': return t('② 损害评估 (SFOP)');
-      case 'stage3': return t('③ 威胁与攻击可行性');
-      case 'stage4': return t('④ 风险决策评估');
-      case 'stage5': return t('⑤ CSR/CSO 控制目标');
-      default: return stage;
-    }
-  };
-
   const getAssetLabel = (assetId) => {
     const asset = assets.find(a => a.id === assetId);
     return asset ? `${asset.name} (${asset.asset_type})` : `${t("资产")} #${assetId}`;
   };
 
-  // Group steps by asset for Tab 2 Matrix
   const getGroupedMatrix = () => {
     const groups = {};
     taraResults.forEach(step => {
@@ -213,8 +946,14 @@ export default function TaraResults({ setPage, domainId }) {
 
   const groupedMatrix = getGroupedMatrix();
 
+  // Pagination helper parameters
+  const totalPages = Math.ceil(taraRows.length / itemsPerPage);
+  const indexOfLastItem = currentPage * itemsPerPage;
+  const indexOfFirstItem = indexOfLastItem - itemsPerPage;
+  const currentRows = taraRows.slice(indexOfFirstItem, indexOfLastItem);
+
   return (
-    <div className="dashboard-container">
+    <div className="dashboard-container" style={{ maxWidth: 'none', width: '100%' }}>
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '32px' }}>
         <div style={{ display: 'flex', alignItems: 'center', gap: '16px' }}>
           <button 
@@ -227,21 +966,23 @@ export default function TaraResults({ setPage, domainId }) {
           <div>
             <h1 className="section-title" style={{ margin: '0' }}>{t("TARA 评估结果审阅")}</h1>
             <p style={{ color: 'var(--text-secondary)', fontSize: '13px', marginTop: '4px' }}>
-              {t("审阅大模型自动计算出的 5 阶段安全要求。支持专家人工干预修改结论与离线导入。")}
+              {t("审阅并直接修订子系统的安全评估结果。支持表格内嵌修改与即时导出。")}
             </p>
           </div>
         </div>
 
-        <div style={{ display: 'flex', gap: '12px' }}>
-          <button
-            onClick={() => setShowManualModal(true)}
-            className="btn btn-secondary"
-            style={{ border: '1px dashed var(--border-glow)' }}
-          >
-            <Plus size={16} />
-            <span>{t("手工故障备用录入")}</span>
-          </button>
-        </div>
+        {activeTab === 'review' && (
+          <div style={{ display: 'flex', gap: '12px' }}>
+            <button
+              onClick={handleAddRow}
+              className="btn btn-secondary"
+              style={{ border: '1px dashed var(--border-glow)' }}
+            >
+              <Plus size={16} />
+              <span>{t("手动添加评估行")}</span>
+            </button>
+          </div>
+        )}
       </div>
 
       {error && (
@@ -285,7 +1026,7 @@ export default function TaraResults({ setPage, domainId }) {
           }}
         >
           <CheckSquare size={16} />
-          <span>{t("TARA 5 阶段审阅表")}</span>
+          <span>{t("TARA 评估详情表 (与Excel对齐)")}</span>
         </button>
 
         <button
@@ -306,31 +1047,31 @@ export default function TaraResults({ setPage, domainId }) {
           }}
         >
           <BookOpen size={16} />
-          <span>{t("项目级安全控制矩阵")}</span>
+          <span>{t("项目级安全控制要求矩阵")}</span>
         </button>
       </div>
 
-      {loading && taraResults.length === 0 ? (
+      {loading && taraRows.length === 0 ? (
         <div style={{ display: 'flex', alignItems: 'center', gap: '12px', padding: '45px 0' }}>
           <div className="spinner"></div>
           <span style={{ color: 'var(--text-secondary)' }}>{t("正在加载评估数据...")}</span>
         </div>
-      ) : taraResults.length === 0 ? (
+      ) : taraRows.length === 0 ? (
         <div className="glass" style={{ padding: '60px 40px', textAlign: 'center', color: 'var(--text-secondary)' }}>
           <Layers size={48} style={{ color: 'var(--text-muted)', marginBottom: '16px' }} />
           <h3 style={{ fontSize: '18px', marginBottom: '8px', color: 'var(--text-primary)' }}>{t("没有找到分析记录")}</h3>
           <p style={{ fontSize: '14px', maxWidth: '440px', margin: '0 auto' }}>
-            {t("该子系统域控尚未生成分析步骤数据。您可以在工作台点击“启动 TARA 分析”派发异步任务，或者使用右上角“手工故障备用录入”填入已有数据。")}
+            {t("该子系统域控尚未生成分析步骤数据。您可以在工作台点击“启动 TARA 分析”派发异步任务，或者使用右上角“手动添加评估行”直接在下方填写。")}
           </p>
         </div>
       ) : activeTab === 'review' ? (
-        <div style={{ display: 'flex', flexDirection: 'column', gap: '32px' }}>
+        <div style={{ display: 'flex', flexDirection: 'column', gap: '24px' }}>
           
           {/* Report Export Panel */}
           <div className="glass" style={{ padding: '20px 24px', display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '16px' }}>
             <div>
               <h4 style={{ fontSize: '15px', fontWeight: '600', color: 'var(--text-primary)' }}>{t("导出评估报告")}</h4>
-              <p style={{ color: 'var(--text-secondary)', fontSize: '12px', marginTop: '2px' }}>{t("一键生成 XLSX 或 CSV 归档安全规范文档，保存在宿主机持久挂载卷")}</p>
+              <p style={{ color: 'var(--text-secondary)', fontSize: '12px', marginTop: '2px' }}>{t("一键生成与 Excel 完全对齐的 XLSX 工作簿或 CSV 归档规范文档")}</p>
             </div>
             
             <div style={{ display: 'flex', alignItems: 'center', gap: '16px', flexWrap: 'wrap' }}>
@@ -369,590 +1110,591 @@ export default function TaraResults({ setPage, domainId }) {
           </div>
 
           {/* Results Review Table */}
-          <div className="table-container">
-            <table className="custom-table">
+          <div className="table-container" style={{ overflowX: 'auto', border: '1px solid var(--border-color)', borderRadius: '8px', background: 'var(--bg-card)' }}>
+            <table className="custom-table" style={{ width: '100%', borderCollapse: 'collapse', fontSize: '11px' }}>
               <thead>
-                <tr>
-                  <th style={{ width: '220px' }}>{t("资产项")}</th>
-                  <th style={{ width: '180px' }}>{t("分析阶段")}</th>
-                  <th>{t("评估结论")}</th>
-                  <th style={{ width: '180px' }}>{t("安全控制要求/指标")}</th>
-                  <th style={{ width: '110px' }}>{t("人工标记")}</th>
-                  <th style={{ width: '100px' }}>{t("操作")}</th>
+                <tr style={{ background: 'rgba(15, 23, 42, 0.05)', borderBottom: '1px solid var(--border-color)' }}>
+                  <th style={{ minWidth: '100px', padding: '10px' }}>{t("资产名称")}</th>
+                  <th style={{ minWidth: '95px', padding: '10px' }}>{t("安全属性")}</th>
+                  <th style={{ minWidth: '160px', padding: '10px' }}>{t("危害/损害场景")}</th>
+                  <th style={{ minWidth: '85px', padding: '10px' }}>{t("S (安全)")}</th>
+                  <th style={{ minWidth: '85px', padding: '10px' }}>{t("F (财务)")}</th>
+                  <th style={{ minWidth: '85px', padding: '10px' }}>{t("O (运营)")}</th>
+                  <th style={{ minWidth: '85px', padding: '10px' }}>{t("P (隐私)")}</th>
+                  <th style={{ width: '80px', padding: '10px' }}>{t("影响等级")}</th>
+                  <th style={{ minWidth: '160px', padding: '10px' }}>{t("威胁场景")}</th>
+                  <th style={{ minWidth: '140px', padding: '10px' }}>{t("攻击路径")}</th>
+                  
+                  {/* Excel Attack Feasibility Factors */}
+                  <th style={{ minWidth: '85px', padding: '10px' }}>{t("时间开销")}</th>
+                  <th style={{ minWidth: '85px', padding: '10px' }}>{t("专业知识")}</th>
+                  <th style={{ minWidth: '85px', padding: '10px' }}>{t("TOE知识")}</th>
+                  <th style={{ minWidth: '85px', padding: '10px' }}>{t("机会窗口")}</th>
+                  <th style={{ minWidth: '85px', padding: '10px' }}>{t("所需设备")}</th>
+                  <th style={{ width: '60px', padding: '10px' }}>{t("折算分值")}</th>
+                  <th style={{ width: '80px', padding: '10px' }}>{t("AF Level")}</th>
+                  <th style={{ width: '80px', padding: '10px' }}>{t("CAF Level")}</th>
+                  
+                  <th style={{ width: '60px', padding: '10px' }}>{t("风险值")}</th>
+                  <th style={{ minWidth: '95px', padding: '10px' }}>{t("处理决策")}</th>
+                  
+                  {/* Cybersecurity Goals and Requirements */}
+                  <th style={{ minWidth: '140px', padding: '10px' }}>{t("安全声称 (Claims)")}</th>
+                  <th style={{ minWidth: '140px', padding: '10px' }}>{t("安全目标 (CSO)")}</th>
+                  <th style={{ minWidth: '140px', padding: '10px' }}>{t("安全控制")}</th>
+                  <th style={{ width: '80px', padding: '10px' }}>{t("分配至ADCU")}</th>
+                  <th style={{ minWidth: '160px', padding: '10px' }}>{t("安全要求 (CSR)")}</th>
+                  <th style={{ minWidth: '90px', padding: '10px', textAlign: 'center', position: 'sticky', right: 0, background: 'var(--bg-card)', zIndex: 10 }}>{t("操作")}</th>
                 </tr>
               </thead>
               <tbody>
-                {taraResults.map((step) => {
-                  const finalOut = step.analysis_result.final_output || {};
-                  const isModified = step.analysis_result.is_human_modified;
+                {currentRows.map((row) => {
+                  const isEditing = editingRowKey === row.key;
                   
-                  // Extract display parameters based on stage
-                  let conclusion = '';
-                  let metrics = '';
-                  
-                  if (step.stage === 'stage1') {
-                    conclusion = finalOut.description || t('无 CIA 描述');
-                    metrics = `C: ${finalOut.confidentiality || 'N/A'} • I: ${finalOut.integrity || 'N/A'} • A: ${finalOut.availability || 'N/A'}`;
-                  } else if (step.stage === 'stage2') {
-                    conclusion = finalOut.damage_scenario || t('无损害场景');
-                    const ratings = finalOut.damage_ratings || finalOut.impact_rating || {};
-                    metrics = `${t("整体影响")}: ${finalOut.overall_impact || 0} (S:${ratings.safety || 0} F:${ratings.financial || 0} O:${ratings.operational || 0} P:${ratings.privacy || 0})`;
-                  } else if (step.stage === 'stage3') {
-                    conclusion = finalOut.threat_scenario || t('无威胁场景');
-                    metrics = `${t("最终可行性")}: ${finalOut.final_feasibility || 'N/A'}`;
-                  } else if (step.stage === 'stage4') {
-                    conclusion = finalOut.justification || t('无决策依据');
-                    metrics = `${t("风险")}: ${finalOut.risk_rating || 0} ${t("决策")}: ${finalOut.risk_decision || 'N/A'}`;
-                  } else if (step.stage === 'stage5') {
-                    const isEx = finalOut.exempted;
-                    conclusion = isEx ? `[${t("免除")}] ${finalOut.reason}` : `${t("安全目标")}: ${finalOut.cso || 'N/A'}`;
-                    metrics = isEx ? t('无需CSR要求') : (language === 'zh' ? `包含 ${finalOut.csr?.length || 0} 条CSR` : `Contains ${finalOut.csr?.length || 0} CSR(s)`);
-                  }
-
                   return (
-                    <tr key={step.id}>
-                      <td>
-                        <span style={{ fontWeight: '500' }}>{getAssetLabel(step.asset_id)}</span>
-                      </td>
-                      <td>
-                        <span style={{ fontSize: '13px', color: 'var(--text-secondary)' }}>{getStageLabel(step.stage)}</span>
-                      </td>
-                      <td>
-                        <p style={{ fontSize: '13px', color: 'var(--text-secondary)', lineHeight: '1.4', maxWidth: '400px' }}>
-                          {conclusion}
-                        </p>
-                      </td>
-                      <td>
-                        <code style={{ fontSize: '11px', padding: '2px 6px', background: 'rgba(15, 23, 42, 0.03)', border: '1px solid var(--border-color)' }}>
-                          {metrics}
-                        </code>
-                      </td>
-                      <td>
-                        {isModified ? (
-                          <span style={{ fontSize: '11px', background: 'rgba(217, 119, 6, 0.08)', color: '#d97706', padding: '2px 8px', borderRadius: '4px', fontWeight: '600' }} title={`${t("修改原因")}: ${step.analysis_result.modification_reason}`}>
-                            {t("专家人工修改")}
-                          </span>
+                    <tr key={row.key} style={{ borderBottom: '1px solid var(--border-color)', height: '48px' }}>
+                      
+                      {/* Asset Name */}
+                      <td style={{ padding: '8px' }}>
+                        {isEditing ? (
+                          <select
+                            value={row.asset_id}
+                            onChange={(e) => handleRowChange(row.key, 'asset_id', parseInt(e.target.value))}
+                            className="input-field"
+                            style={{ width: '100%', fontSize: '11px', padding: '4px' }}
+                          >
+                            {assets.filter(a => a.status === 'confirmed').map(a => (
+                              <option key={a.id} value={a.id}>{a.name}</option>
+                            ))}
+                          </select>
                         ) : (
-                          <span style={{ fontSize: '11px', color: 'var(--text-muted)' }}>{t("AI 原始草案")}</span>
+                          <span style={{ fontWeight: '500' }}>{getAssetLabel(row.asset_id)}</span>
                         )}
                       </td>
-                      <td>
-                        <button
-                          onClick={() => handleEditClick(step)}
-                          className="btn btn-secondary"
-                          style={{ padding: '6px 10px', fontSize: '12px' }}
-                          title={t("人工修改此评估项")}
-                        >
-                          <Edit3 size={12} />
-                          <span>{t("修改")}</span>
-                        </button>
+
+                      {/* Security Attribute */}
+                      <td style={{ padding: '8px' }}>
+                        {isEditing ? (
+                          <select
+                            value={row.attribute}
+                            onChange={(e) => handleRowChange(row.key, 'attribute', e.target.value)}
+                            className="input-field"
+                            style={{ width: '100%', fontSize: '11px', padding: '4px' }}
+                          >
+                            <option value="Confidentiality">Confidentiality</option>
+                            <option value="Integrity">Integrity</option>
+                            <option value="Availability">Availability</option>
+                            <option value="Authenticity">Authenticity</option>
+                            <option value="Non-repudiation">Non-repudiation</option>
+                            <option value="Authorization">Authorization</option>
+                            <option value="Privacy">Privacy</option>
+                          </select>
+                        ) : (
+                          <span>{row.attribute}</span>
+                        )}
                       </td>
+
+                      {/* Damage Scenario */}
+                      <td style={{ padding: '8px' }}>
+                        {isEditing ? (
+                          <textarea
+                            value={row.damage_scenario}
+                            onChange={(e) => handleRowChange(row.key, 'damage_scenario', e.target.value)}
+                            className="input-field"
+                            rows={2}
+                            style={{ width: '100%', fontSize: '11px', padding: '4px', resize: 'vertical' }}
+                          />
+                        ) : (
+                          <p style={{ margin: 0, maxWidth: '200px', whiteSpace: 'normal', wordBreak: 'break-all' }}>{row.damage_scenario}</p>
+                        )}
+                      </td>
+
+                      {/* Safety (S) */}
+                      <td style={{ padding: '8px' }}>
+                        {isEditing ? (
+                          <select value={row.safety} onChange={(e) => handleRowChange(row.key, 'safety', e.target.value)} className="input-field" style={{ width: '100%', fontSize: '10px', padding: '2px' }}>
+                            <option value="Negligible">{t('轻微')}</option>
+                            <option value="Moderate">{t('中等')}</option>
+                            <option value="Major">{t('重要')}</option>
+                            <option value="Severe">{t('严重')}</option>
+                          </select>
+                        ) : (
+                          <span>{getImpactLabel(row.safety, t)}</span>
+                        )}
+                      </td>
+
+                      {/* Financial (F) */}
+                      <td style={{ padding: '8px' }}>
+                        {isEditing ? (
+                          <select value={row.financial} onChange={(e) => handleRowChange(row.key, 'financial', e.target.value)} className="input-field" style={{ width: '100%', fontSize: '10px', padding: '2px' }}>
+                            <option value="Negligible">{t('轻微')}</option>
+                            <option value="Moderate">{t('中等')}</option>
+                            <option value="Major">{t('重要')}</option>
+                            <option value="Severe">{t('严重')}</option>
+                          </select>
+                        ) : (
+                          <span>{getImpactLabel(row.financial, t)}</span>
+                        )}
+                      </td>
+
+                      {/* Operational (O) */}
+                      <td style={{ padding: '8px' }}>
+                        {isEditing ? (
+                          <select value={row.operational} onChange={(e) => handleRowChange(row.key, 'operational', e.target.value)} className="input-field" style={{ width: '100%', fontSize: '10px', padding: '2px' }}>
+                            <option value="Negligible">{t('轻微')}</option>
+                            <option value="Moderate">{t('中等')}</option>
+                            <option value="Major">{t('重要')}</option>
+                            <option value="Severe">{t('严重')}</option>
+                          </select>
+                        ) : (
+                          <span>{getImpactLabel(row.operational, t)}</span>
+                        )}
+                      </td>
+
+                      {/* Privacy (P) */}
+                      <td style={{ padding: '8px' }}>
+                        {isEditing ? (
+                          <select value={row.privacy} onChange={(e) => handleRowChange(row.key, 'privacy', e.target.value)} className="input-field" style={{ width: '100%', fontSize: '10px', padding: '2px' }}>
+                            <option value="Negligible">{t('轻微')}</option>
+                            <option value="Moderate">{t('中等')}</option>
+                            <option value="Major">{t('重要')}</option>
+                            <option value="Severe">{t('严重')}</option>
+                          </select>
+                        ) : (
+                          <span>{getImpactLabel(row.privacy, t)}</span>
+                        )}
+                      </td>
+
+                      {/* Overall Impact Level */}
+                      <td style={{ padding: '8px', textAlign: 'center' }}>
+                        <span style={{ 
+                          fontWeight: '600', 
+                          padding: '2px 6px', 
+                          borderRadius: '4px',
+                          background: row.overall_impact >= 3 ? 'rgba(244, 63, 94, 0.1)' : row.overall_impact === 2 ? 'rgba(245, 158, 11, 0.1)' : 'rgba(59, 130, 246, 0.1)',
+                          color: row.overall_impact >= 3 ? '#fda4af' : row.overall_impact === 2 ? '#fcd34d' : '#93c5fd'
+                        }}>
+                          {t(['轻微', '中等', '重要', '严重'][row.overall_impact] || '轻微')}
+                        </span>
+                      </td>
+
+                      {/* Threat Scenario */}
+                      <td style={{ padding: '8px' }}>
+                        {isEditing ? (
+                          <textarea
+                            value={row.threat_scenario}
+                            onChange={(e) => handleRowChange(row.key, 'threat_scenario', e.target.value)}
+                            className="input-field"
+                            rows={2}
+                            style={{ width: '100%', fontSize: '11px', padding: '4px', resize: 'vertical' }}
+                          />
+                        ) : (
+                          <p style={{ margin: 0, maxWidth: '200px', whiteSpace: 'normal', wordBreak: 'break-all' }}>{row.threat_scenario}</p>
+                        )}
+                      </td>
+
+                      {/* Attack Path */}
+                      <td style={{ padding: '8px' }}>
+                        {isEditing ? (
+                          <textarea
+                            value={row.attack_path}
+                            onChange={(e) => handleRowChange(row.key, 'attack_path', e.target.value)}
+                            className="input-field"
+                            rows={2}
+                            style={{ width: '100%', fontSize: '11px', padding: '4px', resize: 'vertical' }}
+                          />
+                        ) : (
+                          <p style={{ margin: 0, maxWidth: '160px', whiteSpace: 'normal', wordBreak: 'break-all', fontSize: '11px', color: 'var(--text-secondary)' }}>{row.attack_path || '-'}</p>
+                        )}
+                      </td>
+
+                      {/* --- EXCEL FEASIBILITY FACTORS (INLINE EDITING) --- */}
+
+                      {/* Time Consuming */}
+                      <td style={{ padding: '8px' }}>
+                        {isEditing ? (
+                          <select
+                            value={row.time_consuming}
+                            onChange={(e) => handleRowChange(row.key, 'time_consuming', e.target.value)}
+                            className="input-field"
+                            style={{ width: '100%', fontSize: '10px', padding: '2px' }}
+                          >
+                            <option value="no_more_than_1d">&lt; 1d</option>
+                            <option value="no_more_than_1w">&lt; 1w</option>
+                            <option value="no_more_than_1m">&lt; 1m</option>
+                            <option value="no_more_than_6m">&lt; 6m</option>
+                            <option value="more_than_6m">&gt; 6m</option>
+                          </select>
+                        ) : (
+                          <span>{tcLabels[row.time_consuming] || row.time_consuming}</span>
+                        )}
+                      </td>
+
+                      {/* Expertise */}
+                      <td style={{ padding: '8px' }}>
+                        {isEditing ? (
+                          <select
+                            value={row.expertise}
+                            onChange={(e) => handleRowChange(row.key, 'expertise', e.target.value)}
+                            className="input-field"
+                            style={{ width: '100%', fontSize: '10px', padding: '2px' }}
+                          >
+                            <option value="layman">{t('无专业知识')}</option>
+                            <option value="proficient">{t('熟悉')}</option>
+                            <option value="expert">{t('专家')}</option>
+                            <option value="expert_multiple">{t('多个专家')}</option>
+                          </select>
+                        ) : (
+                          <span>{getExpLabel(row.expertise, t)}</span>
+                        )}
+                      </td>
+
+                      {/* Knowledge about TOE */}
+                      <td style={{ padding: '8px' }}>
+                        {isEditing ? (
+                          <select
+                            value={row.knowledge_about_toe}
+                            onChange={(e) => handleRowChange(row.key, 'knowledge_about_toe', e.target.value)}
+                            className="input-field"
+                            style={{ width: '100%', fontSize: '10px', padding: '2px' }}
+                          >
+                            <option value="public">{t('公开')}</option>
+                            <option value="restricted">{t('受限')}</option>
+                            <option value="confidential">{t('机密')}</option>
+                            <option value="strictly_confidential">{t('严格机密')}</option>
+                          </select>
+                        ) : (
+                          <span>{getKnLabel(row.knowledge_about_toe, t)}</span>
+                        )}
+                      </td>
+
+                      {/* Window of opportunity */}
+                      <td style={{ padding: '8px' }}>
+                        {isEditing ? (
+                          <select
+                            value={row.window_of_opportunity}
+                            onChange={(e) => handleRowChange(row.key, 'window_of_opportunity', e.target.value)}
+                            className="input-field"
+                            style={{ width: '100%', fontSize: '10px', padding: '2px' }}
+                          >
+                            <option value="unlimited">{t('无限制')}</option>
+                            <option value="easy">{t('易')}</option>
+                            <option value="moderate">{t('中等')}</option>
+                            <option value="difficult">{t('难')}</option>
+                          </select>
+                        ) : (
+                          <span>{getWinLabel(row.window_of_opportunity, t)}</span>
+                        )}
+                      </td>
+
+                      {/* Equipment */}
+                      <td style={{ padding: '8px' }}>
+                        {isEditing ? (
+                          <select
+                            value={row.equipment}
+                            onChange={(e) => handleRowChange(row.key, 'equipment', e.target.value)}
+                            className="input-field"
+                            style={{ width: '100%', fontSize: '10px', padding: '2px' }}
+                          >
+                            <option value="standard">{t('标准')}</option>
+                            <option value="special">{t('专用')}</option>
+                            <option value="bespoke">{t('定制')}</option>
+                            <option value="bespoke_multiple">{t('多个定制')}</option>
+                          </select>
+                        ) : (
+                          <span>{getEqLabel(row.equipment, t)}</span>
+                        )}
+                      </td>
+
+                      {/* Difficulty points (calculated) */}
+                      <td style={{ padding: '8px', textAlign: 'center', fontWeight: 'bold', color: 'var(--primary)' }}>
+                        {row.difficulty}
+                      </td>
+
+                      {/* AF Level (calculated feasibility) */}
+                      <td style={{ padding: '8px' }}>
+                        <span style={{ 
+                          fontWeight: '600',
+                          color: row.final_feasibility === 'High' ? '#f43f5e' : row.final_feasibility === 'Medium' ? '#f59e0b' : '#10b981'
+                        }}>
+                          {row.final_feasibility}
+                        </span>
+                      </td>
+
+                      {/* CAF Level (calibrated feasibility) */}
+                      <td style={{ padding: '8px' }}>
+                        {isEditing ? (
+                          <select
+                            value={row.caf_level}
+                            onChange={(e) => handleRowChange(row.key, 'caf_level', e.target.value)}
+                            className="input-field"
+                            style={{ width: '100%', fontSize: '10px', padding: '2px' }}
+                          >
+                            <option value="Very High">Very High</option>
+                            <option value="High">High</option>
+                            <option value="Medium">Medium</option>
+                            <option value="Low">Low</option>
+                            <option value="Very Low">Very Low</option>
+                          </select>
+                        ) : (
+                          <span style={{ 
+                            fontWeight: '600',
+                            color: row.caf_level === 'High' ? '#f43f5e' : row.caf_level === 'Medium' ? '#f59e0b' : '#10b981'
+                          }}>
+                            {row.caf_level}
+                          </span>
+                        )}
+                      </td>
+
+                      {/* --- END OF EXCEL FEASIBILITY FACTORS --- */}
+
+                      {/* Risk Value (Readonly, calculated) */}
+                      <td style={{ padding: '8px', textAlign: 'center' }}>
+                        <span style={{ 
+                          fontWeight: '700', 
+                          color: row.risk_value >= 4 ? '#f43f5e' : row.risk_value === 3 ? '#f59e0b' : '#10b981',
+                          fontSize: '13px'
+                        }}>
+                          {row.risk_value}
+                        </span>
+                      </td>
+
+                      {/* Risk Treatment */}
+                      <td style={{ padding: '8px' }}>
+                        {isEditing ? (
+                          <select
+                            value={row.risk_treatment}
+                            onChange={(e) => handleRowChange(row.key, 'risk_treatment', e.target.value)}
+                            className="input-field"
+                            style={{ width: '100%', fontSize: '11px', padding: '4px' }}
+                          >
+                            <option value="mitigate">{t('缓解风险')}</option>
+                            <option value="accept">{t('接受风险')}</option>
+                            <option value="transfer">{t('转移风险')}</option>
+                            <option value="avoid">{t('规避风险')}</option>
+                          </select>
+                        ) : (
+                          <span>{getRiskTreatmentLabel(row.risk_treatment, t)}</span>
+                        )}
+                      </td>
+
+                      {/* Cybersecurity Claims */}
+                      <td style={{ padding: '8px' }}>
+                        {isEditing ? (
+                          <textarea
+                            value={row.cybersecurity_claim}
+                            onChange={(e) => handleRowChange(row.key, 'cybersecurity_claim', e.target.value)}
+                            className="input-field"
+                            rows={2}
+                            style={{ width: '100%', fontSize: '11px', padding: '4px', resize: 'vertical' }}
+                          />
+                        ) : (
+                          <p style={{ margin: 0, maxWidth: '160px', whiteSpace: 'normal', wordBreak: 'break-all' }}>{row.cybersecurity_claim || '-'}</p>
+                        )}
+                      </td>
+
+                      {/* CSO (Cybersecurity Goal) */}
+                      <td style={{ padding: '8px' }}>
+                        {isEditing ? (
+                          <textarea
+                            value={row.cso}
+                            onChange={(e) => handleRowChange(row.key, 'cso', e.target.value)}
+                            className="input-field"
+                            rows={2}
+                            style={{ width: '100%', fontSize: '11px', padding: '4px', resize: 'vertical' }}
+                          />
+                        ) : (
+                          <p style={{ margin: 0, maxWidth: '160px', whiteSpace: 'normal', wordBreak: 'break-all' }}>{row.cso || '-'}</p>
+                        )}
+                      </td>
+
+                      {/* Cybersecurity Control */}
+                      <td style={{ padding: '8px' }}>
+                        {isEditing ? (
+                          <textarea
+                            value={row.cybersecurity_control}
+                            onChange={(e) => handleRowChange(row.key, 'cybersecurity_control', e.target.value)}
+                            className="input-field"
+                            rows={2}
+                            style={{ width: '100%', fontSize: '11px', padding: '4px', resize: 'vertical' }}
+                          />
+                        ) : (
+                          <p style={{ margin: 0, maxWidth: '160px', whiteSpace: 'normal', wordBreak: 'break-all' }}>{row.cybersecurity_control || '-'}</p>
+                        )}
+                      </td>
+
+                      {/* Allocated to device (ADCU) */}
+                      <td style={{ padding: '8px', textAlign: 'center' }}>
+                        {isEditing ? (
+                          <select
+                            value={row.allocated_to_device}
+                            onChange={(e) => handleRowChange(row.key, 'allocated_to_device', e.target.value)}
+                            className="input-field"
+                            style={{ width: '100%', fontSize: '11px', padding: '4px' }}
+                          >
+                            <option value="Yes">{t('是')}</option>
+                            <option value="No">{t('否')}</option>
+                          </select>
+                        ) : (
+                          <span style={{ fontWeight: '500', color: row.allocated_to_device === 'Yes' ? '#10b981' : 'var(--text-secondary)' }}>
+                            {t(row.allocated_to_device === 'Yes' ? '是' : '否')}
+                          </span>
+                        )}
+                      </td>
+
+                      {/* CSR (Cybersecurity Requirement) */}
+                      <td style={{ padding: '8px' }}>
+                        {isEditing ? (
+                          <textarea
+                            value={row.csr}
+                            onChange={(e) => handleRowChange(row.key, 'csr', e.target.value)}
+                            className="input-field"
+                            rows={2}
+                            placeholder={t("每行写一条CSR要求...")}
+                            style={{ width: '100%', fontSize: '11px', padding: '4px', resize: 'vertical' }}
+                          />
+                        ) : (
+                          <p style={{ margin: 0, maxWidth: '200px', whiteSpace: 'pre-line', wordBreak: 'break-all', fontSize: '11px', color: 'var(--text-secondary)' }}>{row.csr || '-'}</p>
+                        )}
+                      </td>
+
+                      {/* Action buttons */}
+                      <td style={{ padding: '8px', textAlign: 'center', position: 'sticky', right: 0, background: 'var(--bg-card)', zIndex: 10, borderLeft: '1px solid var(--border-color)' }}>
+                        <div style={{ display: 'flex', gap: '6px', justifyContent: 'center' }}>
+                          {isEditing ? (
+                            <>
+                              <button
+                                onClick={() => handleSaveRow(row.key)}
+                                className="btn btn-primary"
+                                style={{ padding: '4px 6px', background: '#10b981' }}
+                                title={t("保存行修订")}
+                              >
+                                <Save size={12} />
+                              </button>
+                              <button
+                                onClick={() => handleCancelEdit(row.key)}
+                                className="btn btn-secondary"
+                                style={{ padding: '4px 6px' }}
+                                title={t("取消修改")}
+                              >
+                                <X size={12} />
+                              </button>
+                            </>
+                          ) : (
+                            <>
+                              <button
+                                onClick={() => handleEditRowClick(row)}
+                                className="btn btn-secondary"
+                                style={{ padding: '4px 6px' }}
+                                disabled={editingRowKey !== null}
+                                title={t("编辑场景行")}
+                              >
+                                <Edit3 size={12} />
+                              </button>
+                              <button
+                                onClick={() => handleDeleteRow(row.key)}
+                                className="btn btn-secondary"
+                                style={{ padding: '4px 6px', color: '#f43f5e' }}
+                                disabled={editingRowKey !== null}
+                                title={t("删除场景行")}
+                              >
+                                <Trash2 size={12} />
+                              </button>
+                            </>
+                          )}
+                        </div>
+                      </td>
+
                     </tr>
                   );
                 })}
               </tbody>
             </table>
           </div>
+
+          {/* Pagination Controls */}
+          {totalPages > 1 && (
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '12px 16px', background: 'var(--bg-card)', border: '1px solid var(--border-color)', borderRadius: '8px' }}>
+              <span style={{ fontSize: '13px', color: 'var(--text-secondary)' }}>
+                {t("显示")} {indexOfFirstItem + 1} - {Math.min(indexOfLastItem, taraRows.length)} {t("条，共")} {taraRows.length} {t("条分析记录")}
+              </span>
+
+              <div style={{ display: 'flex', gap: '8px' }}>
+                <button
+                  onClick={() => setCurrentPage(prev => Math.max(prev - 1, 1))}
+                  disabled={currentPage === 1 || editingRowKey !== null}
+                  className="btn btn-secondary"
+                  style={{ padding: '6px 12px', display: 'flex', alignItems: 'center', gap: '4px' }}
+                >
+                  <ChevronLeft size={14} />
+                  <span>{t("上一页")}</span>
+                </button>
+
+                <div style={{ display: 'flex', alignItems: 'center', gap: '4px' }}>
+                  {Array.from({ length: totalPages }, (_, i) => i + 1).map(page => (
+                    <button
+                      key={page}
+                      onClick={() => setCurrentPage(page)}
+                      disabled={editingRowKey !== null}
+                      style={{
+                        padding: '6px 10px',
+                        border: '1px solid var(--border-color)',
+                        borderRadius: '4px',
+                        background: currentPage === page ? 'var(--primary)' : 'var(--bg-card)',
+                        color: currentPage === page ? '#fff' : 'var(--text-primary)',
+                        cursor: editingRowKey !== null ? 'not-allowed' : 'pointer',
+                        fontSize: '12px',
+                        fontWeight: '600'
+                      }}
+                    >
+                      {page}
+                    </button>
+                  ))}
+                </div>
+
+                <button
+                  onClick={() => setCurrentPage(prev => Math.min(prev + 1, totalPages))}
+                  disabled={currentPage === totalPages || editingRowKey !== null}
+                  className="btn btn-secondary"
+                  style={{ padding: '6px 12px', display: 'flex', alignItems: 'center', gap: '4px' }}
+                >
+                  <span>{t("下一页")}</span>
+                  <ChevronRight size={14} />
+                </button>
+              </div>
+            </div>
+          )}
+
         </div>
       ) : (
-        /* Tab 2 Matrix */
-        <div style={{ display: 'flex', flexDirection: 'column', gap: '24px' }}>
-          <div className="glass" style={{ padding: '20px' }}>
-            <h3 style={{ fontSize: '16px', color: 'var(--text-primary)', fontWeight: '600', marginBottom: '6px' }}>
-              {t("安全控制矩阵汇总 (Consolidated CSR Matrix)")}
-            </h3>
-            <p style={{ color: 'var(--text-secondary)', fontSize: '13px' }}>
-              {t("聚合该域控所有资产项。根据安全目标 (CSO) 对标输出的所有网络安全控制要求 (CSR) 一览。")}
-            </p>
-          </div>
-
-          <div style={{ display: 'flex', flexDirection: 'column', gap: '20px' }}>
-            {groupedMatrix.map((item, idx) => (
-              <div key={idx} className="glass" style={{ padding: '24px' }}>
-                <h4 style={{ fontSize: '16px', fontWeight: '600', color: 'var(--primary)', marginBottom: '14px', borderBottom: '1px solid var(--border-color)', paddingBottom: '8px' }}>
-                  {t("资产项")}: {item.assetName}
-                </h4>
-
-                {item.exempted ? (
-                  <div style={{ color: 'var(--text-muted)', fontSize: '13px', display: 'flex', alignItems: 'center', gap: '6px' }}>
-                    <CheckCircle2 size={14} style={{ color: 'var(--success)' }} />
-                    <span>{t("该威胁已被专家评估为接受风险/转移风险。安全需求已根据联动规则豁免制定。")}</span>
-                  </div>
-                ) : (
-                  <div>
-                    <div style={{ marginBottom: '14px' }}>
-                      <span style={{ fontSize: '12px', color: 'var(--text-secondary)', textTransform: 'uppercase', letterSpacing: '0.5px' }}>
-                        {t("网络安全目标 (CSO):")}
-                      </span>
-                      <p style={{ color: 'var(--text-primary)', fontSize: '14px', fontWeight: '500', marginTop: '4px' }}>
-                        {item.cso || t('未指定或分析未跑完')}
-                      </p>
-                    </div>
-
-                    <div>
-                      <span style={{ fontSize: '12px', color: 'var(--text-secondary)', textTransform: 'uppercase', letterSpacing: '0.5px' }}>
-                        {t("网络安全控制要求 (CSR):")}
-                      </span>
-                      {item.csrs.length === 0 ? (
-                        <p style={{ color: 'var(--text-muted)', fontSize: '13px', marginTop: '4px' }}>{t("无安全要求列表")}</p>
-                      ) : (
-                        <ul style={{ paddingLeft: '20px', marginTop: '8px', display: 'flex', flexDirection: 'column', gap: '8px' }}>
-                          {item.csrs.map((csr, cIdx) => (
-                            <li key={cIdx} style={{ fontSize: '13px', color: 'var(--text-secondary)', lineHeight: '1.4' }}>
-                              {csr}
-                            </li>
-                          ))}
-                        </ul>
-                      )}
-                    </div>
-                  </div>
-                )}
-              </div>
-            ))}
-          </div>
-        </div>
-      )}
-
-      {/* Edit Conclusion Dialog (BR-51) */}
-      {showEditModal && editingStep && (
-        <div className="modal-overlay">
-          <div className="modal-content glass" style={{ width: '560px', maxWidth: '95%' }}>
-            <h3 style={{ fontSize: '18px', fontWeight: '600', color: 'var(--text-primary)', marginBottom: '20px' }}>
-              {t("人工修订结论")} [{getStageLabel(editingStep.stage)}]
-            </h3>
-
-            <form onSubmit={handleEditSubmit}>
-              <div style={{ maxHeight: '360px', overflowY: 'auto', paddingRight: '4px', marginBottom: '20px' }}>
-                <div style={{ background: 'rgba(15, 23, 42, 0.02)', padding: '12px', borderRadius: '8px', border: '1px solid var(--border-color)', marginBottom: '16px', fontSize: '12px', color: 'var(--text-secondary)' }}>
-                  <span><b>{t("修改资产:")}</b> {getAssetLabel(editingStep.asset_id)}</span>
-                </div>
-
-                {/* Render forms according to stage */}
-                {editingStep.stage === 'stage1' && (
-                  <div>
-                    <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: '12px', marginBottom: '16px' }}>
-                      <div className="input-group">
-                        <span className="input-label">Confidentiality</span>
-                        <select
-                          className="input-field"
-                          value={editFormData.confidentiality || 'Low'}
-                          onChange={(e) => setEditFormData({ ...editFormData, confidentiality: e.target.value })}
-                        >
-                          <option value="High">High</option>
-                          <option value="Medium">Medium</option>
-                          <option value="Low">Low</option>
-                        </select>
-                      </div>
-                      <div className="input-group">
-                        <span className="input-label">Integrity</span>
-                        <select
-                          className="input-field"
-                          value={editFormData.integrity || 'Low'}
-                          onChange={(e) => setEditFormData({ ...editFormData, integrity: e.target.value })}
-                        >
-                          <option value="High">High</option>
-                          <option value="Medium">Medium</option>
-                          <option value="Low">Low</option>
-                        </select>
-                      </div>
-                      <div className="input-group">
-                        <span className="input-label">Availability</span>
-                        <select
-                          className="input-field"
-                          value={editFormData.availability || 'Low'}
-                          onChange={(e) => setEditFormData({ ...editFormData, availability: e.target.value })}
-                        >
-                          <option value="High">High</option>
-                          <option value="Medium">Medium</option>
-                          <option value="Low">Low</option>
-                        </select>
-                      </div>
-                    </div>
-
-                    <div className="input-group">
-                      <span className="input-label">{t("破坏影响描述")}</span>
-                      <textarea
-                        className="input-field"
-                        rows={3}
-                        value={editFormData.description || ''}
-                        onChange={(e) => setEditFormData({ ...editFormData, description: e.target.value })}
-                        style={{ resize: 'none' }}
-                      />
-                    </div>
-                  </div>
-                )}
-
-                {editingStep.stage === 'stage2' && (
-                  <div>
-                    <div className="input-group">
-                      <span className="input-label">{t("潜在损害场景描述")}</span>
-                      <textarea
-                        className="input-field"
-                        rows={3}
-                        value={editFormData.damage_scenario || ''}
-                        onChange={(e) => setEditFormData({ ...editFormData, damage_scenario: e.target.value })}
-                        style={{ resize: 'none' }}
-                      />
-                    </div>
-
-                    <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: '8px', marginBottom: '16px' }}>
-                      <div className="input-group">
-                        <span className="input-label">Safety (S)</span>
-                        <input
-                          type="number"
-                          className="input-field"
-                          min="0" max="3"
-                          value={editFormData.impact_rating?.safety || 0}
-                          onChange={(e) => setEditFormData({
-                            ...editFormData,
-                            impact_rating: { ...editFormData.impact_rating, safety: parseInt(e.target.value) || 0 }
-                          })}
-                        />
-                      </div>
-                      <div className="input-group">
-                        <span className="input-label">Financial (F)</span>
-                        <input
-                          type="number"
-                          className="input-field"
-                          min="0" max="3"
-                          value={editFormData.impact_rating?.financial || 0}
-                          onChange={(e) => setEditFormData({
-                            ...editFormData,
-                            impact_rating: { ...editFormData.impact_rating, financial: parseInt(e.target.value) || 0 }
-                          })}
-                        />
-                      </div>
-                      <div className="input-group">
-                        <span className="input-label">Operational (O)</span>
-                        <input
-                          type="number"
-                          className="input-field"
-                          min="0" max="3"
-                          value={editFormData.impact_rating?.operational || 0}
-                          onChange={(e) => setEditFormData({
-                            ...editFormData,
-                            impact_rating: { ...editFormData.impact_rating, operational: parseInt(e.target.value) || 0 }
-                          })}
-                        />
-                      </div>
-                      <div className="input-group">
-                        <span className="input-label">Privacy (P)</span>
-                        <input
-                          type="number"
-                          className="input-field"
-                          min="0" max="3"
-                          value={editFormData.impact_rating?.privacy || 0}
-                          onChange={(e) => setEditFormData({
-                            ...editFormData,
-                            impact_rating: { ...editFormData.impact_rating, privacy: parseInt(e.target.value) || 0 }
-                          })}
-                        />
-                      </div>
-                    </div>
-                  </div>
-                )}
-
-                {editingStep.stage === 'stage3' && (
-                  <div>
-                    <div className="input-group">
-                      <span className="input-label">{t("潜在威胁场景描述")}</span>
-                      <textarea
-                        className="input-field"
-                        rows={3}
-                        value={editFormData.threat_scenario || ''}
-                        onChange={(e) => setEditFormData({ ...editFormData, threat_scenario: e.target.value })}
-                        style={{ resize: 'none' }}
-                      />
-                    </div>
-
-                    <div className="input-group">
-                      <span className="input-label">{t("最终攻击可行性等级 (Feasibility)")}</span>
-                      <select
-                        className="input-field"
-                        value={editFormData.final_feasibility || 'Medium'}
-                        onChange={(e) => setEditFormData({ ...editFormData, final_feasibility: e.target.value })}
-                      >
-                        <option value="Very High">Very High</option>
-                        <option value="High">High</option>
-                        <option value="Medium">Medium</option>
-                        <option value="Low">Low</option>
-                        <option value="Very Low">Very Low</option>
-                      </select>
-                    </div>
-                  </div>
-                )}
-
-                {editingStep.stage === 'stage4' && (
-                  <div>
-                    <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2, 1fr)', gap: '12px', marginBottom: '16px' }}>
-                      <div className="input-group">
-                        <span className="input-label">{t("计算出的风险值 (Rating)")}</span>
-                        <input
-                          type="number"
-                          className="input-field"
-                          value={editFormData.risk_rating || 0}
-                          onChange={(e) => setEditFormData({ ...editFormData, risk_rating: parseInt(e.target.value) || 0 })}
-                        />
-                      </div>
-                      <div className="input-group">
-                        <span className="input-label">{t("安全处理决策 (Decision)")}</span>
-                        <select
-                          className="input-field"
-                          value={editFormData.risk_decision || 'mitigate'}
-                          onChange={(e) => setEditFormData({ ...editFormData, risk_decision: e.target.value })}
-                        >
-                          <option value="mitigate">{t("Mitigate (缓解风险)")}</option>
-                          <option value="accept">{t("Accept (接受风险 - 免除CSR)")}</option>
-                          <option value="transfer">{t("Transfer (转移风险 - 免除CSR)")}</option>
-                          <option value="avoid">{t("Avoid (规避风险)")}</option>
-                        </select>
-                      </div>
-                    </div>
-
-                    <div className="input-group">
-                      <span className="input-label">{t("合理性说明 (Justification)")}</span>
-                      <textarea
-                        className="input-field"
-                        rows={3}
-                        value={editFormData.justification || ''}
-                        onChange={(e) => setEditFormData({ ...editFormData, justification: e.target.value })}
-                        style={{ resize: 'none' }}
-                      />
-                    </div>
-                  </div>
-                )}
-
-                {editingStep.stage === 'stage5' && (
-                  <div>
-                    <div className="input-group">
-                      <span className="input-label">{t("网络安全目标 (CSO)")}</span>
-                      <input
-                        type="text"
-                        className="input-field"
-                        value={editFormData.cso || ''}
-                        onChange={(e) => setEditFormData({ ...editFormData, cso: e.target.value })}
-                        disabled={editFormData.exempted}
-                      />
-                    </div>
-
-                    <div className="input-group">
-                      <span className="input-label">{t("网络安全控制要求列表 (CSR，一行写一条)")}</span>
-                      <textarea
-                        className="input-field"
-                        rows={5}
-                        placeholder={t("每行填入一条安全要求...")}
-                        value={editFormData.csr?.join('\n') || ''}
-                        onChange={(e) => setEditFormData({ ...editFormData, csr: e.target.value.split('\n') })}
-                        style={{ resize: 'none' }}
-                        disabled={editFormData.exempted}
-                      />
-                    </div>
-                  </div>
-                )}
-
-                <div className="input-group">
-                  <span className="input-label" style={{ color: '#fde047', fontWeight: '600' }}>
-                    {t("修改原因说明 (Mandatory审计留痕)")} <span style={{ color: 'var(--accent)' }}>*</span>
-                  </span>
-                  <input
-                    type="text"
-                    className="input-field"
-                    placeholder={t("例如: 结合实际网络物理拓扑过滤了虚警")}
-                    value={editReason}
-                    onChange={(e) => setEditReason(e.target.value)}
-                    required
-                  />
-                </div>
-              </div>
-
-              <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '12px' }}>
-                <button
-                  type="button"
-                  onClick={() => setShowEditModal(false)}
-                  className="btn btn-secondary"
-                >
-                  {t("取消")}
-                </button>
-                <button
-                  type="submit"
-                  className="btn btn-primary"
-                >
-                  {t("确认保存修订")}
-                </button>
-              </div>
-            </form>
-          </div>
-        </div>
-      )}
-
-      {/* Manual Input Modal (BR-70, Fail-safe) */}
-      {showManualModal && (
-        <div className="modal-overlay">
-          <div className="modal-content glass" style={{ width: '560px', maxWidth: '95%' }}>
-            <h3 style={{ fontSize: '18px', fontWeight: '600', color: 'var(--text-primary)', marginBottom: '20px' }}>
-              {t("手动录入 TARA 评估指标 (脱网备用)")}
-            </h3>
-
-            <form onSubmit={handleManualSubmit}>
-              <div style={{ maxHeight: '380px', overflowY: 'auto', paddingRight: '4px', marginBottom: '20px' }}>
-                <div className="input-group">
-                  <span className="input-label">{t("选择目标资产项")}</span>
-                  <select
-                    className="input-field"
-                    value={manualAssetId}
-                    onChange={(e) => setManualAssetId(e.target.value)}
-                    required
-                  >
-                    <option value="">{t("-- 请选择资产 --")}</option>
-                    {assets.filter(a => a.status === 'confirmed').map(a => (
-                      <option key={a.id} value={a.id}>{a.name} ({a.asset_type})</option>
-                    ))}
-                  </select>
-                </div>
-
-                <div className="input-group">
-                  <span className="input-label">{t("选择分析阶段")}</span>
-                  <select
-                    className="input-field"
-                    value={manualStage}
-                    onChange={(e) => setManualStage(e.target.value)}
-                  >
-                    <option value="stage1">{t("① 安全属性分析")}</option>
-                    <option value="stage2">{t("② 损害评估 (SFOP)")}</option>
-                    <option value="stage3">{t("③ 威胁与攻击可行性")}</option>
-                    <option value="stage4">{t("④ 风险决策评估")}</option>
-                    <option value="stage5">{t("⑤ CSR/CSO 控制目标")}</option>
-                  </select>
-                </div>
-
-                <div style={{ borderTop: '1px solid var(--border-color)', paddingTop: '16px', marginTop: '16px' }}>
-                  {manualStage === 'stage1' && (
-                    <div>
-                      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: '10px', marginBottom: '14px' }}>
-                        <div className="input-group">
-                          <span className="input-label">Confidentiality</span>
-                          <select className="input-field" value={mS1Conf} onChange={(e) => setMS1Conf(e.target.value)}>
-                            <option value="High">High</option><option value="Medium">Medium</option><option value="Low">Low</option>
-                          </select>
-                        </div>
-                        <div className="input-group">
-                          <span className="input-label">Integrity</span>
-                          <select className="input-field" value={mS1Int} onChange={(e) => setMS1Int(e.target.value)}>
-                            <option value="High">High</option><option value="Medium">Medium</option><option value="Low">Low</option>
-                          </select>
-                        </div>
-                        <div className="input-group">
-                          <span className="input-label">Availability</span>
-                          <select className="input-field" value={mS1Avail} onChange={(e) => setMS1Avail(e.target.value)}>
-                            <option value="High">High</option><option value="Medium">Medium</option><option value="Low">Low</option>
-                          </select>
-                        </div>
-                      </div>
-                      <div className="input-group">
-                        <span className="input-label">{t("描述")}</span>
-                        <input type="text" className="input-field" value={mS1Desc} onChange={(e) => setMS1Desc(e.target.value)} placeholder={t("分析CIA破坏场景原因...")} />
-                      </div>
-                    </div>
-                  )}
-
-                  {manualStage === 'stage2' && (
-                    <div>
-                      <div className="input-group">
-                        <span className="input-label">{t("潜在损害场景")}</span>
-                        <input type="text" className="input-field" value={mS2Scenario} onChange={(e) => setMS2Scenario(e.target.value)} placeholder={t("例如: 刹车失效, 动力异常等")} required />
-                      </div>
-                      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: '8px' }}>
-                        <div className="input-group">
-                          <span className="input-label">S (Safety)</span>
-                          <input type="number" className="input-field" min="0" max="3" value={mS2Saf} onChange={(e) => setMS2Saf(e.target.value)} />
-                        </div>
-                        <div className="input-group">
-                          <span className="input-label">F (Finance)</span>
-                          <input type="number" className="input-field" min="0" max="3" value={mS2Fin} onChange={(e) => setMS2Fin(e.target.value)} />
-                        </div>
-                        <div className="input-group">
-                          <span className="input-label">O (Ops)</span>
-                          <input type="number" className="input-field" min="0" max="3" value={mS2Ops} onChange={(e) => setMS2Ops(e.target.value)} />
-                        </div>
-                        <div className="input-group">
-                          <span className="input-label">P (Privacy)</span>
-                          <input type="number" className="input-field" min="0" max="3" value={mS2Priv} onChange={(e) => setMS2Priv(e.target.value)} />
-                        </div>
-                      </div>
-                    </div>
-                  )}
-
-                  {manualStage === 'stage3' && (
-                    <div>
-                      <div className="input-group">
-                        <span className="input-label">{t("威胁场景")}</span>
-                        <input type="text" className="input-field" value={mS3Threat} onChange={(e) => setMS3Threat(e.target.value)} placeholder={t("描述可能遭受的攻击场景...")} required />
-                      </div>
-                      <div className="input-group">
-                        <span className="input-label">{t("攻击可行性 (Feasibility)")}</span>
-                        <select className="input-field" value={mS3Feas} onChange={(e) => setMS3Feas(e.target.value)}>
-                          <option value="Very High">Very High</option><option value="High">High</option><option value="Medium">Medium</option><option value="Low">Low</option><option value="Very Low">Very Low</option>
-                        </select>
-                      </div>
-                    </div>
-                  )}
-
-                  {manualStage === 'stage4' && (
-                    <div>
-                      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2, 1fr)', gap: '10px' }}>
-                        <div className="input-group">
-                          <span className="input-label">{t("风险值 (0~10)")}</span>
-                          <input type="number" className="input-field" min="0" max="10" value={mS4Rating} onChange={(e) => setMS4Rating(e.target.value)} />
-                        </div>
-                        <div className="input-group">
-                          <span className="input-label">{t("风险处理决策")}</span>
-                          <select className="input-field" value={mS4Decision} onChange={(e) => setMS4Decision(e.target.value)}>
-                            <option value="mitigate">{t("Mitigate (缓解风险)")}</option>
-                            <option value="accept">{t("Accept (接受风险 - 免除CSR)")}</option>
-                            <option value="transfer">{t("Transfer (转移风险 - 免除CSR)")}</option>
-                            <option value="avoid">{t("Avoid (规避风险)")}</option>
-                          </select>
-                        </div>
-                      </div>
-                      <div className="input-group">
-                        <span className="input-label">{t("决策依据说明")}</span>
-                        <input type="text" className="input-field" value={mS4Justify} onChange={(e) => setMS4Justify(e.target.value)} />
-                      </div>
-                    </div>
-                  )}
-
-                  {manualStage === 'stage5' && (
-                    <div>
-                      <div className="input-group">
-                        <span className="input-label">{t("网络安全目标 (CSO)")}</span>
-                        <input type="text" className="input-field" value={mS5Cso} onChange={(e) => setMS5Cso(e.target.value)} placeholder={t("保护资产不受XXX威胁...")} />
-                      </div>
-                      <div className="input-group">
-                        <span className="input-label">{t("安全要求列表 (CSR，一行填写一条)")}</span>
-                        <textarea className="input-field" rows={4} value={mS5Csr} onChange={(e) => setMS5Csr(e.target.value)} placeholder={t("例如: 开启身份鉴权\n对报文施加CAN签名验证...")} />
-                      </div>
-                    </div>
-                  )}
-                </div>
-              </div>
-
-              <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '12px' }}>
-                <button
-                  type="button"
-                  onClick={() => setShowManualModal(false)}
-                  className="btn btn-secondary"
-                >
-                  {t("取消")}
-                </button>
-                <button
-                  type="submit"
-                  className="btn btn-primary"
-                >
-                  {t("录入存盘")}
-                </button>
-              </div>
-            </form>
-          </div>
+        /* Project-level requirement matrix */
+        <div className="table-container" style={{ overflowX: 'auto', border: '1px solid var(--border-color)', borderRadius: '8px', background: 'var(--bg-card)' }}>
+          <table className="custom-table" style={{ width: '100%', borderCollapse: 'collapse', fontSize: '11px' }}>
+            <thead>
+              <tr style={{ background: 'rgba(15, 23, 42, 0.05)', borderBottom: '1px solid var(--border-color)' }}>
+                <th style={{ minWidth: '90px', padding: '10px' }}>{t("CSR ID")}</th>
+                <th style={{ minWidth: '130px', padding: '10px' }}>{t("Security Domain")}</th>
+                <th style={{ minWidth: '80px', padding: '10px' }}>{t("Asset SN")}</th>
+                <th style={{ minWidth: '100px', padding: '10px' }}>{t("Asset Name")}</th>
+                <th style={{ minWidth: '150px', padding: '10px' }}>{t("Requirement Title")}</th>
+                <th style={{ minWidth: '150px', padding: '10px' }}>{t("Requirement Subtitle")}</th>
+                <th style={{ minWidth: '220px', padding: '10px' }}>{t("Cybersecurity Requirement")}</th>
+              </tr>
+            </thead>
+            <tbody>
+              {collectCsrReportData(taraResults, assets).map((row, idx) => (
+                <tr key={idx} style={{ borderBottom: '1px solid var(--border-color)', height: '40px' }}>
+                  <td style={{ padding: '8px', textAlign: 'center', fontWeight: '600', color: 'var(--primary)' }}>{row.csr_id}</td>
+                  <td style={{ padding: '8px' }}>{row.security_domain}</td>
+                  <td style={{ padding: '8px', textAlign: 'center' }}>{row.asset_sn}</td>
+                  <td style={{ padding: '8px', fontWeight: '500' }}>{row.asset_name}</td>
+                  <td style={{ padding: '8px' }}>{row.title}</td>
+                  <td style={{ padding: '8px' }}>{row.sub_title}</td>
+                  <td style={{ padding: '8px', whiteSpace: 'pre-line', wordBreak: 'break-all' }}>{row.cybersecurity_requirement}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
         </div>
       )}
     </div>

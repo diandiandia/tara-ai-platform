@@ -592,6 +592,15 @@ class TestTaraAPI(unittest.TestCase):
         xls_desens_resp = self.client.get(f"/api/reports/domains/{domain_id}/export?format=xlsx&desensitize=true", headers=analyst_headers)
         self.assertEqual(xls_desens_resp.status_code, 200)
         
+        # 导出 CSR-only XLSX
+        xls_csr_resp = self.client.get(f"/api/reports/domains/{domain_id}/export?format=xlsx&export_type=csr", headers=analyst_headers)
+        self.assertEqual(xls_csr_resp.status_code, 200)
+        self.assertEqual(xls_csr_resp.headers["content-type"], "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
+
+        # 导出 TARA-only XLSX
+        xls_tara_resp = self.client.get(f"/api/reports/domains/{domain_id}/export?format=xlsx&export_type=tara", headers=analyst_headers)
+        self.assertEqual(xls_tara_resp.status_code, 200)
+
         # 导出 CSV
         doc_resp = self.client.get(f"/api/reports/domains/{domain_id}/export?format=csv", headers=analyst_headers)
         self.assertEqual(doc_resp.status_code, 200)
@@ -600,6 +609,11 @@ class TestTaraAPI(unittest.TestCase):
         # 导出脱敏版 CSV
         doc_desens_resp = self.client.get(f"/api/reports/domains/{domain_id}/export?format=csv&desensitize=true", headers=analyst_headers)
         self.assertEqual(doc_desens_resp.status_code, 200)
+
+        # 导出 CSR-only CSV
+        doc_csr_resp = self.client.get(f"/api/reports/domains/{domain_id}/export?format=csv&export_type=csr", headers=analyst_headers)
+        self.assertEqual(doc_csr_resp.status_code, 200)
+        self.assertTrue("text/csv" in doc_csr_resp.headers["content-type"])
 
     def test_04_project_archiving_lock(self):
         """
