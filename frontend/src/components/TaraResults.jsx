@@ -641,7 +641,12 @@ export default function TaraResults({ setPage, domainId }) {
 
   // Pagination states
   const [currentPage, setCurrentPage] = useState(1);
+  const [matrixCurrentPage, setMatrixCurrentPage] = useState(1);
   const itemsPerPage = 10;
+
+  useEffect(() => {
+    setMatrixCurrentPage(1);
+  }, [activeTab, domainId]);
 
   // Export States
   const [exportFormat, setExportFormat] = useState('xlsx');
@@ -951,6 +956,13 @@ export default function TaraResults({ setPage, domainId }) {
   const indexOfLastItem = currentPage * itemsPerPage;
   const indexOfFirstItem = indexOfLastItem - itemsPerPage;
   const currentRows = taraRows.slice(indexOfFirstItem, indexOfLastItem);
+
+  const matrixRows = collectCsrReportData(taraResults, assets);
+  const matrixTotalPages = Math.ceil(matrixRows.length / itemsPerPage);
+  const matrixPaginatedRows = matrixRows.slice(
+    (matrixCurrentPage - 1) * itemsPerPage,
+    matrixCurrentPage * itemsPerPage
+  );
 
   return (
     <div className="dashboard-container" style={{ maxWidth: 'none', width: '100%' }}>
@@ -1668,33 +1680,86 @@ export default function TaraResults({ setPage, domainId }) {
         </div>
       ) : (
         /* Project-level requirement matrix */
-        <div className="table-container" style={{ overflowX: 'auto', border: '1px solid var(--border-color)', borderRadius: '8px', background: 'var(--bg-card)' }}>
-          <table className="custom-table" style={{ width: '100%', borderCollapse: 'collapse', fontSize: '11px' }}>
-            <thead>
-              <tr style={{ background: 'rgba(15, 23, 42, 0.05)', borderBottom: '1px solid var(--border-color)' }}>
-                <th style={{ minWidth: '90px', padding: '10px' }}>{t("CSR ID")}</th>
-                <th style={{ minWidth: '130px', padding: '10px' }}>{t("Security Domain")}</th>
-                <th style={{ minWidth: '80px', padding: '10px' }}>{t("Asset SN")}</th>
-                <th style={{ minWidth: '100px', padding: '10px' }}>{t("Asset Name")}</th>
-                <th style={{ minWidth: '150px', padding: '10px' }}>{t("Requirement Title")}</th>
-                <th style={{ minWidth: '150px', padding: '10px' }}>{t("Requirement Subtitle")}</th>
-                <th style={{ minWidth: '220px', padding: '10px' }}>{t("Cybersecurity Requirement")}</th>
-              </tr>
-            </thead>
-            <tbody>
-              {collectCsrReportData(taraResults, assets).map((row, idx) => (
-                <tr key={idx} style={{ borderBottom: '1px solid var(--border-color)', height: '40px' }}>
-                  <td style={{ padding: '8px', textAlign: 'center', fontWeight: '600', color: 'var(--primary)' }}>{row.csr_id}</td>
-                  <td style={{ padding: '8px' }}>{row.security_domain}</td>
-                  <td style={{ padding: '8px', textAlign: 'center' }}>{row.asset_sn}</td>
-                  <td style={{ padding: '8px', fontWeight: '500' }}>{row.asset_name}</td>
-                  <td style={{ padding: '8px' }}>{row.title}</td>
-                  <td style={{ padding: '8px' }}>{row.sub_title}</td>
-                  <td style={{ padding: '8px', whiteSpace: 'pre-line', wordBreak: 'break-all' }}>{row.cybersecurity_requirement}</td>
+        <div style={{ display: 'flex', flexDirection: 'column' }}>
+          <div className="table-container" style={{ overflowX: 'auto', border: '1px solid var(--border-color)', borderRadius: '8px', background: 'var(--bg-card)' }}>
+            <table className="custom-table" style={{ width: '100%', borderCollapse: 'collapse', fontSize: '11px' }}>
+              <thead>
+                <tr style={{ background: 'rgba(15, 23, 42, 0.05)', borderBottom: '1px solid var(--border-color)' }}>
+                  <th style={{ minWidth: '90px', padding: '10px' }}>{t("CSR ID")}</th>
+                  <th style={{ minWidth: '130px', padding: '10px' }}>{t("Security Domain")}</th>
+                  <th style={{ minWidth: '80px', padding: '10px' }}>{t("Asset SN")}</th>
+                  <th style={{ minWidth: '100px', padding: '10px' }}>{t("Asset Name")}</th>
+                  <th style={{ minWidth: '150px', padding: '10px' }}>{t("Requirement Title")}</th>
+                  <th style={{ minWidth: '150px', padding: '10px' }}>{t("Requirement Subtitle")}</th>
+                  <th style={{ minWidth: '220px', padding: '10px' }}>{t("Cybersecurity Requirement")}</th>
                 </tr>
-              ))}
-            </tbody>
-          </table>
+              </thead>
+              <tbody>
+                {matrixPaginatedRows.map((row, idx) => (
+                  <tr key={idx} style={{ borderBottom: '1px solid var(--border-color)', height: '40px' }}>
+                    <td style={{ padding: '8px', textAlign: 'center', fontWeight: '600', color: 'var(--primary)' }}>{row.csr_id}</td>
+                    <td style={{ padding: '8px' }}>{row.security_domain}</td>
+                    <td style={{ padding: '8px', textAlign: 'center' }}>{row.asset_sn}</td>
+                    <td style={{ padding: '8px', fontWeight: '500' }}>{row.asset_name}</td>
+                    <td style={{ padding: '8px' }}>{row.title}</td>
+                    <td style={{ padding: '8px' }}>{row.sub_title}</td>
+                    <td style={{ padding: '8px', whiteSpace: 'pre-line', wordBreak: 'break-all' }}>{row.cybersecurity_requirement}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+
+          {/* Matrix Pagination Controls */}
+          {matrixTotalPages > 1 && (
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginTop: '16px' }}>
+              <div style={{ fontSize: '12px', color: 'var(--text-secondary)' }}>
+                {t("共")} {matrixRows.length} {t("条记录，当前第")} {matrixCurrentPage} / {matrixTotalPages} {t("页")}
+              </div>
+              <div style={{ display: 'flex', gap: '8px', alignItems: 'center' }}>
+                <button
+                  onClick={() => setMatrixCurrentPage(prev => Math.max(prev - 1, 1))}
+                  disabled={matrixCurrentPage === 1}
+                  className="btn btn-secondary"
+                  style={{ padding: '6px 12px', display: 'flex', alignItems: 'center', gap: '4px' }}
+                >
+                  <ChevronLeft size={14} />
+                  <span>{t("上一页")}</span>
+                </button>
+
+                <div style={{ display: 'flex', gap: '4px' }}>
+                  {Array.from({ length: matrixTotalPages }, (_, i) => i + 1).map(page => (
+                    <button
+                      key={page}
+                      onClick={() => setMatrixCurrentPage(page)}
+                      style={{
+                        padding: '6px 10px',
+                        border: '1px solid var(--border-color)',
+                        borderRadius: '4px',
+                        background: matrixCurrentPage === page ? 'var(--primary)' : 'var(--bg-card)',
+                        color: matrixCurrentPage === page ? '#fff' : 'var(--text-primary)',
+                        cursor: 'pointer',
+                        fontSize: '12px',
+                        fontWeight: '600'
+                      }}
+                    >
+                      {page}
+                    </button>
+                  ))}
+                </div>
+
+                <button
+                  onClick={() => setMatrixCurrentPage(prev => Math.min(prev + 1, matrixTotalPages))}
+                  disabled={matrixCurrentPage === matrixTotalPages}
+                  className="btn btn-secondary"
+                  style={{ padding: '6px 12px', display: 'flex', alignItems: 'center', gap: '4px' }}
+                >
+                  <span>{t("下一页")}</span>
+                  <ChevronRight size={14} />
+                </button>
+              </div>
+            </div>
+          )}
         </div>
       )}
     </div>
