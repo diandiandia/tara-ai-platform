@@ -325,13 +325,17 @@ export default function DfdEditor({ setPage, diagramId }) {
   // Sync state between zustand store and reactflow local state
   useEffect(() => {
     if (diagramId && user) {
+      const activeDiag = useCanvasStore.getState().currentDiagram;
+      if (activeDiag && activeDiag.id === diagramId) {
+        return;
+      }
       const foundDiag = useCanvasStore.getState().diagrams.find(d => d.id === diagramId);
-      openDiagram(foundDiag || currentDiagram || { id: diagramId, domain_id: activeDomain?.id, version_no: 1, snapshot_json: '{}' }, user.username);
+      openDiagram(foundDiag || { id: diagramId, domain_id: activeDomain?.id, version_no: 1, snapshot_json: '{}' }, user.username);
     }
     return () => {
       closeDiagram();
     };
-  }, [diagramId, user, currentDiagram, activeDomain?.id, openDiagram, closeDiagram]);
+  }, [diagramId, user, activeDomain?.id, openDiagram, closeDiagram]);
 
   useEffect(() => {
     const sanitizedNodes = storeNodes.map(node => {

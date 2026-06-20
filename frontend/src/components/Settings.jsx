@@ -5,7 +5,7 @@ import { useAuthStore } from '../stores/authStore';
 import { ArrowLeft, ShieldAlert, Save, Key, Globe, Layers, AlertCircle, CheckCircle2 } from 'lucide-react';
 
 export default function Settings({ setPage }) {
-  const { t } = useI18n();
+  const { t, language } = useI18n();
   const { fetchSettings, saveSettings, testConnection, loading, error, clearError } = useTaraStore();
   const { isAdmin } = useAuthStore();
 
@@ -57,6 +57,35 @@ export default function Settings({ setPage }) {
     const res = await testConnection(apiBaseUrl.trim(), apiKey.trim(), modelName.trim());
     setTesting(false);
     setTestResult(res);
+  };
+
+  const translateMessage = (msg) => {
+    if (!msg) return msg;
+    if (language === 'zh') return msg;
+
+    const directTranslation = t(msg);
+    if (directTranslation !== msg) {
+      return directTranslation;
+    }
+
+    if (msg.startsWith("大模型接口请求失败，HTTP 状态码: ")) {
+      const rest = msg.substring("大模型接口请求失败，HTTP 状态码: ".length);
+      return "LLM API request failed, HTTP status code: " + rest.replace("内容: ", "Content: ");
+    }
+    if (msg.startsWith("大模型返回了 JSON 但不符合 Schema 要求: ")) {
+      const rest = msg.substring("大模型返回了 JSON 但不符合 Schema 要求: ".length);
+      return "LLM returned JSON but does not match Schema requirements: " + rest;
+    }
+    if (msg.startsWith("大模型连接测试失败：返回的内容不是有效的 JSON 结构。原始返回: ")) {
+      const rest = msg.substring("大模型连接测试失败：返回的内容不是有效的 JSON 结构。原始返回: ".length);
+      return "LLM connection test failed: returned content is not a valid JSON structure. Original return: " + rest;
+    }
+    if (msg.startsWith("连接大模型服务发生网络异常: ")) {
+      const rest = msg.substring("连接大模型服务发生网络异常: ".length);
+      return "Network anomaly occurred while connecting to LLM service: " + rest;
+    }
+
+    return msg;
   };
 
   const isEditable = isAdmin();
@@ -203,7 +232,7 @@ export default function Settings({ setPage }) {
               {testResult.success ? <CheckCircle2 size={15} /> : <AlertCircle size={15} />}
               <span>{testResult.success ? t('连通性测试成功！') : t('连通性测试失败！')}</span>
             </div>
-            <p>{testResult.message}</p>
+            <p>{translateMessage(testResult.message)}</p>
           </div>
         )}
 

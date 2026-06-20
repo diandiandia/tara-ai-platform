@@ -410,20 +410,21 @@ def deduplicate_assets(
             "Content-Type": "application/json"
         }
         system_prompt = (
-            "你是一个车载网络安全专家。你的任务是分析给出的资产列表，识别并合并冗余的、意思重复的或可以归并为同一物理/逻辑实体的资产（尤其是那些因画图习惯或不同视角而重复提取的资产，如‘https数据流’与‘https下载数据’）。\n\n"
+            "你是一个车载网络安全专家。你的任务是分析给出的资产列表，识别并合并冗余的、意思重复的或可以归并为同一物理/逻辑实体的资产。\n"
+            "你可以忽略名称（Name）和安全备注/描述（Description）在措辞和书写方式上的微小差异——只要它们在语义上表达的是同一个意思（例如“车载控制单元”与“汽车网关”，或“OTA升级包下发”与“固件数据流传输”），就应当将其判定为重复资产并建议合并。\n\n"
             "【判定与合并准则】：\n"
-            "1. 语义相近合并：如果两个资产指代同一个网络通信、数据流或者物理组件（例如：一个从发送方命名为数据流，另一个从接收方命名为下载数据，且都用于HTTPS传输/OTA下载），应当进行合并。\n"
+            "1. 语义相近合并：如果两个资产的描述/备注指出它们指代同一个网络通信、数据流或者软硬件物理组件，即使名称看起来不同，也应当进行合并。\n"
             "2. 归并原则：\n"
-            "   - 通信资产：若协议相同、传输数据类型和用途高度重合，合并为一个。\n"
-            "   - 软硬件及接口资产：指代同一个控制器或服务但命名略有差异的，合并为一个。特别注意：同一物理实体设备的控制器（如 'MCU'，Type 为 'entity'）与其对外物理暴露接口（如 'MCU_JTAG'，Type 为 'interface'）是不同维度的资产，有完全不同的威胁暴露面，切勿将控制器与物理接口资产进行合并。\n"
-            "3. 保持简洁：保留最具体、表意最完整的一个作为 `keep_asset_id`，将冗余的放在 `remove_asset_ids`。\n\n"
+            "   - 通信资产：若协议相同、传输数据类型 and 用途高度重合，合并为一个。\n"
+            "   - 软硬件及接口资产：指代同一个控制器或服务但命名/描述略有差异的，合并为一个。特别注意：同一物理实体设备的控制器（如 'MCU'，Type 为 'entity'）与其对外物理暴露接口（如 'MCU_JTAG'，Type 为 'interface'）是不同维度的资产，有完全不同的威胁暴露面，切勿将控制器与物理接口资产进行合并。\n"
+            "3. 保持简洁：保留命名最具体、表意最完整的一个作为 `keep_asset_id`，将冗余的放在 `remove_asset_ids`。\n\n"
             "请以符合要求的 JSON 格式输出你的去重建议。不要包含任何解释性文字或标记。"
         )
-        prompt_content = f"分析以下资产列表，找出命名类似且属于同一实体的冗余合并去重资产：\n"
+        prompt_content = f"分析以下资产列表，结合资产的名称、类型、协议和描述/安全备注，找出语义相同、意思重复且属于同一实体的冗余合并去重资产：\n"
         for a in assets:
             actual_type = get_actual_type(a)
             type_str = f"{a.asset_type} ({actual_type})" if actual_type != a.asset_type else a.asset_type
-            prompt_content += f"- ID: {a.id}, Name: {a.name}, Type: {type_str}, Protocol: {a.protocol or 'N/A'}\n"
+            prompt_content += f"- ID: {a.id}, Name: {a.name}, Type: {type_str}, Protocol: {a.protocol or 'N/A'}, Description: {a.description or 'N/A'}\n"
             
         llm_payload = {
             "model": settings.model_name,

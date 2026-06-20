@@ -133,6 +133,8 @@ const translations = {
     "例如: gpt-4o, gpt-3.5-turbo, custom-model": "e.g., gpt-4o, gpt-3.5-turbo, custom-model",
     "连通性测试成功！": "Connectivity test successful!",
     "连通性测试失败！": "Connectivity test failed!",
+    "连通性测试成功 [Mock Mode]": "Connectivity test successful [Mock Mode]",
+    "连通性测试成功": "Connectivity test successful",
     "测试结构化连通性": "Test Structured Connectivity",
     "正在连通测试...": "Testing connection...",
     "保存配置": "Save Configuration",

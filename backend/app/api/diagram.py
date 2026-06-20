@@ -805,9 +805,9 @@ def ai_chat_diagram(
                 nodes = snapshot_obj.get("nodes", nodes)
                 edges = snapshot_obj.get("edges", edges)
                 reasoning_steps = snapshot_obj.get("reasoning_steps", {})
-                # 运行独立的子代理校验并附加到回复末尾 (Context Budgeting & Sub-Agents)
-                compliance_feedback = verify_dfd_compliance(db, nodes, edges)
-                reply += f"\n\n{compliance_feedback}"
+                # 根据用户要求，AI 助理只理解业务并设计拓扑结构，无需在回复中附加安全合规校验建议
+                # compliance_feedback = verify_dfd_compliance(db, nodes, edges)
+                # reply += f"\n\n{compliance_feedback}"
         except Exception as e:
             print(f"⚠️ LLM 拓扑对话失败，降级执行规则算法: {e}")
 
