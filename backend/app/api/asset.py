@@ -417,15 +417,7 @@ def deduplicate_assets(
             "   - 通信资产：若协议相同、传输数据类型和用途高度重合，合并为一个。\n"
             "   - 软硬件及接口资产：指代同一个控制器或服务但命名略有差异的，合并为一个。特别注意：同一物理实体设备的控制器（如 'MCU'，Type 为 'entity'）与其对外物理暴露接口（如 'MCU_JTAG'，Type 为 'interface'）是不同维度的资产，有完全不同的威胁暴露面，切勿将控制器与物理接口资产进行合并。\n"
             "3. 保持简洁：保留最具体、表意最完整的一个作为 `keep_asset_id`，将冗余的放在 `remove_asset_ids`。\n\n"
-            "请给出你的合并去重建议，并严格以 JSON 格式输出，格式必须为：\n"
-            "{\n"
-            '  "suggestions": [\n'
-            '    {"keep_asset_id": 保留的资产ID(整数), "remove_asset_ids": [要合并并去除的资产ID列表(整数)], "reason": "合并去重原因描述"}\n'
-            "  ]\n"
-            "}\n"
-            "如果没有任何需要合并的冗余资产，请返回空的 suggestions 数组：\n"
-            '{"suggestions": []}\n'
-            "不要包含任何解释性文字或 markdown 标记。"
+            "请以符合要求的 JSON 格式输出你的去重建议。不要包含任何解释性文字或标记。"
         )
         prompt_content = f"分析以下资产列表，找出命名类似且属于同一实体的冗余合并去重资产：\n"
         for a in assets:
@@ -439,20 +431,77 @@ def deduplicate_assets(
                 {"role": "system", "content": system_prompt},
                 {"role": "user", "content": prompt_content}
             ],
-            "response_format": {"type": "json_object"}
+            "response_format": {
+                "type": "json_schema",
+                "json_schema": {
+                    "name": "DeduplicateConfirmReq",
+                    "strict": True,
+                    "schema": DeduplicateConfirmReq.model_json_schema()
+                }
+            }
         }
+        
         with httpx.Client(timeout=60.0) as client:
-            resp = client.post(url, headers=headers, json=llm_payload)
-        if resp.status_code == 200:
-            choice_text = resp.json()["choices"][0]["message"]["content"]
+            try:
+                resp = client.post(url, headers=headers, json=llm_payload)
+                if resp.status_code != 200:
+                    raise ValueError(f"API returned status {resp.status_code}")
+                choice_text = resp.json()["choices"][0]["message"]["content"]
+            except Exception as e:
+                # 回退到 json_object
+                llm_payload["response_format"] = {"type": "json_object"}
+                llm_payload["messages"].append({
+                    "role": "user",
+                    "content": f"请务必按照以下 JSON Schema 格式回复，不要包含任何 markdown 或其他文本：\n{json.dumps(DeduplicateConfirmReq.model_json_schema(), ensure_ascii=False)}"
+                })
+                resp = client.post(url, headers=headers, json=llm_payload)
+                if resp.status_code != 200:
+                    raise ValueError(f"API returned status {resp.status_code}")
+                choice_text = resp.json()["choices"][0]["message"]["content"]
+
+            # 清理 Markdown 代码块
+            if choice_text.strip().startswith("```"):
+                import re
+                choice_text = re.sub(r"^```[a-zA-Z0-9]*\n", "", choice_text)
+                choice_text = re.sub(r"\n```$", "", choice_text)
+                choice_text = choice_text.strip()
+                
             parsed = json.loads(choice_text)
-            if "suggestions" in parsed:
+            
+            # Pydantic 校验与自修复
+            try:
+                validated = DeduplicateConfirmReq.model_validate(parsed)
+            except Exception as val_err:
+                import re
+                # 尝试修复一次
+                repair_messages = llm_payload["messages"] + [
+                    {"role": "assistant", "content": choice_text},
+                    {"role": "user", "content": f"上一次返回的 JSON 数据校验未通过，校验错误信息如下：\n{val_err}\n请修正该 JSON 数据，确保完全符合 Schema 规范且格式正确。"}
+                ]
+                payload_repair = {
+                    "model": settings.model_name,
+                    "messages": repair_messages,
+                    "response_format": llm_payload["response_format"]
+                }
+                resp_rep = client.post(url, headers=headers, json=payload_repair)
+                if resp_rep.status_code == 200:
+                    choice_text_rep = resp_rep.json()["choices"][0]["message"]["content"]
+                    if choice_text_rep.strip().startswith("```"):
+                        choice_text_rep = re.sub(r"^```[a-zA-Z0-9]*\n", "", choice_text_rep)
+                        choice_text_rep = re.sub(r"\n```$", "", choice_text_rep)
+                        choice_text_rep = choice_text_rep.strip()
+                    parsed_rep = json.loads(choice_text_rep)
+                    validated = DeduplicateConfirmReq.model_validate(parsed_rep)
+                else:
+                    raise val_err
+
+            if "suggestions" in validated.model_dump():
                 suggestions_list = []
-                for sug in parsed["suggestions"]:
+                for sug in validated.suggestions:
                     suggestions_list.append(DeduplicateSuggestionItem(
-                        keep_asset_id=int(sug["keep_asset_id"]),
-                        remove_asset_ids=[int(rid) for rid in sug["remove_asset_ids"]],
-                        reason=str(sug["reason"])
+                        keep_asset_id=int(sug.keep_asset_id),
+                        remove_asset_ids=[int(rid) for rid in sug.remove_asset_ids],
+                        reason=str(sug.reason)
                     ))
                 return suggestions_list
         raise ValueError(f"API returned status {resp.status_code}")

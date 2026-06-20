@@ -2,6 +2,7 @@ from fastapi import APIRouter, Depends, HTTPException, status
 from fastapi.responses import FileResponse
 from sqlalchemy.orm import Session
 from datetime import datetime
+import hashlib
 import os
 from typing import List
 import openpyxl
@@ -100,15 +101,14 @@ def build_id_maps(steps: List[TaraStep]):
                         if cleaned and cleaned != "N/A":
                             req_set.add(cleaned)
 
-    sorted_goals = sorted(list(goal_set))
-    sorted_claims = sorted(list(claim_set))
-    sorted_controls = sorted(list(control_set))
-    sorted_reqs = sorted(list(req_set))
+    def _content_hash_id(prefix: str, text: str) -> str:
+        sha256_hash = hashlib.sha256(text.strip().encode('utf-8')).hexdigest()
+        return f"{prefix}{sha256_hash[:8].upper()}"
 
-    goal_map = {g: f"CSO-{i+1:04d}" for i, g in enumerate(sorted_goals)}
-    claim_map = {c: f"CLM-{i+1:04d}" for i, c in enumerate(sorted_claims)}
-    control_map = {ct: f"CSC-{i+1:04d}" for i, ct in enumerate(sorted_controls)}
-    req_map = {r: f"CSR-{i+1:04d}" for i, r in enumerate(sorted_reqs)}
+    goal_map = {g: _content_hash_id("CSO_", g) for g in goal_set}
+    claim_map = {c: _content_hash_id("CLM_", c) for c in claim_set}
+    control_map = {ct: _content_hash_id("CSC_", ct) for ct in control_set}
+    req_map = {r: _content_hash_id("CSR_", r) for r in req_set}
 
     return goal_map, claim_map, control_map, req_map
 
@@ -641,6 +641,7 @@ def create_excel_report(domain: Domain, steps: List[TaraStep], assets: List[Asse
     
     has_tara = export_type in ["all", "tara"]
     has_csr = export_type in ["all", "csr"]
+    has_assets = export_type in ["all", "assets"]
     
     # 导出 TARA Sheet
     if has_tara:
@@ -683,7 +684,7 @@ def create_excel_report(domain: Domain, steps: List[TaraStep], assets: List[Asse
             "Threat Scenarios", "Attack Path",
             "Time Consuming", "Expertise", "Knowledge about TOE", "Window of opportunity", "Equipment", "Difficulty", "AF Level", "CAF Level",
             "Risk Value", "Risk Treatment Recommend",
-            "Cybersecurity Claims ID", "Cybersecurity Claims", "Cybersecurity Goal ID", "Cybersecurity Goal", "Cybersecurity Control ID", "Cybersecurity Control", "Allocated to ADCU", "Cybersecurity Requirement ID", "Cybersecurity Requirement"
+            "Cybersecurity Claims ID", "Cybersecurity Claims", "Cybersecurity Goal ID", "Cybersecurity Goal", "Cybersecurity Control ID", "Cybersecurity Control", "Allocated to Device", "Cybersecurity Requirement ID", "Cybersecurity Requirement"
         ]
         
         for col_idx, h in enumerate(headers_r2, 1):
@@ -806,6 +807,96 @@ def create_excel_report(domain: Domain, steps: List[TaraStep], assets: List[Asse
             col_letter = openpyxl.utils.get_column_letter(col[0].column)
             ws2.column_dimensions[col_letter].width = min(max(max_len + 3, 12), 40)
             
+    # 导出 Assets Sheet (资产列表)
+    if has_assets:
+        if has_tara or has_csr:
+            ws3 = wb.create_sheet(title="Assets")
+        else:
+            ws3 = default_ws
+            ws3.title = "Assets"
+            
+        ws3.views.sheetView[0].showGridLines = True
+        
+        # 填充所有表头单元格默认格式
+        for col_idx in range(1, 8):
+            cell_r1 = ws3.cell(row=1, column=col_idx)
+            cell_r1.fill = header_fill_r1
+            cell_r1.font = header_font
+            cell_r1.alignment = Alignment(horizontal="center", vertical="center", wrap_text=True)
+            cell_r1.border = thin_border
+            
+            cell_r2 = ws3.cell(row=2, column=col_idx)
+            cell_r2.fill = header_fill_r2
+            cell_r2.font = header_font
+            cell_r2.alignment = Alignment(horizontal="center", vertical="center", wrap_text=True)
+            cell_r2.border = thin_border
+
+        ws3.row_dimensions[1].height = 30
+        ws3.row_dimensions[2].height = 35
+        
+        # 第一层合并表头 (Row 1)
+        ws3.merge_cells('A1:G1')
+        ws3['A1'] = 'Assets List / 资产列表'
+        
+        # 第二层标题名称 (Row 2)
+        headers3_r2 = [
+            "Number / 序号", "Asset SN / 资产 SN", "Asset Name / 资产名称",
+            "Asset Type / 资产类型", "Protocol / 通信协议", "Description / 备注说明",
+            "Status / 核对状态"
+        ]
+        for col_idx, h in enumerate(headers3_r2, 1):
+            ws3.cell(row=2, column=col_idx, value=h)
+            
+        type_map = {
+            "data": "数据资产 / Data",
+            "software": "软件资产 / Software",
+            "hardware": "硬件资产 / Hardware",
+            "communication": "通信资产 / Communication"
+        }
+        
+        status_map = {
+            "draft": "待核对 / Draft",
+            "confirmed": "已确认 / Confirmed",
+            "rejected": "已拒绝 / Rejected"
+        }
+        
+        current_row = 3
+        for idx, asset in enumerate(sorted(assets, key=lambda x: x.id), 1):
+            row_data = [
+                idx,
+                get_asset_sn(asset),
+                asset.name or "",
+                type_map.get(str(asset.asset_type).lower().strip(), asset.asset_type or ""),
+                asset.protocol or "N/A",
+                asset.description or "无备注 / No description",
+                status_map.get(str(asset.status).lower().strip(), asset.status or "")
+            ]
+            for col_idx, val in enumerate(row_data, 1):
+                cell = ws3.cell(row=current_row, column=col_idx, value=val)
+                cell.font = cell_font
+                cell.border = thin_border
+                
+                # 描述文本/名称左对齐，其它居中对齐
+                if col_idx in [3, 6]:
+                    cell.alignment = Alignment(horizontal="left", vertical="center", wrap_text=True)
+                else:
+                    cell.alignment = Alignment(horizontal="center", vertical="center", wrap_text=True)
+                    
+            ws3.row_dimensions[current_row].height = 24
+            current_row += 1
+            
+        # 自适应列宽设定
+        for col in ws3.columns:
+            max_len = 0
+            for cell in col:
+                if cell.row in [1, 2]:
+                    continue
+                val_str = str(cell.value or "")
+                if len(val_str) > max_len:
+                    max_len = len(val_str)
+            col_letter = openpyxl.utils.get_column_letter(col[0].column)
+            ws3.column_dimensions[col_letter].width = min(max(max_len + 3, 12), 40)
+
     filename_suffix = f"{export_type}_{'desensitized' if desensitize else 'full'}"
     file_path = os.path.join(EXPORTS_DIR, f"TARA_Report_{domain.id}_{filename_suffix}.xlsx")
     wb.save(file_path)
@@ -834,7 +925,7 @@ def create_csv_report(domain: Domain, steps: List[TaraStep], assets: List[Asset]
             "Threat Scenarios", "Attack Path",
             "Time Consuming", "Expertise", "Knowledge about TOE", "Window of opportunity", "Equipment", "Difficulty", "AF Level", "CAF Level",
             "Risk Value", "Risk Treatment Recommend",
-            "Cybersecurity Claims ID", "Cybersecurity Claims", "Cybersecurity Goal ID", "Cybersecurity Goal", "Cybersecurity Control ID", "Cybersecurity Control", "Allocated to ADCU", "Cybersecurity Requirement ID", "Cybersecurity Requirement"
+            "Cybersecurity Claims ID", "Cybersecurity Claims", "Cybersecurity Goal ID", "Cybersecurity Goal", "Cybersecurity Control ID", "Cybersecurity Control", "Allocated to Device", "Cybersecurity Requirement ID", "Cybersecurity Requirement"
         ]
         keys = [
             "number", "asset_sn", "asset_name",

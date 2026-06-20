@@ -19,7 +19,7 @@ services:
       - DATABASE_URL=sqlite:////app/tara.db
     volumes:
       - ./tara.db:/app/tara.db
-      - ./exports:/app/exports
+      - ./exports_local:/app/exports_local
     restart: always
     depends_on:
       - redis
@@ -34,7 +34,7 @@ services:
       - DATABASE_URL=sqlite:////app/tara.db
     volumes:
       - ./tara.db:/app/tara.db
-      - ./exports:/app/exports
+      - ./exports_local:/app/exports_local
     restart: always
     depends_on:
       - redis

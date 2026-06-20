@@ -10,6 +10,55 @@ from app.models.domain import Domain
 from app.models.diagram import Diagram
 from app.schemas.diagram import DiagramUpdate, DiagramOut
 from app.api.project import check_domain_idle, check_project_active
+from pydantic import BaseModel, Field
+
+class ReasoningStepsSchema(BaseModel):
+    elements_analysis: str = Field(description="第一步分析车载拓扑元素及类型")
+    relationships_analysis: str = Field(description="第二步分析网卡与安全边界拓扑位置")
+    data_flows_analysis: str = Field(description="第三步分析通信交互数据流与传输协议")
+    properties_fill_analysis: str = Field(description="第四步分析各节点和连线的详细属性说明")
+
+class PositionSchema(BaseModel):
+    x: float
+    y: float
+
+class NodeStyleSchema(BaseModel):
+    width: float
+    height: float
+
+class NodeDataSchema(BaseModel):
+    name: str = Field(description="资产名称")
+    description: str = Field(description="详细功能描述和安全作用，不能有符号干扰且不要为空")
+    protocol: str = Field(description="具体的通信协议或数据协议类型（如 CAN, LIN, Ethernet, HTTPS, FTP 等，尽量用规范大写字母，不要为空）")
+    remarks: str = Field(description="相关的安全备注或资产标记")
+
+class NodeSchema(BaseModel):
+    id: str = Field(description="唯一的节点ID，例如 n1, n2")
+    type: str = Field(description="节点类型，可选值: process, entity, interface, storage, boundary")
+    position: PositionSchema
+    style: Optional[NodeStyleSchema] = None
+    data: NodeDataSchema
+
+class EdgeDataSchema(BaseModel):
+    name: str = Field(description="数据流名称")
+    protocol: str = Field(description="数据流传输协议")
+    transmitted_info: str = Field(description="传输的具体数据内容，不要为空")
+
+class EdgeSchema(BaseModel):
+    id: str = Field(description="唯一的连线ID，例如 e1, e2")
+    source: str = Field(description="源节点ID")
+    target: str = Field(description="目标节点ID")
+    data: EdgeDataSchema
+
+class DiagramTemplateOutput(BaseModel):
+    reasoning_steps: ReasoningStepsSchema
+    nodes: List[NodeSchema]
+    edges: List[EdgeSchema]
+
+class DiagramChatOutput(BaseModel):
+    reply: str = Field(description="你对用户需求的理解和设计方案的自然语言描述（请用中文回答，不要包含 markdown 格式，控制在200字以内）")
+    snapshot_json: DiagramTemplateOutput = Field(description="包含 reasoning_steps、nodes 和 edges 的 DFD 拓扑数据对象")
+
 
 router = APIRouter(prefix="/diagrams", tags=["功能图与编辑器管理"])
 
@@ -368,10 +417,10 @@ def ai_generate_topology(
             }
             # 请求结构化 JSON 格式
             system_prompt = (
-                "你是一个车载网络安全拓扑设计助手。请根据用户的需求，输出一个标准的 JSON。\n"
+                "你是一个车载网络安全拓扑设计助手。请根据用户的需求，输出标准的 DFD 拓扑设计 JSON。\n"
                 "本系统将根据你设计的 DFD 拓扑自动提取安全资产，请仔细遵循以下映射关系来绘制并填写属性，以便自动提取完整正确的资产：\n"
                 "- 节点类型 type='process' 代表【软件资产】；\n"
-                "- 节点类型 type='entity' 代表【硬件资产】（如OBD接口、网关控制器、物理设备）；\n- 节点类型 type='interface' 代表【接口资产】（属于硬件资产，如串口、USB、JTAG等）；\n"
+                "- 节点类型 type='entity' 代表【硬件资产】（如OBD接口、网关控制器、物理设备）；\n- 节点类型 type='interface' 代表【接口资产】（属于硬件资产，如串口、USB, JTAG等）；\n"
                 "- 节点类型 type='storage' 代表【数据资产】（如数据库、本地配置文件、内存数据）；\n"
                 "- 节点类型 type='boundary' 代表【物理安全边界】；\n"
                 "- 连线 edges 代表【数据流/通信资产】。\n"
@@ -390,24 +439,8 @@ def ai_generate_topology(
                 "1. elements_analysis (元素分析): 分析并识别该场景中应包含哪些节点资产；\n"
                 "2. relationships_analysis (关系分析): 分析这些节点应处于什么网段与物理边界关系中（如外部网络、车身网段、安全边界等）；\n"
                 "3. data_flows_analysis (数据流分析): 梳理节点之间的数据交互方向与所采用的通信协议；\n"
-                "4. properties_fill_analysis (属性填充分析): 说明如何为节点和数据流的 data 字段填充真实的属性名称、详细安全功能描述与通信内容备注。\n"
-                "\n"
-                "你必须输出标准的 JSON，格式为：\n"
-                "{\n"
-                '  "reasoning_steps": {\n'
-                '    "elements_analysis": "第一步分析车载拓扑元素及类型...",\n'
-                '    "relationships_analysis": "第二步分析网卡与安全边界拓扑位置...",\n'
-                '    "data_flows_analysis": "第三步分析通信交互数据流与传输协议...",\n'
-                '    "properties_fill_analysis": "第四步分析各节点和连线的详细属性说明..."\n'
-                '  },\n'
-                '  "nodes": [\n'
-                '    {"id": "n1", "type": "entity|process|storage|boundary|interface", "position": {"x": 100, "y": 150}, "style": {"width": 100, "height": 100}, "data": {"name": "节点名", "description": "描述", "protocol": "协议", "remarks": "备注"}}\n'
-                "  ],\n"
-                '  "edges": [\n'
-                '    {"id": "e1", "source": "n1", "target": "n2", "data": {"name": "连线名", "protocol": "协议", "transmitted_info": "传输数据"}}\n'
-                "  ]\n"
-                "}\n"
-                "不要包含任何非 JSON 文字或 markdown 标记。"
+                "4. properties_fill_analysis (属性填充分析): 说明如何为节点和数据流的 data 字段填充真实的属性名称、详细安全功能描述与通信内容备注。\n\n"
+                "请以符合要求的 JSON 格式输出拓扑。不要包含任何非 JSON 文字或 markdown 标记。"
             )
             llm_payload = {
                 "model": settings.model_name,
@@ -415,17 +448,75 @@ def ai_generate_topology(
                     {"role": "system", "content": system_prompt},
                     {"role": "user", "content": f"请为以下功能绘制DFD画布结构：{req_data.prompt}"}
                 ],
-                "response_format": {"type": "json_object"}
+                "response_format": {
+                    "type": "json_schema",
+                    "json_schema": {
+                        "name": "DiagramTemplateOutput",
+                        "strict": True,
+                        "schema": DiagramTemplateOutput.model_json_schema()
+                    }
+                }
             }
+            import httpx
             with httpx.Client(timeout=60.0) as client:
-                resp = client.post(url, headers=headers, json=llm_payload)
-            if resp.status_code == 200:
-                choice_text = resp.json()["choices"][0]["message"]["content"]
-                parsed = json.loads(choice_text)
-                if "nodes" in parsed and "edges" in parsed:
-                    nodes = parsed["nodes"]
-                    edges = parsed["edges"]
-                    reasoning_steps = parsed.get("reasoning_steps", {})
+                try:
+                    resp = client.post(url, headers=headers, json=llm_payload)
+                    if resp.status_code != 200:
+                        raise ValueError(f"API returned status {resp.status_code}")
+                    choice_text = resp.json()["choices"][0]["message"]["content"]
+                except Exception as e:
+                    # 回退到 json_object
+                    llm_payload["response_format"] = {"type": "json_object"}
+                    llm_payload["messages"].append({
+                        "role": "user",
+                        "content": f"请务必按照以下 JSON Schema 格式回复，不要包含任何 markdown 或其他文本：\n{json.dumps(DiagramTemplateOutput.model_json_schema(), ensure_ascii=False)}"
+                    })
+                    resp = client.post(url, headers=headers, json=llm_payload)
+                    if resp.status_code != 200:
+                        raise ValueError(f"API returned status {resp.status_code}")
+                    choice_text = resp.json()["choices"][0]["message"]["content"]
+
+            # 清理 Markdown 代码块
+            if choice_text.strip().startswith("```"):
+                import re
+                choice_text = re.sub(r"^```[a-zA-Z0-9]*\n", "", choice_text)
+                choice_text = re.sub(r"\n```$", "", choice_text)
+                choice_text = choice_text.strip()
+                
+            parsed = json.loads(choice_text)
+            
+            # Pydantic 校验与自修复
+            try:
+                validated = DiagramTemplateOutput.model_validate(parsed)
+            except Exception as val_err:
+                import re
+                # 尝试修复一次
+                repair_messages = llm_payload["messages"] + [
+                    {"role": "assistant", "content": choice_text},
+                    {"role": "user", "content": f"上一次返回的 JSON 数据校验未通过，校验错误信息如下：\n{val_err}\n请修正该 JSON 数据，确保完全符合 Schema 规范且格式正确。"}
+                ]
+                payload_repair = {
+                    "model": settings.model_name,
+                    "messages": repair_messages,
+                    "response_format": llm_payload["response_format"]
+                }
+                with httpx.Client(timeout=60.0) as client:
+                    resp_rep = client.post(url, headers=headers, json=payload_repair)
+                if resp_rep.status_code == 200:
+                    choice_text_rep = resp_rep.json()["choices"][0]["message"]["content"]
+                    if choice_text_rep.strip().startswith("```"):
+                        choice_text_rep = re.sub(r"^```[a-zA-Z0-9]*\n", "", choice_text_rep)
+                        choice_text_rep = re.sub(r"\n```$", "", choice_text_rep)
+                        choice_text_rep = choice_text_rep.strip()
+                    parsed_rep = json.loads(choice_text_rep)
+                    validated = DiagramTemplateOutput.model_validate(parsed_rep)
+                else:
+                    raise val_err
+
+            validated_dict = validated.model_dump(by_alias=True)
+            nodes = validated_dict.get("nodes", nodes)
+            edges = validated_dict.get("edges", edges)
+            reasoning_steps = validated_dict.get("reasoning_steps", {})
         except Exception as e:
             print(f"⚠️ LLM 拓扑生成失败，降级执行规则算法: {e}")
 
@@ -584,10 +675,10 @@ def ai_chat_diagram(
                 "Content-Type": "application/json"
             }
             system_prompt = (
-                "你是一个车载网络安全拓扑设计助手。请针对用户的聊天和画图需求进行解答，并同时输出数据流图DFD设计。\n"
+                "你是一个车载网络安全拓扑设计助手。请针对用户的聊天 and 画图需求进行解答，并同时输出数据流图DFD设计。\n"
                 "本系统将根据你设计的 DFD 拓扑自动提取安全资产，请仔细遵循以下映射关系来绘制并填写属性，以便自动提取完整正确的资产：\n"
                 "- 节点类型 type='process' 代表【软件资产】；\n"
-                "- 节点类型 type='entity' 代表【硬件资产】（如OBD接口、网关控制器、物理设备）；\n- 节点类型 type='interface' 代表【接口资产】（属于硬件资产，如串口、USB、JTAG等）；\n"
+                "- 节点类型 type='entity' 代表【硬件资产】（如OBD接口、网关控制器、物理设备）；\n- 节点类型 type='interface' 代表【接口资产】（属于硬件资产，如串口、USB, JTAG等）；\n"
                 "- 节点类型 type='storage' 代表【数据资产】（如数据库、本地配置文件、内存数据）；\n"
                 "- 节点类型 type='boundary' 代表【物理安全边界】；\n"
                 "- 连线 edges 代表【数据流/通信资产】。\n"
@@ -613,26 +704,8 @@ def ai_chat_diagram(
                 "1. **保留无关已有节点**：对于与用户最新需求或对话修改无关的已有节点 and 连线，必须原样保留在 JSON 中（包括其 id, type, data, style, position 属性），不可删除或重命名已有节点 ID。\n"
                 "2. **保留用户摆放位置**：已有节点的 position (坐标 x, y) 必须完全保持原样，以便保留用户的画布手动设计结果。\n"
                 "3. **增量放置新节点**：新生成的节点应当赋予唯一的 id（如已有 n1, n2，则新增 n3），其 position 坐标应放在已有节点附近（例如在最近的关联节点基础上 x 或 y 轴增加 150 到 200 像素以保持画布整洁）。\n"
-                "4. **更新与删除**：如果用户要求修改或删除某个节点/数据流，请按需修改其属性（如修改 protocol）或从 nodes/edges 列表中移除。\n"
-                "\n"
-                "你必须返回一个结构化的 JSON 对象，包含两个字段：\n"
-                '1. "reply": 你对用户需求的理解 and 设计方案的自然语言描述（请用中文回答，不要包含 markdown 格式，控制在200字以内）。\n'
-                '2. "snapshot_json": 一个包含 reasoning_steps、nodes 和 edges 的 JSON 对象，格式为：\n'
-                '{\n'
-                '  "reasoning_steps": {\n'
-                '    "elements_analysis": "第一步分析车载拓扑元素及类型...",\n'
-                '    "relationships_analysis": "第二步分析网卡与安全边界拓扑位置...",\n'
-                '    "data_flows_analysis": "第三步分析通信交互数据流与传输协议...",\n'
-                '    "properties_fill_analysis": "第四步分析各节点和连线的详细属性说明..."\n'
-                '  },\n'
-                '  "nodes": [\n'
-                '    {"id": "n1", "type": "entity|process|storage|boundary|interface", "position": {"x": 100, "y": 150}, "style": {"width": 100, "height": 100}, "data": {"name": "节点名", "description": "描述", "protocol": "协议", "remarks": "备注"}}\n'
-                '  ],\n'
-                '  "edges": [\n'
-                '    {"id": "e1", "source": "n1", "target": "n2", "data": {"name": "连线名", "protocol": "协议", "transmitted_info": "传输数据"}}\n'
-                '  ]\n'
-                '}\n'
-                "不要包含任何非 JSON 文字或 markdown 标记。"
+                "4. **更新与删除**：如果用户要求修改或删除某个节点/数据流，请按需修改其属性（如修改 protocol）或从 nodes/edges 列表中移除。\n\n"
+                "请以符合要求的 JSON 格式输出聊天回复及拓扑图 snapshot_json。不要包含任何非 JSON 文字或 markdown 标记。"
             )
             messages = [{"role": "system", "content": system_prompt}]
             
@@ -660,28 +733,81 @@ def ai_chat_diagram(
             llm_payload = {
                 "model": settings.model_name,
                 "messages": messages,
-                "response_format": {"type": "json_object"}
+                "response_format": {
+                    "type": "json_schema",
+                    "json_schema": {
+                        "name": "DiagramChatOutput",
+                        "strict": True,
+                        "schema": DiagramChatOutput.model_json_schema()
+                    }
+                }
             }
+            import httpx
             with httpx.Client(timeout=60.0) as client:
-                resp = client.post(url, headers=headers, json=llm_payload)
-            if resp.status_code == 200:
-                choice_text = resp.json()["choices"][0]["message"]["content"]
-                parsed = json.loads(choice_text)
-                if "reply" in parsed and "snapshot_json" in parsed:
-                    reply = parsed["reply"]
-                    snapshot_obj = parsed["snapshot_json"]
-                    if isinstance(snapshot_obj, str):
-                        try:
-                            snapshot_obj = json.loads(snapshot_obj)
-                        except Exception:
-                            snapshot_obj = {}
-                    nodes = snapshot_obj.get("nodes", nodes)
-                    edges = snapshot_obj.get("edges", edges)
-                    reasoning_steps = snapshot_obj.get("reasoning_steps", {})
-                    
-                    # 运行独立的子代理校验并附加到回复末尾 (Context Budgeting & Sub-Agents)
-                    compliance_feedback = verify_dfd_compliance(db, nodes, edges)
-                    reply += f"\n\n{compliance_feedback}"
+                try:
+                    resp = client.post(url, headers=headers, json=llm_payload)
+                    if resp.status_code != 200:
+                        raise ValueError(f"API returned status {resp.status_code}")
+                    choice_text = resp.json()["choices"][0]["message"]["content"]
+                except Exception as e:
+                    # 回退到 json_object
+                    llm_payload["response_format"] = {"type": "json_object"}
+                    llm_payload["messages"].append({
+                        "role": "user",
+                        "content": f"请务必按照以下 JSON Schema 格式回复，不要包含任何 markdown 或其他文本：\n{json.dumps(DiagramChatOutput.model_json_schema(), ensure_ascii=False)}"
+                    })
+                    resp = client.post(url, headers=headers, json=llm_payload)
+                    if resp.status_code != 200:
+                        raise ValueError(f"API returned status {resp.status_code}")
+                    choice_text = resp.json()["choices"][0]["message"]["content"]
+
+            # 清理 Markdown 代码块
+            if choice_text.strip().startswith("```"):
+                import re
+                choice_text = re.sub(r"^```[a-zA-Z0-9]*\n", "", choice_text)
+                choice_text = re.sub(r"\n```$", "", choice_text)
+                choice_text = choice_text.strip()
+                
+            parsed = json.loads(choice_text)
+            
+            # Pydantic 校验与自修复
+            try:
+                validated = DiagramChatOutput.model_validate(parsed)
+            except Exception as val_err:
+                import re
+                # 尝试修复一次
+                repair_messages = llm_payload["messages"] + [
+                    {"role": "assistant", "content": choice_text},
+                    {"role": "user", "content": f"上一次返回的 JSON 数据校验未通过，校验错误信息如下：\n{val_err}\n请修正该 JSON 数据，确保完全符合 Schema 规范且格式正确。"}
+                ]
+                payload_repair = {
+                    "model": settings.model_name,
+                    "messages": repair_messages,
+                    "response_format": llm_payload["response_format"]
+                }
+                with httpx.Client(timeout=60.0) as client:
+                    resp_rep = client.post(url, headers=headers, json=payload_repair)
+                if resp_rep.status_code == 200:
+                    choice_text_rep = resp_rep.json()["choices"][0]["message"]["content"]
+                    if choice_text_rep.strip().startswith("```"):
+                        choice_text_rep = re.sub(r"^```[a-zA-Z0-9]*\n", "", choice_text_rep)
+                        choice_text_rep = re.sub(r"\n```$", "", choice_text_rep)
+                        choice_text_rep = choice_text_rep.strip()
+                    parsed_rep = json.loads(choice_text_rep)
+                    validated = DiagramChatOutput.model_validate(parsed_rep)
+                else:
+                    raise val_err
+
+            validated_dict = validated.model_dump(by_alias=True)
+            if "reply" in validated_dict and "snapshot_json" in validated_dict:
+                reply = validated_dict["reply"]
+                snapshot_obj = validated_dict["snapshot_json"]
+                nodes = snapshot_obj.get("nodes", nodes)
+                edges = snapshot_obj.get("edges", edges)
+                reasoning_steps = snapshot_obj.get("reasoning_steps", {})
+                # 运行独立的子代理校验并附加到回复末尾 (Context Budgeting & Sub-Agents)
+                compliance_feedback = verify_dfd_compliance(db, nodes, edges)
+                reply += f"\n\n{compliance_feedback}"
         except Exception as e:
             print(f"⚠️ LLM 拓扑对话失败，降级执行规则算法: {e}")
 

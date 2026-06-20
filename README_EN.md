@@ -11,10 +11,10 @@ TARA AI Platform is a professional Threat Analysis and Risk Assessment (TARA) pl
 - **Five-Dimensional Feasibility Analysis**: Scores attack feasibility from 5 dimensions (Elapsed Time, Specialist Expertise, Knowledge of the Item, Opportunity, and Equipment Cost) based on the lookup table method.
 - **Risk Level & Decision Logic Coupling**: Automatically determines the Risk Value (1-5) via look-up tables and links it to risk treatment strategies (Avoid, Reduce, Share, Retain).
 - **Cybersecurity Requirement (CSR/CSO) Deduplication & Convergence**: Automatically extracts Cybersecurity Goals (CSO) and utilizes AI algorithms to refine and deduplicate Cybersecurity Requirements (CSR) allocated to devices.
-- **Automatic ID Numbering & Auto-Increment**: Implements strict alphabetical order sorting and sequential auto-increment mapping for Cybersecurity Claim IDs (`CLM-XXXX`), Cybersecurity Goal IDs (`CSO-XXXX`), Cybersecurity Control IDs (`CSC-XXXX`), and Cybersecurity Requirement IDs (`CSR-XXXX`) to ensure stability across multiple runs and exports.
+- **Content-Based Unique ID Hash Mechanism**: Unifies Cybersecurity Claim IDs (`CLM_` + Hash), Cybersecurity Goal IDs (`CSO_` + Hash), Cybersecurity Control IDs (`CSC_` + Hash), and Cybersecurity Requirement IDs (`CSR_` + Hash) into the same Hash-based style as `DS_` (based on content, 8-character uppercase hexadecimal). Identical content automatically maps to the same ID, ensuring absolute stability and uniqueness across multiple runs and exports.
 - **HTML-Specific ID Column Hiding (Clean Layout)**: Keeps the TARA details table and security requirement matrix dashboard clutter-free by hiding ID columns on the webpage while fully retaining them in Excel and CSV report exports for complete compliance and auditing traceability.
 - **Incremental Analysis & Human override Inheritance**: Employs hash fingerprint matching to skip LLM calls when asset attributes remain unchanged, and seamlessly inherits confirmed or overridden conclusions from safety engineers.
-- **Excel-Aligned TARA Table & Security Matrix**: Features newly designed "TARA Assessment Details Table (Aligned with Excel)" and "Project-Level Security Control Requirements Matrix" dashboards, supporting 100% matched flat columns as exported Excel sheets and instant Chinese-English multilingual toggle.
+- **Excel-Aligned TARA Table & Security Matrix**: Features newly designed "TARA Assessment Details Table" and "Project-Level Security Control Requirements Matrix" dashboards, supporting 100% matched flat columns as exported Excel sheets and instant Chinese-English multilingual toggle.
 - **Inline Editing & Row Operations Sync**: Allows security analysts to edit any cell inline (damage scenarios, feasibility factors, risk decisions, CSO, Claims, Controls, ADCU, CSR) and delete/add rows directly; changes are atomically persisted and synchronized to the database.
 - **CAF Level Manual Calibration & Normalization**: Automatically initializes CAF Level from AF Level and recalculates Risk Values, while supporting manual expert calibration overrides with smart case-insensitivity mapping (e.g. 'Medium' vs 'medium').
 
@@ -33,8 +33,8 @@ TARA AI Platform is a professional Threat Analysis and Risk Assessment (TARA) pl
 - **Manual Freeze & Archiving**: Before archiving, the workspace remains fully editable (supporting adding sub-domains and running TARA analysis). Once the administrator manually clicks "Archive Lock", the project is frozen into a read-only state.
 
 ### 5. High-Performance Compliance Report Export
-- **Excel (.xlsx) Export**: Generates a standard 36-column flat ISO 21434 TARA matrix report, featuring a clean color palette and auto-fit columns.
-- **CSV Export**: Exports the identical 36-column matrix encoded in `utf-8-sig` (with BOM) to resolve Chinese character encoding issues when opened in Windows Excel.
+- **Excel (.xlsx) Export**: Supports multi-sheet export, including the TARA assessment details, the CSR cybersecurity requirements matrix, and the asset list (`Assets`), featuring a clean color palette and auto-fit columns.
+- **CSV Export**: To satisfy single-table text archive standards, CSV export only includes the `TARA` threat analysis assessment details, encoded in `utf-8-sig` (with BOM) to resolve Chinese character encoding issues when opened in Windows Excel.
 
 ---
 

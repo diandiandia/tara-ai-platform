@@ -307,55 +307,29 @@ const collectCsrReportData = (steps, assetsList) => {
   return rows;
 };
 
+const computeContentHashId = (prefix, text) => {
+  // Simple content-based hash using djb2 + fnv1a for collision resistance
+  const str = (text || '').trim();
+  if (!str || str === 'N/A') return 'N/A';
+  let h1 = 5381;
+  let h2 = 0x811c9dc5;
+  for (let i = 0; i < str.length; i++) {
+    const c = str.charCodeAt(i);
+    h1 = ((h1 << 5) + h1 + c) >>> 0;
+    h2 = (h2 ^ c) * 0x01000193 >>> 0;
+  }
+  const combined = ((h1 ^ h2) >>> 0).toString(16).padStart(8, '0').toUpperCase();
+  return `${prefix}${combined}`;
+};
+
 const computeSequentialIds = (rows) => {
-  const goalSet = new Set();
-  const claimSet = new Set();
-  const controlSet = new Set();
-  const reqSet = new Set();
-
-  rows.forEach(row => {
-    const isExempted = ['accept', 'transfer'].includes((row.risk_treatment || '').toLowerCase());
-    if (isExempted) {
-      const claim = String(row.cybersecurity_claim || '').trim();
-      if (claim && claim !== 'N/A') claimSet.add(claim);
-    } else {
-      const goal = String(row.cso || '').trim();
-      if (goal && goal !== 'N/A') goalSet.add(goal);
-
-      const control = String(row.cybersecurity_control || '').trim();
-      if (control && control !== 'N/A') controlSet.add(control);
-
-      const req = String(row.csr || '').trim();
-      if (req && req !== 'N/A') {
-        req.split('\n').forEach(line => {
-          const cleaned = line.replace(/^\(\d+\)\s*/, '').trim();
-          if (cleaned && cleaned !== 'N/A') reqSet.add(cleaned);
-        });
-      }
-    }
-  });
-
-  const sortedGoals = Array.from(goalSet).sort();
-  const sortedClaims = Array.from(claimSet).sort();
-  const sortedControls = Array.from(controlSet).sort();
-  const sortedReqs = Array.from(reqSet).sort();
-
-  const goalMap = new Map(sortedGoals.map((g, i) => [g, `CSO-${String(i + 1).padStart(4, '0')}`]));
-  const claimMap = new Map(sortedClaims.map((c, i) => [c, `CLM-${String(i + 1).padStart(4, '0')}`]));
-  const controlMap = new Map(sortedControls.map((ct, i) => [ct, `CSC-${String(i + 1).padStart(4, '0')}`]));
-  const reqMap = new Map(sortedReqs.map((r, i) => [r, `CSR-${String(i + 1).padStart(4, '0')}`]));
-
   return rows.map(row => {
     const newRow = { ...row };
     const isExempted = ['accept', 'transfer'].includes((row.risk_treatment || '').toLowerCase());
 
     if (isExempted) {
       const claim = String(row.cybersecurity_claim || '').trim();
-      if (claim && claim !== 'N/A') {
-        newRow.cybersecurity_claim_id = claimMap.get(claim) || 'N/A';
-      } else {
-        newRow.cybersecurity_claim_id = 'N/A';
-      }
+      newRow.cybersecurity_claim_id = (claim && claim !== 'N/A') ? computeContentHashId('CLM_', claim) : 'N/A';
       newRow.cso_id = 'N/A';
       newRow.cybersecurity_control_id = 'N/A';
       newRow.cybersecurity_requirement_id = 'N/A';
@@ -363,18 +337,10 @@ const computeSequentialIds = (rows) => {
       newRow.cybersecurity_claim_id = 'N/A';
 
       const goal = String(row.cso || '').trim();
-      if (goal && goal !== 'N/A') {
-        newRow.cso_id = goalMap.get(goal) || 'N/A';
-      } else {
-        newRow.cso_id = 'N/A';
-      }
+      newRow.cso_id = (goal && goal !== 'N/A') ? computeContentHashId('CSO_', goal) : 'N/A';
 
       const control = String(row.cybersecurity_control || '').trim();
-      if (control && control !== 'N/A') {
-        newRow.cybersecurity_control_id = controlMap.get(control) || 'N/A';
-      } else {
-        newRow.cybersecurity_control_id = 'N/A';
-      }
+      newRow.cybersecurity_control_id = (control && control !== 'N/A') ? computeContentHashId('CSC_', control) : 'N/A';
 
       const req = String(row.csr || '').trim();
       if (req && req !== 'N/A') {
@@ -382,13 +348,13 @@ const computeSequentialIds = (rows) => {
         if (lines.length > 1) {
           const mappedLines = lines.map((line, idx) => {
             const cleaned = line.replace(/^\(\d+\)\s*/, '').trim();
-            const cid = reqMap.get(cleaned) || `CSR-0000`;
+            const cid = computeContentHashId('CSR_', cleaned);
             return `(${idx + 1}) ${cid}`;
           });
           newRow.cybersecurity_requirement_id = mappedLines.join('\n');
         } else {
           const cleaned = req.replace(/^\(\d+\)\s*/, '').trim();
-          newRow.cybersecurity_requirement_id = reqMap.get(cleaned) || 'N/A';
+          newRow.cybersecurity_requirement_id = computeContentHashId('CSR_', cleaned);
         }
       } else {
         newRow.cybersecurity_requirement_id = 'N/A';
@@ -529,7 +495,7 @@ const buildExcelRowsFromSteps = (steps, assetsList) => {
               risk_value: calculatedRisk,
               risk_treatment: rd.risk_treatment || rd.risk_decision || 'mitigate',
               
-              // CSO, Claims, Control, ADCU, CSR
+              // CSO, Claims, Control, Device, CSR
               cybersecurity_claim_id: rd.cybersecurity_claim_id || (['accept', 'transfer'].includes((rd.risk_treatment || '').toLowerCase()) ? `CLM_${attr}_${ts.threat_id}` : 'N/A'),
               cybersecurity_claim: rd.cybersecurity_claim || '',
               cso_id: rd.cybersecurity_goal_id || req.cybersecurity_control_id || (rd.risk_treatment === 'mitigate' ? `CSO_${attr}_${ts.threat_id}` : 'N/A'),
@@ -1178,7 +1144,7 @@ export default function TaraResults({ setPage, domainId }) {
           }}
         >
           <CheckSquare size={16} />
-          <span>{t("TARA 评估详情表 (与Excel对齐)")}</span>
+          <span>{t("TARA 评估详情表")}</span>
         </button>
 
         <button
@@ -1294,7 +1260,7 @@ export default function TaraResults({ setPage, domainId }) {
                   <th style={{ minWidth: '140px', padding: '10px' }}>{t("安全声称 (Claims)")}</th>
                   <th style={{ minWidth: '140px', padding: '10px' }}>{t("安全目标 (CSO)")}</th>
                   <th style={{ minWidth: '140px', padding: '10px' }}>{t("安全控制")}</th>
-                  <th style={{ width: '80px', padding: '10px' }}>{t("分配至ADCU")}</th>
+                  <th style={{ width: '80px', padding: '10px' }}>{t("分配至设备")}</th>
                   <th style={{ minWidth: '160px', padding: '10px' }}>{t("安全要求 (CSR)")}</th>
                   <th style={{ minWidth: '90px', padding: '10px', textAlign: 'center', position: 'sticky', right: 0, background: 'var(--bg-card)', zIndex: 10 }}>{t("操作")}</th>
                 </tr>
@@ -1681,7 +1647,7 @@ export default function TaraResults({ setPage, domainId }) {
                         )}
                       </td>
 
-                      {/* Allocated to device (ADCU) */}
+                      {/* Allocated to device */}
                       <td style={{ padding: '8px', textAlign: 'center' }}>
                         {isEditing ? (
                           <select
