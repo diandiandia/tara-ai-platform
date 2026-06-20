@@ -1833,7 +1833,6 @@ export default function TaraResults({ setPage, domainId }) {
             <table className="custom-table" style={{ width: '100%', borderCollapse: 'collapse', fontSize: '11px' }}>
               <thead>
                 <tr style={{ background: 'rgba(15, 23, 42, 0.05)', borderBottom: '1px solid var(--border-color)' }}>
-                  <th style={{ minWidth: '90px', padding: '10px' }}>{t("CSR ID")}</th>
                   <th style={{ minWidth: '130px', padding: '10px' }}>{t("Security Domain")}</th>
                   <th style={{ minWidth: '80px', padding: '10px' }}>{t("Asset SN")}</th>
                   <th style={{ minWidth: '100px', padding: '10px' }}>{t("Asset Name")}</th>
@@ -1845,7 +1844,6 @@ export default function TaraResults({ setPage, domainId }) {
               <tbody>
                 {matrixPaginatedRows.map((row, idx) => (
                   <tr key={idx} style={{ borderBottom: '1px solid var(--border-color)', height: '40px' }}>
-                    <td style={{ padding: '8px', textAlign: 'center', fontWeight: '600', color: 'var(--primary)' }}>{row.csr_id}</td>
                     <td style={{ padding: '8px' }}>{row.security_domain}</td>
                     <td style={{ padding: '8px', textAlign: 'center' }}>{row.asset_sn}</td>
                     <td style={{ padding: '8px', fontWeight: '500' }}>{row.asset_name}</td>
