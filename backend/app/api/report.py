@@ -44,7 +44,9 @@ def build_id_maps(steps: List[TaraStep]):
     req_set = set()
 
     for step in steps:
-        out = step.analysis_result.get("final_output", {}) if step.analysis_result else {}
+        out = step.analysis_result.get("final_output") if step.analysis_result else None
+        if not isinstance(out, dict):
+            out = {}
         if step.stage == "stage4":
             decisions = out.get("risk_decisions") or []
             if not decisions and (out.get("cybersecurity_goal") or out.get("cybersecurity_claim")):
