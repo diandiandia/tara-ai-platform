@@ -1,5 +1,3 @@
-version: '3.8'
-
 services:
   redis:
     image: redis:7-alpine
@@ -16,9 +14,9 @@ services:
     environment:
       - REDIS_HOST=redis
       - REDIS_URL=redis://redis:6379/0
-      - DATABASE_URL=sqlite:////app/tara.db
+      - DATABASE_URL=sqlite:////app/data/tara.db
     volumes:
-      - ./tara.db:/app/tara.db
+      - ./data:/app/data
       - ./exports_local:/app/exports_local
     restart: always
     depends_on:
@@ -31,9 +29,9 @@ services:
     environment:
       - REDIS_HOST=redis
       - REDIS_URL=redis://redis:6379/0
-      - DATABASE_URL=sqlite:////app/tara.db
+      - DATABASE_URL=sqlite:////app/data/tara.db
     volumes:
-      - ./tara.db:/app/tara.db
+      - ./data:/app/data
       - ./exports_local:/app/exports_local
     restart: always
     depends_on:
