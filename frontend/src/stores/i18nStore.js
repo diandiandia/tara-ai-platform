@@ -639,6 +639,7 @@ const translations = {
     "手动修订数据保存成功！": "Manual revisions saved successfully!",
     "您确定要彻底删除这一行分析场景吗？保存后对应的数据将被清除。": "Are you sure you want to delete this analysis scenario? The corresponding data will be cleared after saving.",
     "场景行删除成功并已同步到评估库！": "Scenario row deleted successfully and synced to database!",
+    "登录已超时，请重新登录。": "Session expired, please login again.",
     "TARA 评估详情表 (与Excel对齐)": "TARA Assessment Details (Aligned with Excel)",
     "项目级安全控制要求矩阵": "Project-level Cybersecurity Requirements Matrix",
     "该子系统域控尚未生成分析步骤数据。您可以在工作台点击“启动 TARA 分析”派发异步任务，或者使用右上角“手动添加评估行”直接在下方填写。": "This sub-system controller has no analysis steps generated yet. You can click 'Start TARA Analysis' in the workbench to assign an asynchronous task, or click 'Add Row Manually' in the top right to fill it in directly below.",

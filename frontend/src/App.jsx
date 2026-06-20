@@ -10,16 +10,99 @@ import TaraResults from './components/TaraResults';
 import Settings from './components/Settings';
 import ForceChangePassword from './components/ForceChangePassword';
 import UserManagement from './components/UserManagement';
+import axios from 'axios';
+
+const isTokenExpired = (token) => {
+  if (!token) return true;
+  try {
+    const base64Url = token.split('.')[1];
+    const base64 = base64Url.replace(/-/g, '+').replace(/_/g, '/');
+    const jsonPayload = decodeURIComponent(atob(base64).split('').map(function(c) {
+      return '%' + ('00' + c.charCodeAt(0).toString(16)).slice(-2);
+    }).join(''));
+    const payload = JSON.parse(jsonPayload);
+    if (payload.exp && Date.now() >= payload.exp * 1000) {
+      return true;
+    }
+    return false;
+  } catch (e) {
+    return true;
+  }
+};
 
 export default function App() {
   const { t } = useI18n();
-  const { token, user } = useAuthStore();
+  const { token, user, logout } = useAuthStore();
   const [page, setPage] = useState(user?.role === 'admin' ? 'users' : 'projects');
   
   // Navigation states
   const [projectId, setProjectId] = useState(null);
   const [domainId, setDomainId] = useState(null);
   const [diagramId, setDiagramId] = useState(null);
+
+  // Verify session on mount and configure global interceptors to handle token expiration/timeout (BR-01)
+  useEffect(() => {
+    const verifySession = async () => {
+      if (token) {
+        if (isTokenExpired(token)) {
+          logout();
+          alert(t("登录已超时，请重新登录。"));
+          return;
+        }
+        try {
+          await axios.get('/api/auth/me', {
+            headers: { Authorization: `Bearer ${token}` }
+          });
+        } catch (err) {
+          console.error("Session verification failed, logging out", err);
+          logout();
+        }
+      }
+    };
+    verifySession();
+
+    // 1. Response interceptor to catch any 401 unauthorized errors (e.g. timeout)
+    const responseInterceptor = axios.interceptors.response.use(
+      (response) => response,
+      (error) => {
+        if (error.response && error.response.status === 401) {
+          console.warn("Unauthorized request detected (401), logging out...");
+          logout();
+          alert(t("登录已超时，请重新登录。"));
+        }
+        return Promise.reject(error);
+      }
+    );
+
+    // 2. Request interceptor to block outgoing requests if token has expired
+    const requestInterceptor = axios.interceptors.request.use(
+      (config) => {
+        if (token && isTokenExpired(token)) {
+          console.warn("Token is expired, blocking request and logging out...");
+          logout();
+          alert(t("登录已超时，请重新登录。"));
+          return Promise.reject(new Error("Token expired"));
+        }
+        return config;
+      },
+      (error) => Promise.reject(error)
+    );
+
+    // 3. Periodic timer to check token expiration every 5 seconds
+    const interval = setInterval(() => {
+      if (token && isTokenExpired(token)) {
+        console.warn("Token expired during periodic check, logging out...");
+        logout();
+        alert(t("登录已超时，请重新登录。"));
+      }
+    }, 5000);
+
+    return () => {
+      axios.interceptors.response.eject(responseInterceptor);
+      axios.interceptors.request.eject(requestInterceptor);
+      clearInterval(interval);
+    };
+  }, [token, logout, t]);
 
   // Sync route path according to role permissions
   useEffect(() => {
