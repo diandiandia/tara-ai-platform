@@ -37,6 +37,79 @@ def get_asset_sn(asset) -> str:
     prefix = prefix_map.get(t, "A")
     return f"{prefix}-001_{asset.id:03d}"
 
+def build_id_maps(steps: List[TaraStep]):
+    goal_set = set()
+    claim_set = set()
+    control_set = set()
+    req_set = set()
+
+    for step in steps:
+        out = step.analysis_result.get("final_output", {}) if step.analysis_result else {}
+        if step.stage == "stage4":
+            decisions = out.get("risk_decisions") or []
+            if not decisions and (out.get("cybersecurity_goal") or out.get("cybersecurity_claim")):
+                decisions = [{
+                    "risk_treatment": out.get("risk_decision", "Retain"),
+                    "cybersecurity_goal": out.get("cybersecurity_goal", ""),
+                    "cybersecurity_claim": out.get("cybersecurity_claim", "")
+                }]
+            for rd in decisions:
+                rt = str(rd.get("risk_treatment") or rd.get("risk_decision") or "Retain").lower()
+                is_exempted = rt in ["accept", "transfer", "share", "retain"]
+                
+                if is_exempted:
+                    claim = str(rd.get("cybersecurity_claim") or "").strip()
+                    if claim and claim != "N/A":
+                        claim_set.add(claim)
+                else:
+                    goal = str(rd.get("cybersecurity_goal") or "").strip()
+                    if goal and goal != "N/A":
+                        goal_set.add(goal)
+        elif step.stage == "stage5":
+            reqs = out.get("requirements") or []
+            if not reqs:
+                cso_val = out.get("cso") or "N/A"
+                csr_list = out.get("csr") or []
+                if cso_val != "N/A" or csr_list:
+                    if isinstance(csr_list, list) and csr_list:
+                        reqs = [{"cybersecurity_control": cso_val, "cybersecurity_requirement": text} for text in csr_list]
+                    else:
+                        reqs = [{"cybersecurity_control": cso_val, "cybersecurity_requirement": str(csr_list)}]
+            
+            for req in reqs:
+                ctrl = str(req.get("cybersecurity_control") or "").strip()
+                if ctrl and ctrl != "N/A":
+                    control_set.add(ctrl)
+                rq = str(req.get("cybersecurity_requirement") or "").strip()
+                if rq and rq != "N/A":
+                    for line in rq.split("\n"):
+                        import re
+                        cleaned = re.sub(r'^\(\d+\)\s*', '', line).strip()
+                        if cleaned and cleaned != "N/A":
+                            req_set.add(cleaned)
+                            
+            summarized_csrs = out.get("summarized_csrs") or []
+            for csr in summarized_csrs:
+                rq = str(csr.get("cybersecurity_requirement") or "").strip()
+                if rq and rq != "N/A":
+                    for line in rq.split("\n"):
+                        import re
+                        cleaned = re.sub(r'^\(\d+\)\s*', '', line).strip()
+                        if cleaned and cleaned != "N/A":
+                            req_set.add(cleaned)
+
+    sorted_goals = sorted(list(goal_set))
+    sorted_claims = sorted(list(claim_set))
+    sorted_controls = sorted(list(control_set))
+    sorted_reqs = sorted(list(req_set))
+
+    goal_map = {g: f"CSO-{i+1:04d}" for i, g in enumerate(sorted_goals)}
+    claim_map = {c: f"CLM-{i+1:04d}" for i, c in enumerate(sorted_claims)}
+    control_map = {ct: f"CSC-{i+1:04d}" for i, ct in enumerate(sorted_controls)}
+    req_map = {r: f"CSR-{i+1:04d}" for i, r in enumerate(sorted_reqs)}
+
+    return goal_map, claim_map, control_map, req_map
+
 def collect_report_data(steps: List[TaraStep], assets: List[Asset], desensitize: bool) -> List[dict]:
     """
     收集并平铺 TARA 各阶段分析结果数据，返回扁平化字典列表
@@ -399,6 +472,62 @@ def collect_report_data(steps: List[TaraStep], assets: List[Asset], desensitize:
                         rows.append(row_data)
                         row_num += 1
                         
+    goal_map, claim_map, control_map, req_map = build_id_maps(steps)
+    for row in rows:
+        rt_disp = row.get("risk_treatment")
+        is_exempted = rt_disp in ["Share", "Retain"]
+        is_mitigated = rt_disp == "Reduce"
+
+        # 1. Claims
+        claim_val = str(row.get("cybersecurity_claim") or "").strip()
+        if is_exempted and claim_val and claim_val != "N/A":
+            row["cybersecurity_claim_id"] = claim_map.get(claim_val, "N/A")
+        else:
+            row["cybersecurity_claim_id"] = "N/A"
+            row["cybersecurity_claim"] = "N/A" if (is_mitigated or rt_disp == "Avoid") else row.get("cybersecurity_claim", "N/A")
+
+        # 2. Goals (CSO)
+        goal_val = str(row.get("cybersecurity_goal") or "").strip()
+        if is_mitigated and goal_val and goal_val != "N/A":
+            row["cybersecurity_goal_id"] = goal_map.get(goal_val, "N/A")
+        else:
+            row["cybersecurity_goal_id"] = "N/A"
+            row["cybersecurity_goal"] = "N/A" if (is_exempted or rt_disp == "Avoid") else row.get("cybersecurity_goal", "N/A")
+
+        # 3. Controls
+        control_val = str(row.get("cybersecurity_control") or "").strip()
+        if is_mitigated and control_val and control_val != "N/A":
+            lines = [line.strip() for line in control_val.split("\n") if line.strip()]
+            new_ids = []
+            for line in lines:
+                import re
+                cleaned = re.sub(r'^\(\d+\)\s*', '', line).strip()
+                if cleaned and cleaned != "N/A":
+                    new_ids.append(control_map.get(cleaned, "CSC-0000"))
+            if len(new_ids) > 1:
+                row["cybersecurity_control_id"] = "\n".join(f"({i+1}) {cid}" for i, cid in enumerate(new_ids))
+            else:
+                row["cybersecurity_control_id"] = new_ids[0] if new_ids else "N/A"
+        else:
+            row["cybersecurity_control_id"] = "N/A"
+
+        # 4. Requirements (CSR)
+        req_val = str(row.get("cybersecurity_requirement") or "").strip()
+        if is_mitigated and req_val and req_val != "N/A":
+            lines = [line.strip() for line in req_val.split("\n") if line.strip()]
+            new_ids = []
+            for line in lines:
+                import re
+                cleaned = re.sub(r'^\(\d+\)\s*', '', line).strip()
+                if cleaned and cleaned != "N/A":
+                    new_ids.append(req_map.get(cleaned, "CSR-0000"))
+            if len(new_ids) > 1:
+                row["cybersecurity_requirement_id"] = "\n".join(f"({i+1}) {rid}" for i, rid in enumerate(new_ids))
+            else:
+                row["cybersecurity_requirement_id"] = new_ids[0] if new_ids else "N/A"
+        else:
+            row["cybersecurity_requirement_id"] = "N/A"
+
     return rows
 
 def collect_csr_report_data(steps: List[TaraStep], assets: List[Asset]) -> List[dict]:
@@ -478,6 +607,14 @@ def collect_csr_report_data(steps: List[TaraStep], assets: List[Asset]) -> List[
             })
             csr_num += 1
             
+    _, _, _, req_map = build_id_maps(steps)
+    for row in rows:
+        req_text = str(row.get("cybersecurity_requirement") or "").strip()
+        if req_text and req_text != "N/A":
+            row["csr_id"] = req_map.get(req_text, row.get("csr_id"))
+        else:
+            row["csr_id"] = "N/A"
+
     return rows
 
 def create_excel_report(domain: Domain, steps: List[TaraStep], assets: List[Asset], desensitize: bool, export_type: str = "all") -> str:
