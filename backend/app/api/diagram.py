@@ -217,7 +217,7 @@ def acquire_lock(
             
             # 锁不存在，进行抢占
             lock_val = json.dumps({"username": current_user.username})
-            redis_client.setex(lock_key, 300, lock_val) # 设置 5 分钟过期 (300秒)
+            redis_client.set(lock_key, lock_val, ex=300) # 设置 5 分钟过期 (300秒)
             return {"success": True, "locked_by": current_user.username}
         except redis.RedisError as e:
             # Redis 异常，降级通过

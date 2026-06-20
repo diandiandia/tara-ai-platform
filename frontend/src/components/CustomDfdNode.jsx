@@ -1,10 +1,9 @@
 import { useI18n } from '../stores/i18nStore';
-import React from 'react';
 import { Handle, Position, NodeResizer } from 'reactflow';
 import { User, Cpu, Database, Shield, Link } from 'lucide-react';
 import { useCanvasStore } from '../stores/canvasStore';
 
-export default function CustomDfdNode({ id, type, data, selected }) {
+export default function CustomDfdNode({ type, data, selected }) {
   const { t } = useI18n();
   const isReadOnly = useCanvasStore((state) => state.isReadOnly);
   const fontSize = data.fontSize || 11;
@@ -12,8 +11,8 @@ export default function CustomDfdNode({ id, type, data, selected }) {
   const iconContainerSize = Math.max(16, Math.round(fontSize * 1.9));
 
   // Define node styles based on type (optimized for light mode canvas)
-  let containerStyle = {};
-  let icon = null;
+  let containerStyle;
+  let icon;
   let textColor = '#0f172a'; // Slate 900
   let subTextColor = '#475569'; // Slate 600
   let iconBg = 'rgba(0, 0, 0, 0.05)';

@@ -1,5 +1,5 @@
 import { useI18n } from '../stores/i18nStore';
-import React, { useState } from 'react';
+import { useState } from 'react';
 import { useAuthStore } from '../stores/authStore';
 import { Key, Lock, AlertTriangle, ShieldCheck, CheckCircle2 } from 'lucide-react';
 

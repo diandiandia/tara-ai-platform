@@ -1,5 +1,5 @@
 import { useI18n } from '../stores/i18nStore';
-import React, { useEffect, useState, useRef } from 'react';
+import { useEffect, useState, useRef, useCallback } from 'react';
 import { useProjectStore } from '../stores/projectStore';
 import { useCanvasStore } from '../stores/canvasStore';
 import { useTaraStore } from '../stores/taraStore';
@@ -65,7 +65,6 @@ export default function Workbench({ setPage, setDomainId, setDiagramId, projectI
 
   // AI Deduplication Modal
   const [showDeduplicateModal, setShowDeduplicateModal] = useState(false);
-  const [suggestions, setSuggestions] = useState([]);
   const [suggestionStatus, setSuggestionStatus] = useState('');
   const [originalAssets, setOriginalAssets] = useState([]);
   const [optimizedAssets, setOptimizedAssets] = useState([]);
@@ -84,7 +83,7 @@ export default function Workbench({ setPage, setDomainId, setDiagramId, projectI
   };
 
   // Start polling TARA run progress
-  const startProgressPolling = (domainId) => {
+  const startProgressPolling = useCallback((domainId) => {
     stopProgressPolling();
     progressIntervalRef.current = setInterval(async () => {
       const run = await fetchTaraProgress(domainId);
@@ -97,7 +96,7 @@ export default function Workbench({ setPage, setDomainId, setDiagramId, projectI
         }
       }
     }, 3000);
-  };
+  }, [projectId, fetchDomains, fetchProjectDetails, fetchTaraProgress]);
 
   // Initial Fetch
   useEffect(() => {
@@ -108,7 +107,7 @@ export default function Workbench({ setPage, setDomainId, setDiagramId, projectI
     return () => {
       stopProgressPolling();
     };
-  }, [projectId]);
+  }, [projectId, fetchDomains, fetchProjectDetails]);
 
   // Fetch Domain Details when Active Domain changes
   useEffect(() => {
@@ -126,7 +125,7 @@ export default function Workbench({ setPage, setDomainId, setDiagramId, projectI
     } else {
       stopProgressPolling();
     }
-  }, [activeDomain]);
+  }, [activeDomain, fetchAssets, fetchDiagrams, fetchTaraProgress, startProgressPolling]);
 
   const handleCreateDomainSubmit = async (e) => {
     e.preventDefault();
@@ -352,7 +351,6 @@ export default function Workbench({ setPage, setDomainId, setDiagramId, projectI
     };
 
     const suggs = await fetchDeduplicateSuggestions(activeDomain.id);
-    setSuggestions(suggs);
 
     const removeIds = new Set();
     suggs.forEach(s => {

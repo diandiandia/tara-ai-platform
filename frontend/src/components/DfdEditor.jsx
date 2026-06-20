@@ -1,5 +1,5 @@
 import { useI18n } from '../stores/i18nStore';
-import React, { useState, useEffect, useCallback, useRef } from 'react';
+import { useState, useEffect, useCallback, useRef } from 'react';
 import ReactFlow, { 
   MiniMap, 
   Controls, 
@@ -20,8 +20,8 @@ import { useCanvasStore } from '../stores/canvasStore';
 import { useAuthStore } from '../stores/authStore';
 import { useProjectStore } from '../stores/projectStore';
 import { 
-  ArrowLeft, Save, Sparkles, HelpCircle, AlertTriangle, 
-  Info, Cpu, ShieldAlert, WifiOff, RefreshCw, Layers, Send,
+  ArrowLeft, Save, Sparkles, 
+  Info, Cpu, ShieldAlert, WifiOff, RefreshCw, Send,
   ArrowUp, ArrowDown, ChevronsUp, ChevronsDown
 } from 'lucide-react';
 
@@ -42,9 +42,9 @@ function ParallelBezierEdge({
   data
 }) {
   const lineStyle = data?.lineStyle || 'bezier';
-  let edgePath = '';
-  let labelX = 0;
-  let labelY = 0;
+  let edgePath;
+  let labelX;
+  let labelY;
 
   if (lineStyle === 'smoothstep') {
     const borderRadius = data?.borderRadius !== undefined ? data.borderRadius : 12;
@@ -190,8 +190,8 @@ const preprocessEdges = (edgesList, nodesList = []) => {
     const dx = tX - sX;
     const dy = tY - sY;
 
-    let sourceHandle = edge.sourceHandle || 's-right';
-    let targetHandle = edge.targetHandle || 't-left';
+    let sourceHandle;
+    let targetHandle;
 
     if (Math.abs(dx) > Math.abs(dy)) {
       if (dx > 0) {
@@ -331,7 +331,7 @@ export default function DfdEditor({ setPage, diagramId }) {
     return () => {
       closeDiagram();
     };
-  }, [diagramId]);
+  }, [diagramId, user, currentDiagram, activeDomain?.id, openDiagram, closeDiagram]);
 
   useEffect(() => {
     const sanitizedNodes = storeNodes.map(node => {
@@ -371,7 +371,7 @@ export default function DfdEditor({ setPage, diagramId }) {
     const processedEdges = preprocessEdges(sanitizedEdges, sanitizedNodes);
     setNodesState(sanitizedNodes);
     setEdgesState(processedEdges);
-  }, [storeNodes, storeEdges]);
+  }, [storeNodes, storeEdges, setNodesState, setEdgesState]);
 
   // Handle Online/Offline Status (BR-17)
   useEffect(() => {
@@ -385,14 +385,14 @@ export default function DfdEditor({ setPage, diagramId }) {
       window.removeEventListener('online', handleOnline);
       window.removeEventListener('offline', handleOffline);
     };
-  }, []);
+  }, [setOfflineStatus]);
 
   // Update store when local nodes/edges change (debounced in store)
-  const syncLocalChanges = (newNodes, newEdges) => {
+  const syncLocalChanges = useCallback((newNodes, newEdges) => {
     if (isReadOnly) return;
     setNodes(newNodes);
     setEdges(newEdges);
-  };
+  }, [isReadOnly, setNodes, setEdges]);
 
   // Debounced store sync to eliminate drag latency / resistance (feedback loop)
   const debouncedSync = useCallback((newNodes, newEdges) => {
@@ -403,7 +403,7 @@ export default function DfdEditor({ setPage, diagramId }) {
     syncTimeoutRef.current = setTimeout(() => {
       syncLocalChanges(newNodes, newEdges);
     }, 200); // Wait 200ms after user stops dragging to sync to Zustand store
-  }, [isReadOnly]);
+  }, [isReadOnly, syncLocalChanges]);
 
   const onConnect = useCallback((params) => {
     if (isReadOnly) return;
@@ -417,7 +417,7 @@ export default function DfdEditor({ setPage, diagramId }) {
     const newEdges = preprocessEdges(newEdgesRaw, nodes);
     setEdgesState(newEdges);
     syncLocalChanges(nodes, newEdges);
-  }, [edges, nodes, isReadOnly]);
+  }, [edges, nodes, isReadOnly, setEdgesState, syncLocalChanges, t]);
 
   const onEdgeUpdate = useCallback((oldEdge, newConnection) => {
     if (isReadOnly) return;
@@ -431,7 +431,7 @@ export default function DfdEditor({ setPage, diagramId }) {
       }
       return updated;
     });
-  }, [nodes, isReadOnly]);
+  }, [nodes, isReadOnly, setEdgesState, syncLocalChanges]);
 
   const onNodesChangeHandler = useCallback((changes) => {
     if (isReadOnly) return;
@@ -452,7 +452,7 @@ export default function DfdEditor({ setPage, diagramId }) {
       });
       return currentNodes;
     });
-  }, [isReadOnly, debouncedSync]);
+  }, [isReadOnly, debouncedSync, onNodesChange, setNodesState, setEdgesState]);
 
   const onEdgesChangeHandler = useCallback((changes) => {
     if (isReadOnly) return;
@@ -470,7 +470,7 @@ export default function DfdEditor({ setPage, diagramId }) {
       });
       return currentNodes;
     });
-  }, [isReadOnly, debouncedSync]);
+  }, [isReadOnly, debouncedSync, onEdgesChange, setNodesState, setEdgesState]);
 
   // Click Event on Node
   const onNodeClick = useCallback((event, node) => {

@@ -1,13 +1,13 @@
 import { useI18n } from '../stores/i18nStore';
-import React, { useEffect, useState } from 'react';
+import { useEffect, useState } from 'react';
 import { useTaraStore } from '../stores/taraStore';
 import { useAuthStore } from '../stores/authStore';
 import { ArrowLeft, ShieldAlert, Save, Key, Globe, Layers, AlertCircle, CheckCircle2 } from 'lucide-react';
 
 export default function Settings({ setPage }) {
   const { t } = useI18n();
-  const { settings, fetchSettings, saveSettings, testConnection, loading, error, clearError } = useTaraStore();
-  const { user, isAdmin } = useAuthStore();
+  const { fetchSettings, saveSettings, testConnection, loading, error, clearError } = useTaraStore();
+  const { isAdmin } = useAuthStore();
 
   const [apiBaseUrl, setApiBaseUrl] = useState('');
   const [apiKey, setApiKey] = useState('');
@@ -27,7 +27,7 @@ export default function Settings({ setPage }) {
       }
     };
     loadSettings();
-  }, []);
+  }, [fetchSettings]);
 
   const handleSave = async (e) => {
     e.preventDefault();

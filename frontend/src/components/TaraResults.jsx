@@ -1,5 +1,5 @@
 import { useI18n } from '../stores/i18nStore';
-import React, { useEffect, useState } from 'react';
+import { useEffect, useState } from 'react';
 import { useTaraStore } from '../stores/taraStore';
 import { 
   ArrowLeft, CheckSquare, ShieldAlert, Edit3, 
@@ -48,7 +48,7 @@ const calculateDifficultyAndFeasibility = (tc, exp, kn, win, eq) => {
   else score += 0;
   
   // Determine feasibility Level
-  let feas = 'High';
+  let feas;
   if (score >= 25) feas = 'Very Low';
   else if (score >= 20) feas = 'Low';
   else if (score >= 14) feas = 'Medium';
@@ -77,31 +77,6 @@ const tcLabels = {
   'no_more_than_1m': '< 1m',
   'no_more_than_6m': '< 6m',
   'more_than_6m': '> 6m'
-};
-const expLabels = {
-  'layman': 'Layman',
-  'proficient': 'Proficient',
-  'expert': 'Expert',
-  'expert_multiple': 'Multi-Expert'
-};
-const knLabels = {
-  'public': 'Public',
-  'restricted': 'Restricted',
-  'confidential': 'Confidential',
-  'strictly_confidential': 'Strict-Confid'
-};
-const winLabels = {
-  'unlimited': 'Unlimited',
-  'easy': 'Easy',
-  'moderate': 'Moderate',
-  'difficult': 'Difficult'
-};
-const eqLabels = {
-  'standard': 'Standard',
-  'special': 'Specialized',
-  'specialized': 'Specialized',
-  'bespoke': 'Bespoke',
-  'bespoke_multiple': 'Multi-Bespoke'
 };
 
 const getExpLabel = (key, t) => {
@@ -647,7 +622,7 @@ const compile5StagesForAsset = (assetId, assetRows) => {
   
   // 5. Stage 5
   const reqs = [];
-  tscs.forEach((ts, idx) => {
+  tscs.forEach((ts) => {
     const row = assetRows.find(r => r.attribute === ts.attribute && r.threat_scenario === ts.threat_scenario) || assetRows[0];
     const isExempted = ['accept', 'transfer'].includes(row.risk_treatment);
     const csrList = row.csr ? row.csr.split('\n').filter(line => line.trim()) : [];
@@ -715,7 +690,7 @@ const compile5StagesForAsset = (assetId, assetRows) => {
 };
 
 export default function TaraResults({ setPage, domainId }) {
-  const { t, language } = useI18n();
+  const { t } = useI18n();
   const {
     taraResults,
     assets,
@@ -747,7 +722,9 @@ export default function TaraResults({ setPage, domainId }) {
   const itemsPerPage = 10;
 
   useEffect(() => {
-    setMatrixCurrentPage(1);
+    setTimeout(() => {
+      setMatrixCurrentPage(1);
+    }, 0);
   }, [activeTab, domainId]);
 
   // Export States
@@ -760,14 +737,14 @@ export default function TaraResults({ setPage, domainId }) {
       fetchTaraResults(domainId);
       fetchAssets(domainId);
     }
-  }, [domainId]);
+  }, [domainId, fetchAssets, fetchTaraResults]);
 
   useEffect(() => {
     if (taraResults.length > 0 && assets.length > 0) {
       const rows = buildExcelRowsFromSteps(taraResults, assets);
-      updateTaraRows(rows);
+      setTimeout(() => updateTaraRows(rows), 0);
     } else {
-      updateTaraRows([]);
+      setTimeout(() => updateTaraRows([]), 0);
     }
   }, [taraResults, assets]);
 
@@ -1034,28 +1011,7 @@ export default function TaraResults({ setPage, domainId }) {
     return asset ? `${asset.name} (${asset.asset_type})` : `${t("资产")} #${assetId}`;
   };
 
-  const getGroupedMatrix = () => {
-    const groups = {};
-    taraResults.forEach(step => {
-      if (!groups[step.asset_id]) {
-        groups[step.asset_id] = {
-          assetName: getAssetLabel(step.asset_id),
-          cso: '',
-          csrs: [],
-          exempted: false
-        };
-      }
-      if (step.stage === 'stage5') {
-        const out = step.analysis_result.final_output || {};
-        groups[step.asset_id].cso = out.cso || t('未定义');
-        groups[step.asset_id].csrs = out.csr || [];
-        groups[step.asset_id].exempted = out.exempted || false;
-      }
-    });
-    return Object.values(groups);
-  };
 
-  const groupedMatrix = getGroupedMatrix();
 
   // Pagination helper parameters
   const totalPages = Math.ceil(taraRows.length / itemsPerPage);

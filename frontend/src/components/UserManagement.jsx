@@ -1,5 +1,5 @@
 import { useI18n } from '../stores/i18nStore';
-import React, { useEffect, useState } from 'react';
+import { useEffect, useState } from 'react';
 import { useAuthStore } from '../stores/authStore';
 import { UserPlus, Trash2, Key, Users, ShieldAlert, CheckCircle2, AlertCircle } from 'lucide-react';
 
@@ -29,7 +29,7 @@ export default function UserManagement() {
   useEffect(() => {
     fetchUsers();
     return () => clearError();
-  }, []);
+  }, [fetchUsers, clearError]);
 
   const handleCreateUser = async (e) => {
     e.preventDefault();

@@ -1,9 +1,8 @@
 import { useI18n } from '../stores/i18nStore';
-import React from 'react';
 import { useAuthStore } from '../stores/authStore';
 import { useProjectStore } from '../stores/projectStore';
 import { useCanvasStore } from '../stores/canvasStore';
-import { LogOut, Settings, Layout, Folder, ShieldCheck, Users, User as UserIcon, Globe } from 'lucide-react';
+import { LogOut, Settings, Folder, ShieldCheck, Users, User as UserIcon, Globe } from 'lucide-react';
 
 export default function Navbar({ setPage }) {
   const { t, language, setLanguage } = useI18n();

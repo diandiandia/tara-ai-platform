@@ -1,5 +1,5 @@
 import { useI18n } from './stores/i18nStore';
-import React, { useState, useEffect } from 'react';
+import { useState, useEffect } from 'react';
 import { useAuthStore } from './stores/authStore';
 import Login from './components/Login';
 import Navbar from './components/Navbar';
@@ -25,7 +25,7 @@ const isTokenExpired = (token) => {
       return true;
     }
     return false;
-  } catch (e) {
+  } catch {
     return true;
   }
 };
@@ -109,15 +109,15 @@ export default function App() {
     if (user) {
       if (user.role === 'admin') {
         if (page !== 'users' && page !== 'settings') {
-          setPage('users');
+          setTimeout(() => setPage('users'), 0);
         }
       } else {
         if (page === 'users') {
-          setPage('projects');
+          setTimeout(() => setPage('projects'), 0);
         }
       }
     }
-  }, [user]);
+  }, [user, page]);
 
   // If not authenticated, force login screen
   if (!token || !user) {

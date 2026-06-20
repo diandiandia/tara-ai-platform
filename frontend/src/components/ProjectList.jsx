@@ -1,5 +1,5 @@
 import { useI18n } from '../stores/i18nStore';
-import React, { useEffect, useState, useRef } from 'react';
+import { useEffect, useState, useRef } from 'react';
 import { useProjectStore } from '../stores/projectStore';
 import { useAuthStore } from '../stores/authStore';
 import { Plus, Search, Folder, Calendar, Archive, Trash2, ArrowRight, ShieldAlert } from 'lucide-react';
@@ -32,7 +32,7 @@ export default function ProjectList({ setPage, setProjectId }) {
   // Fetch initial project list
   useEffect(() => {
     fetchProjects();
-  }, []);
+  }, [fetchProjects]);
 
   // Handle Search Input with 300ms debounce (BR-4.2.1)
   const handleSearchChange = (e) => {
@@ -124,7 +124,7 @@ export default function ProjectList({ setPage, setProjectId }) {
     try {
       const date = new Date(dateString);
       return date.toLocaleDateString('zh-CN', { year: 'numeric', month: '2-digit', day: '2-digit' });
-    } catch (e) {
+    } catch {
       return dateString;
     }
   };
