@@ -431,22 +431,61 @@ const buildExcelRowsFromSteps = (steps, assetsList) => {
             }
           }
           
-          const apDetail = ts.attack_paths?.[0] || {};
-          const attackPathVal = apDetail.attack_path || '';
-          const tc = apDetail.time_consuming || 'no_more_than_1w';
-          const exp = apDetail.expertise || 'proficient';
-          const kn = apDetail.knowledge_about_toe || 'restricted';
-          const win = apDetail.window_of_opportunity || 'easy';
-          const eq = apDetail.equipment || 'standard';
-          const diff = apDetail.difficulty !== undefined ? apDetail.difficulty : 1;
+          // Merge requirements into single multiline text fields (with index prefix if multiple)
+          const csrIdVal = matchingReqs.map((r, rIdx) => {
+            const val = r.cybersecurity_requirement_id || 'N/A';
+            return matchingReqs.length > 1 ? `(${rIdx + 1}) ${val}` : val;
+          }).join('\n');
+          const csrTextVal = matchingReqs.map((r, rIdx) => {
+            const val = r.cybersecurity_requirement || '';
+            return matchingReqs.length > 1 && val ? `(${rIdx + 1}) ${val}` : val;
+          }).join('\n');
+          const controlIdVal = matchingReqs.map((r, rIdx) => {
+            const val = r.cybersecurity_control_id || 'N/A';
+            return matchingReqs.length > 1 ? `(${rIdx + 1}) ${val}` : val;
+          }).join('\n');
+          const controlTextVal = matchingReqs.map((r, rIdx) => {
+            const val = r.cybersecurity_control || '';
+            return matchingReqs.length > 1 && val ? `(${rIdx + 1}) ${val}` : val;
+          }).join('\n');
           
+          const anyAllocated = matchingReqs.some(r => {
+            const alloc = String(r.allocated_to_device || '').toLowerCase().trim();
+            return alloc === 'yes' || alloc === 'true';
+          });
+          const allocatedToDeviceVal = anyAllocated ? 'Yes' : 'No';
+
+          // Get attack paths
+          let attackPaths = ts.attack_paths || [];
+          if (attackPaths.length === 0) {
+            attackPaths = [{
+              attack_path: '',
+              time_consuming: 'no_more_than_1w',
+              expertise: 'proficient',
+              knowledge_about_toe: 'restricted',
+              window_of_opportunity: 'easy',
+              equipment: 'standard',
+              difficulty: 1
+            }];
+          }
+
           const afVal = normalizeFeas(ts.final_feasibility || 'Medium');
           const cafVal = normalizeFeas(rd.caf_level || afVal);
           const calculatedRisk = calculateRiskValue(ds.overall_impact || 0, cafVal);
           
-          matchingReqs.forEach((req, reqIdx) => {
+          attackPaths.forEach((apDetail, apIdx) => {
+            const attackPathVal = apDetail.attack_path || '';
+            const tc = apDetail.time_consuming || 'no_more_than_1w';
+            const exp = apDetail.expertise || 'proficient';
+            const kn = apDetail.knowledge_about_toe || 'restricted';
+            const win = apDetail.window_of_opportunity || 'easy';
+            const eq = apDetail.equipment || 'standard';
+            const diff = apDetail.difficulty !== undefined ? apDetail.difficulty : 1;
+            
+            const rowFeas = normalizeFeas(apDetail.feasibility || apDetail.final_feasibility || afVal);
+            
             rows.push({
-              key: `${asset.id}-${attr}-${ds.damage_scenario_sn}-${ts.threat_id}-${req.cybersecurity_requirement_id || reqIdx}`,
+              key: `${asset.id}-${attr}-${ds.damage_scenario_sn}-${ts.threat_id}-${apIdx}`,
               asset_id: asset.id,
               asset_name: asset.name,
               attribute: attr,
@@ -456,6 +495,7 @@ const buildExcelRowsFromSteps = (steps, assetsList) => {
               operational: typeof ds.impact_rating?.operational === 'number' ? ['Negligible', 'Moderate', 'Major', 'Severe'][ds.impact_rating?.operational] || 'Negligible' : ds.impact_rating?.operational || 'Negligible',
               privacy: typeof ds.impact_rating?.privacy === 'number' ? ['Negligible', 'Moderate', 'Major', 'Severe'][ds.impact_rating?.privacy] || 'Negligible' : ds.impact_rating?.privacy || 'Negligible',
               overall_impact: ds.overall_impact || 0,
+              threat_id: ts.threat_id,
               threat_scenario: ts.threat_scenario || '',
               attack_path: attackPathVal || '',
               time_consuming: tc,
@@ -464,7 +504,7 @@ const buildExcelRowsFromSteps = (steps, assetsList) => {
               window_of_opportunity: win,
               equipment: eq,
               difficulty: diff,
-              final_feasibility: afVal,
+              final_feasibility: rowFeas,
               caf_level: cafVal,
               cafOverridden: cafVal !== afVal,
               risk_value: calculatedRisk,
@@ -473,13 +513,13 @@ const buildExcelRowsFromSteps = (steps, assetsList) => {
               // CSO, Claims, Control, Device, CSR
               cybersecurity_claim_id: rd.cybersecurity_claim_id || (['accept', 'transfer'].includes((rd.risk_treatment || '').toLowerCase()) ? `CLM_${attr}_${ts.threat_id}` : 'N/A'),
               cybersecurity_claim: rd.cybersecurity_claim || '',
-              cso_id: rd.cybersecurity_goal_id || req.cybersecurity_control_id || (rd.risk_treatment === 'mitigate' ? `CSO_${attr}_${ts.threat_id}` : 'N/A'),
-              cso: rd.cybersecurity_goal || req.cybersecurity_control || '',
-              cybersecurity_control_id: req.cybersecurity_control_id || (req.cybersecurity_control && req.cybersecurity_control !== 'N/A' ? `CSO_${attr}_${ts.threat_id}` : 'N/A'),
-              cybersecurity_control: req.cybersecurity_control || '',
-              allocated_to_device: req.allocated_to_device || 'No',
-              cybersecurity_requirement_id: req.cybersecurity_requirement_id || (req.cybersecurity_requirement && req.cybersecurity_requirement !== 'N/A' ? `CSR_${attr}_${ts.threat_id}_1` : 'N/A'),
-              csr: req.cybersecurity_requirement || '',
+              cso_id: rd.cybersecurity_goal_id || (rd.risk_treatment === 'mitigate' ? `CSO_${attr}_${ts.threat_id}` : 'N/A'),
+              cso: rd.cybersecurity_goal || '',
+              cybersecurity_control_id: controlIdVal || (controlTextVal && controlTextVal !== 'N/A' ? `CSO_${attr}_${ts.threat_id}` : 'N/A'),
+              cybersecurity_control: controlTextVal || '',
+              allocated_to_device: allocatedToDeviceVal,
+              cybersecurity_requirement_id: csrIdVal || (csrTextVal && csrTextVal !== 'N/A' ? `CSR_${attr}_${ts.threat_id}_1` : 'N/A'),
+              csr: csrTextVal,
             });
           });
         });
@@ -517,7 +557,7 @@ const compile5StagesForAsset = (assetId, assetRows) => {
       processedAttrs.add(attrKey);
       dscs.push({
         attribute: row.attribute,
-        damage_scenario_sn: `DS_${row.attribute}_${dscs.length + 1}`,
+        damage_scenario_sn: row.damage_scenario_sn || `DS_${row.attribute}_${dscs.length + 1}`,
         damage_scenario: row.damage_scenario || '手工定义损害场景',
         impact_rating: {
           safety: row.safety,
@@ -553,38 +593,55 @@ const compile5StagesForAsset = (assetId, assetRows) => {
   
   // 3. Stage 3
   const tscs = [];
-  const processedThreats = new Set();
-  
+  const threatMap = new Map();
   assetRows.forEach((row) => {
     const threatKey = `${row.attribute}-${row.threat_scenario}`;
-    if (!processedThreats.has(threatKey)) {
-      processedThreats.add(threatKey);
-      
-      const dsObj = dscs.find(d => d.attribute === row.attribute) || {};
-      const dsSn = dsObj.damage_scenario_sn || `DS_${row.attribute}_1`;
-      
-      tscs.push({
-        attribute: row.attribute,
-        damage_scenario_sn: dsSn,
-        threat_id: `TS_${row.attribute}_${tscs.length + 1}`,
-        threat_scenario: row.threat_scenario || '手工定义威胁场景',
-        attack_paths: [
-          {
-            path_id: `P_${row.attribute}_${tscs.length + 1}`,
-            attack_path: row.attack_path || '手工定义攻击路径',
-            time_consuming: row.time_consuming || 'no_more_than_1w',
-            expertise: row.expertise || 'proficient',
-            knowledge_about_toe: row.knowledge_about_toe || 'restricted',
-            window_of_opportunity: row.window_of_opportunity || 'easy',
-            equipment: row.equipment || 'standard',
-            difficulty: parseInt(row.difficulty) || 1,
-            feasibility: row.final_feasibility
-          }
-        ],
-        final_feasibility: row.final_feasibility
-      });
+    if (!threatMap.has(threatKey)) {
+      threatMap.set(threatKey, []);
     }
+    threatMap.get(threatKey).push(row);
   });
+  
+  let tIndex = 1;
+  for (const [threatKey, rowsForThreat] of threatMap.entries()) {
+    const firstRow = rowsForThreat[0];
+    const dsObj = dscs.find(d => d.attribute === firstRow.attribute && d.damage_scenario === firstRow.damage_scenario) || dscs.find(d => d.attribute === firstRow.attribute) || {};
+    const dsSn = dsObj.damage_scenario_sn || `DS_${firstRow.attribute}_1`;
+    
+    const existingId = firstRow.threat_id;
+    const threatId = (existingId && existingId.startsWith('TS_')) ? existingId : `TS_${firstRow.attribute}_${tIndex}`;
+    tIndex++;
+    
+    const paths = rowsForThreat.map((row, apIdx) => ({
+      path_id: `P_${row.attribute}_${threatId}_${apIdx + 1}`,
+      attack_path: row.attack_path || '手工定义攻击路径',
+      time_consuming: row.time_consuming || 'no_more_than_1w',
+      expertise: row.expertise || 'proficient',
+      knowledge_about_toe: row.knowledge_about_toe || 'restricted',
+      window_of_opportunity: row.window_of_opportunity || 'easy',
+      equipment: row.equipment || 'standard',
+      difficulty: parseInt(row.difficulty) || 1,
+      feasibility: row.final_feasibility
+    }));
+    
+    const feasibilityOrder = { 'Very Low': 1, 'Low': 2, 'Medium': 3, 'High': 4, 'Very High': 5 };
+    let maxFeas = 'Very Low';
+    paths.forEach(p => {
+      const curF = normalizeFeas(p.feasibility || 'Medium');
+      if ((feasibilityOrder[curF] || 1) > (feasibilityOrder[maxFeas] || 1)) {
+        maxFeas = curF;
+      }
+    });
+    
+    tscs.push({
+      attribute: firstRow.attribute,
+      damage_scenario_sn: dsSn,
+      threat_id: threatId,
+      threat_scenario: firstRow.threat_scenario || '手工定义威胁场景',
+      attack_paths: paths,
+      final_feasibility: maxFeas
+    });
+  }
   
   const s3Output = {
     threat_scenarios: tscs,
@@ -625,7 +682,12 @@ const compile5StagesForAsset = (assetId, assetRows) => {
   tscs.forEach((ts) => {
     const row = assetRows.find(r => r.attribute === ts.attribute && r.threat_scenario === ts.threat_scenario) || assetRows[0];
     const isExempted = ['accept', 'transfer'].includes(row.risk_treatment);
-    const csrList = row.csr ? row.csr.split('\n').filter(line => line.trim()) : [];
+    
+    // We clean prefix bullet marks like (1), (2) from requirements and split by line
+    const csrList = row.csr ? row.csr.split('\n').map(line => line.replace(/^\(\d+\)\s*/, '').trim()).filter(Boolean) : [];
+    const ctrlIdLines = row.cybersecurity_control_id ? row.cybersecurity_control_id.split('\n').map(line => line.replace(/^\(\d+\)\s*/, '').trim()).filter(Boolean) : [];
+    const ctrlLines = row.cybersecurity_control ? row.cybersecurity_control.split('\n').map(line => line.replace(/^\(\d+\)\s*/, '').trim()).filter(Boolean) : [];
+    const reqIdLines = row.cybersecurity_requirement_id ? row.cybersecurity_requirement_id.split('\n').map(line => line.replace(/^\(\d+\)\s*/, '').trim()).filter(Boolean) : [];
     
     if (isExempted) {
       reqs.push({
@@ -639,17 +701,14 @@ const compile5StagesForAsset = (assetId, assetRows) => {
     } else {
       if (csrList.length > 0) {
         csrList.forEach((csrText, cIdx) => {
-          let reqIdVal = row.cybersecurity_requirement_id || 'N/A';
-          if (csrList.length > 1) {
-            const idLines = reqIdVal.split('\n');
-            const matchLine = idLines[cIdx] || '';
-            const match = matchLine.match(/\(\d+\)\s*(CSR-\d+)/);
-            reqIdVal = match ? match[1] : reqIdVal.replace(/^\(\d+\)\s*/, '');
-          }
+          const reqIdVal = reqIdLines[cIdx] || reqIdLines[0] || 'N/A';
+          const ctrlIdVal = ctrlIdLines[cIdx] || ctrlIdLines[0] || 'N/A';
+          const ctrlVal = ctrlLines[cIdx] || ctrlLines[0] || '实施安全控制手段';
+          
           reqs.push({
             threat_id: ts.threat_id,
-            cybersecurity_control_id: row.cybersecurity_control_id || 'N/A',
-            cybersecurity_control: row.cybersecurity_control || '实施安全控制手段',
+            cybersecurity_control_id: ctrlIdVal,
+            cybersecurity_control: ctrlVal,
             allocated_to_device: row.allocated_to_device || 'Yes',
             cybersecurity_requirement_id: reqIdVal,
             cybersecurity_requirement: csrText
