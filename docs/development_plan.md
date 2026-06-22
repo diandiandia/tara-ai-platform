@@ -1,6 +1,6 @@
 # TARA AI 平台开发计划书
 
-本开发计划书基于系统设计文档 [system_design.md](file:///home/ubuntu/tara-ai-platform/docs/system_design.md) 制定，将开发流程划分为 6 个主要阶段。每个阶段包含具体的开发任务、依赖项和验收标准，以确保所有核心业务规则（BR-03 至 BR-78）的 100% 落地。
+本开发计划书基于系统设计文档 [system_design.md](./system_design.md) 制定，将开发流程划分为 6 个主要阶段。每个阶段包含具体的开发任务、依赖项和验收标准，以确保所有核心业务规则（BR-03 至 BR-78）的 100% 落地。
 
 ---
 

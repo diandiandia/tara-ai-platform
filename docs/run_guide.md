@@ -29,7 +29,7 @@ redis-cli ping  # 应返回 PONG
 ### Step 2.2: 初始化 Python 虚拟环境与依赖
 进入 `backend` 文件夹，安装依赖并执行数据库迁移：
 ```bash
-cd /home/ubuntu/tara-ai-platform/backend
+cd backend  # 项目根目录下执行
 
 # 1. 创建虚拟环境并激活
 python3 -m venv venv
@@ -60,7 +60,7 @@ python -m uvicorn app.main:app --host 0.0.0.0 --port 8000
 ### Step 2.5: 启动 Celery 异步跑批任务进程
 打开另一个终端，激活虚拟环境并启动异步 Worker：
 ```bash
-cd /home/ubuntu/tara-ai-platform/backend
+cd backend  # 项目根目录下执行
 source venv/bin/activate
 celery -A app.core.celery_app worker --loglevel=info
 ```
@@ -71,7 +71,7 @@ celery -A app.core.celery_app worker --loglevel=info
 
 进入 `frontend` 文件夹，执行依赖安装并启动 Vite 热更新服务器：
 ```bash
-cd /home/ubuntu/tara-ai-platform/frontend
+cd frontend  # 项目根目录下执行
 
 # 1. 安装 npm 包
 npm install
@@ -125,7 +125,7 @@ npm run dev -- --host 0.0.0.0 --port 3000
 如果您希望在全新的物理机或虚拟机中快速启动，或者在独立 Docker 容器内测试，我们已为您编写好了全套 Docker 配置文件（`Dockerfile` 及 `docker-compose.yml`）。
 
 ### Step 5.1: 启动容器服务
-在项目根目录 `/home/ubuntu/tara-ai-platform` 下，执行以下命令构建并启动全栈镜像：
+在项目根目录下，执行以下命令构建并启动全栈镜像：
 ```bash
 # 构建镜像并在后台拉起所有服务（Redis, Backend, Celery, Frontend）
 docker compose up -d --build
