@@ -299,7 +299,7 @@ sequenceDiagram
         ```json
         {
           "id": "string",
-          "type": "entity | process | storage | boundary",
+          "type": "entity | process | storage | interface | boundary",
           "position": { "x": "number", "y": "number" },
           "data": {
             "name": "string (名称, 必填)",
@@ -376,25 +376,30 @@ flowchart TD
     Lock --> Celery[触发 Celery 异步任务]
     
     subgraph Celery_Run [Celery 异步跑批进程]
-        GetAssets[获取所有 confirmed 资产] --> LoopStart{遍历每个资产}
-        LoopStart --> Stage1[阶段①: 安全属性分析]
-        Stage1 --> Stage2[阶段②: 损害场景与影响评估]
-        Stage2 --> Stage3[阶段③: 威胁场景与可行性评估]
-        Stage3 --> Stage4[阶段④: 风险处理决策]
-        Stage4 --> Stage5[阶段⑤: CSR/CSO 生成]
-        
-        subgraph Stage_Process [各阶段单步计算]
-            StepStart[计算输入特征 input_hash] --> HashCheck{该步骤已完成且 Hash 匹配?}
-            HashCheck -- 是 --> Skip[跳过 AI 调用, 继承旧结果]
-            HashCheck -- 否 --> CallLLM[调用大模型接口并结构化解析]
-            CallLLM --> SaveDB[写入 tara_steps 表, 状态设为 completed]
+        GetAssets[获取所有 confirmed 资产] --> Pool[ThreadPoolExecutor 多资产并发派发]
+        Pool --> AssetThread[每个资产一个独立线程<br/>独立 DB Session]
+
+        subgraph Asset_Pipeline [单资产内部 5 阶段串行]
+            AssetThread --> Stage1[阶段①: 安全属性分析]
+            Stage1 --> Stage2[阶段②: 损害场景与影响评估]
+            Stage2 --> Stage3[阶段③: 威胁场景与可行性评估]
+            Stage3 --> Stage4[阶段④: 风险处理决策]
+            Stage4 --> Stage5[阶段⑤: CSR/CSO 生成]
+
+            subgraph Stage_Process [各阶段单步计算]
+                StepStart[计算输入特征 input_hash] --> HashCheck{该步骤已完成且 Hash 匹配?}
+                HashCheck -- 是 --> Skip[跳过 AI 调用, 继承旧结果]
+                HashCheck -- 否 --> CallLLM[调用大模型接口并结构化解析]
+                CallLLM --> SaveDB[加写锁 db_write_lock 写入 tara_steps]
+            end
         end
     end
-    
-    Stage5 --> LoopEnd{所有资产分析完成?}
-    LoopEnd -- 否 --> LoopStart
+
+    Stage5 --> LoopEnd{所有资产线程完成?}
     LoopEnd -- 是 --> Unlock[更新子域控状态为 completed, 项目状态更新]
 ```
+
+> **并发模型说明**：为缩短大批量资产的整体跑批时长，引擎在 Celery 任务内部使用 `ThreadPoolExecutor` 对多个 confirmed 资产**并发处理**（每个资产一个独立线程并持有独立的 DB Session）；单个资产内部的 5 个阶段仍**严格串行**以满足阶段间的依赖与 `input_hash` 链路。由于 SQLite 为单写库，所有数据库写入通过全局排他锁 `db_write_lock` 串行化，避免 “database is locked” 冲突。中途取消（`cancelled`）由各线程在每阶段开始前轮询 `tara_runs.status` 实现协作式终止。
 
 *   **输入特征哈希 (`input_hash`) 设计**：
     为了实现**增量分析与断点续跑**，每次执行某步骤前，计算其 `input_hash`。
@@ -422,7 +427,8 @@ flowchart TD
 *   **人工修改继承**：
     *   当发生“重新分析”时，在计算增量哈希时：如果系统检测到该资产该步骤上一次已经被“人工修改”（`is_human_modified == true`），且该资产的**基础属性及前置依赖步骤结论都没有发生改变**，那么在重跑时将直接**继承**此人工确认结论，避免用户的历史编辑工作被覆盖。
 *   **风险决策联动**：
-    *   在阶段 ④ (风险处理决策) 中，若决策（无论 AI 做出还是用户人工修改）被确定为 `"accept"` (接受风险) 或 `"transfer"` (转移风险)，则在执行第 ⑤ 阶段生成网络安全要求 (CSR) 时，引擎会解析前置阶段的决策。
+    *   风险处置策略统一采用 **ISO 21434 标准四值**：`Avoid` (规避)、`Reduce` (缓解)、`Share` (转移/共享)、`Retain` (接受/保留)。
+    *   在阶段 ④ (风险处理决策) 中，引擎在执行第 ⑤ 阶段时解析前置阶段的决策：**只有 `Reduce` (缓解) 才生成网络安全目标 (CSO) 与网络安全要求 (CSR)**；其余 `Avoid` / `Share` / `Retain`（即“非 Reduce”）均免除 CSR 生成（其中 `Share`/`Retain` 记录 Cybersecurity Claim，`Avoid` 记录 item_change 设计变更理由）。
     *   如果对应的威胁场景被决策免除，第 ⑤ 阶段将**跳过**为该威胁场景生成具体的 CSR 控制要求，实现了决策自动联动。
 *   **多路径聚合与降级**：
     *   一个威胁场景可能有多条攻击路径。攻击可行性等级通常有：`Very High`, `High`, `Medium`, `Low`, `Very Low`。
@@ -568,7 +574,7 @@ flowchart TD
 2.  **API 鉴权**：采用 JWT (JSON Web Tokens) 作为无状态身份验证机制，Token 有效期 2 小时，敏感操作（如系统配置、备份恢复、归档解锁）限定 `admin` 角色。
 3.  **防止超卖/过载**：大模型调用接口通过 Celery Worker 的 `concurrency` 进行流控限制，避免过载导致模型服务限流（Rate Limit Exceeded）。
 4.  **会话超时自动注销与主动拦截 (BR-79)**：
-    *   **5秒定期会话探针**：在 [App.jsx](file:///home/ubuntu/tara-ai-platform/frontend/src/App.jsx) 的 React 根上下文中设置了一个每 5 秒触发的 `setInterval` 定时器。该定时器会自动读取存储在 Zustand `authStore` 中的 JWT 令牌，提取其 `exp` (过期时间) 字段与当前本地时间戳进行对比。一旦检测到超时，将立即清除本地缓存并注销会话。
+    *   **5秒定期会话探针**：在 [App.jsx](../frontend/src/App.jsx) 的 React 根上下文中设置了一个每 5 秒触发的 `setInterval` 定时器。该定时器会自动读取存储在 Zustand `authStore` 中的 JWT 令牌，提取其 `exp` (过期时间) 字段与当前本地时间戳进行对比。一旦检测到超时，将立即清除本地缓存并注销会话。
     *   **全局 Axios 请求拦截器**：在所有 API 请求发起前执行，拦截器会预先校验当前 JWT Token 是否已过期。如果过期，则主动阻断（拒绝 Promise 投递），不发送任何网络请求至后端，直接调用 `logout()` 强制重定向至 `/login`，避免无谓的无效请求发送。
     *   **全局 Axios 响应拦截器**：拦截并监听所有 API 响应。若捕获到任何 HTTP 401 状态（表示 Token 校验失败或已过期），将自动清除前端认证状态，弹出提示，并将页面强行引导重定向至登录页。通过这一设计，完全杜绝了会话超时后用户仍可对页面中数据进行任何编辑、保存或删除动作的安全风险。
 

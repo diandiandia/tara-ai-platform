@@ -120,14 +120,29 @@ const getEqLabel = (key, t) => {
   return mapping[key] || key;
 };
 
+// 归一化风险处置为 ISO 21434 标准值 (Avoid/Reduce/Share/Retain)，兼容历史/大小写输入
+const normalizeTreatment = (val) => {
+  const key = String(val || '').toLowerCase().replace(/\s+/g, '');
+  const map = {
+    reduce: 'Reduce', mitigate: 'Reduce',          // 缓解
+    retain: 'Retain', accept: 'Retain',            // 接受
+    share: 'Share', transfer: 'Share',             // 转移
+    avoid: 'Avoid',                                // 规避
+  };
+  return map[key] || 'Reduce';
+};
+
+// 是否免除 CSR：与后端「无 Reduce 即免除」逻辑等价（Avoid/Share/Retain 均免除）
+const isTreatmentExempted = (val) => normalizeTreatment(val) !== 'Reduce';
+
 const getRiskTreatmentLabel = (value, t) => {
   const mapping = {
-    'mitigate': t('缓解风险'),
-    'accept': t('接受风险'),
-    'transfer': t('转移风险'),
-    'avoid': t('规避风险')
+    'Reduce': t('缓解风险'),
+    'Retain': t('接受风险'),
+    'Share': t('转移风险'),
+    'Avoid': t('规避风险')
   };
-  return mapping[value] || value;
+  return mapping[normalizeTreatment(value)] || value;
 };
 
 const getImpactLabel = (value, t) => {
@@ -300,7 +315,7 @@ const computeContentHashId = (prefix, text) => {
 const computeSequentialIds = (rows) => {
   return rows.map(row => {
     const newRow = { ...row };
-    const isExempted = ['accept', 'transfer'].includes((row.risk_treatment || '').toLowerCase());
+    const isExempted = isTreatmentExempted(row.risk_treatment);
 
     if (isExempted) {
       const claim = String(row.cybersecurity_claim || '').trim();
@@ -405,7 +420,7 @@ const buildExcelRowsFromSteps = (steps, assetsList) => {
           if (!rd) {
             rd = {
               risk_value: s4.risk_rating || 1,
-              risk_treatment: s4.risk_decision || 'mitigate',
+              risk_treatment: normalizeTreatment(s4.risk_decision),
               justification: s4.justification || '',
               caf_level: normalizeFeas(ts.final_feasibility || 'Medium'),
               cybersecurity_claim: s4.cybersecurity_claim || '',
@@ -508,12 +523,12 @@ const buildExcelRowsFromSteps = (steps, assetsList) => {
               caf_level: cafVal,
               cafOverridden: cafVal !== afVal,
               risk_value: calculatedRisk,
-              risk_treatment: rd.risk_treatment || rd.risk_decision || 'mitigate',
-              
+              risk_treatment: normalizeTreatment(rd.risk_treatment || rd.risk_decision),
+
               // CSO, Claims, Control, Device, CSR
-              cybersecurity_claim_id: rd.cybersecurity_claim_id || (['accept', 'transfer'].includes((rd.risk_treatment || '').toLowerCase()) ? `CLM_${attr}_${ts.threat_id}` : 'N/A'),
+              cybersecurity_claim_id: rd.cybersecurity_claim_id || (isTreatmentExempted(rd.risk_treatment) ? `CLM_${attr}_${ts.threat_id}` : 'N/A'),
               cybersecurity_claim: rd.cybersecurity_claim || '',
-              cso_id: rd.cybersecurity_goal_id || (rd.risk_treatment === 'mitigate' ? `CSO_${attr}_${ts.threat_id}` : 'N/A'),
+              cso_id: rd.cybersecurity_goal_id || (normalizeTreatment(rd.risk_treatment) === 'Reduce' ? `CSO_${attr}_${ts.threat_id}` : 'N/A'),
               cso: rd.cybersecurity_goal || '',
               cybersecurity_control_id: controlIdVal || (controlTextVal && controlTextVal !== 'N/A' ? `CSO_${attr}_${ts.threat_id}` : 'N/A'),
               cybersecurity_control: controlTextVal || '',
@@ -654,12 +669,12 @@ const compile5StagesForAsset = (assetId, assetRows) => {
   const rdecs = [];
   tscs.forEach((ts) => {
     const row = assetRows.find(r => r.attribute === ts.attribute && r.threat_scenario === ts.threat_scenario) || assetRows[0];
-    const isExempted = ['accept', 'transfer'].includes(row.risk_treatment);
+    const isExempted = isTreatmentExempted(row.risk_treatment);
     rdecs.push({
       threat_id: ts.threat_id,
       attribute: ts.attribute,
       risk_value: parseInt(row.risk_value) || 1,
-      risk_treatment: row.risk_treatment || 'mitigate',
+      risk_treatment: normalizeTreatment(row.risk_treatment),
       caf_level: row.caf_level || ts.final_feasibility || 'Medium',
       justification: '手工录入决策',
       cybersecurity_claim_id: isExempted ? (row.cybersecurity_claim_id || 'N/A') : 'N/A',
@@ -673,7 +688,7 @@ const compile5StagesForAsset = (assetId, assetRows) => {
   const s4Output = {
     risk_decisions: rdecs,
     risk_rating: max_risk,
-    risk_decision: rdecs[0]?.risk_treatment || 'mitigate',
+    risk_decision: rdecs[0]?.risk_treatment || 'Reduce',
     justification: '手工录入风险决策'
   };
   
@@ -681,7 +696,7 @@ const compile5StagesForAsset = (assetId, assetRows) => {
   const reqs = [];
   tscs.forEach((ts) => {
     const row = assetRows.find(r => r.attribute === ts.attribute && r.threat_scenario === ts.threat_scenario) || assetRows[0];
-    const isExempted = ['accept', 'transfer'].includes(row.risk_treatment);
+    const isExempted = isTreatmentExempted(row.risk_treatment);
     
     // We clean prefix bullet marks like (1), (2) from requirements and split by line
     const csrList = row.csr ? row.csr.split('\n').map(line => line.replace(/^\(\d+\)\s*/, '').trim()).filter(Boolean) : [];
@@ -729,7 +744,7 @@ const compile5StagesForAsset = (assetId, assetRows) => {
   
   const cso_val = rdecs.find(r => r.cybersecurity_goal)?.cybersecurity_goal || '手工定义安全目标';
   const csr_list_val = reqs.map(r => r.cybersecurity_requirement).filter(c => c && c !== 'N/A');
-  const is_exempt = rdecs.every(r => ['accept', 'transfer'].includes(r.risk_treatment));
+  const is_exempt = rdecs.every(r => isTreatmentExempted(r.risk_treatment));
   
   const s5Output = {
     requirements: reqs,
@@ -839,7 +854,7 @@ export default function TaraResults({ setPage, domainId }) {
       caf_level: 'Medium',
       cafOverridden: false,
       risk_value: 1, // calculated
-      risk_treatment: 'mitigate',
+      risk_treatment: 'Reduce',
       cybersecurity_claim_id: 'N/A',
       cybersecurity_claim: '',
       cso_id: `CSO_Integrity_${Date.now()}`,
@@ -1601,10 +1616,10 @@ export default function TaraResults({ setPage, domainId }) {
                             className="input-field"
                             style={{ width: '100%', fontSize: '11px', padding: '4px' }}
                           >
-                            <option value="mitigate">{t('缓解风险')}</option>
-                            <option value="accept">{t('接受风险')}</option>
-                            <option value="transfer">{t('转移风险')}</option>
-                            <option value="avoid">{t('规避风险')}</option>
+                            <option value="Reduce">{t('缓解风险')}</option>
+                            <option value="Retain">{t('接受风险')}</option>
+                            <option value="Share">{t('转移风险')}</option>
+                            <option value="Avoid">{t('规避风险')}</option>
                           </select>
                         ) : (
                           <span>{getRiskTreatmentLabel(row.risk_treatment, t)}</span>
