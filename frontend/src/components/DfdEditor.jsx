@@ -1,5 +1,5 @@
 import { useI18n } from '../stores/i18nStore';
-import { useState, useEffect, useCallback, useRef } from 'react';
+import { useState, useEffect, useCallback, useRef, useMemo } from 'react';
 import ReactFlow, { 
   MiniMap, 
   Controls, 
@@ -147,7 +147,7 @@ function ParallelBezierEdge({
   );
 }
 
-const edgeTypes = {
+const EDGE_TYPES_MAP = {
   parallel: ParallelBezierEdge,
   default: ParallelBezierEdge
 };
@@ -270,7 +270,7 @@ const preprocessEdges = (edgesList, nodesList = []) => {
   return processed;
 };
 
-const nodeTypes = {
+const NODE_TYPES_MAP = {
   entity: CustomDfdNode,
   process: CustomDfdNode,
   storage: CustomDfdNode,
@@ -279,6 +279,9 @@ const nodeTypes = {
 };
 
 export default function DfdEditor({ setPage, diagramId }) {
+  // 用 useMemo 提供稳定引用，消除 React Flow v11 + StrictMode 下的 #002 误报
+  const nodeTypes = useMemo(() => NODE_TYPES_MAP, []);
+  const edgeTypes = useMemo(() => EDGE_TYPES_MAP, []);
   const { t, language } = useI18n();
   const { user } = useAuthStore();
   const { activeDomain } = useProjectStore();
