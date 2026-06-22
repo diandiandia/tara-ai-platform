@@ -94,3 +94,4 @@ Thumbs.db
 *.swp
 
 .codegraph/
+.claude/
