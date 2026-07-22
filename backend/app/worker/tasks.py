@@ -638,6 +638,7 @@ class SummarizedRequirementSchema(BaseModel):
     sub_title: str = Field(description="中英文对照的要求副标题，格式：中文 / English")
     security_domain: str = Field(description="中英文对照的安全领域，例如：安全通信 / Secure Transmission")
     cybersecurity_requirement: str = Field(description="中英文对照的网络安全要求内容，格式：中文 / English")
+    source_requirement_ids: List[str] = Field(default=[], description="该归纳/去重后的网络安全需求所涵盖的原始网络安全要求编号列表 (即前面 requirements 中的 cybersecurity_requirement_id，例如 ['CSR-001', 'CSR-002'])，以体现严格的追溯关系")
 
 class Stage45Output(BaseModel):
     risk_decisions: List[RiskDecisionSchema]
@@ -1217,7 +1218,7 @@ def tara_ai_analysis_call(db: Session, stage: str, asset: Asset, prev_stages: di
                 "   - 包含 cybersecurity_control_id 并以 CSO-001, CSO-002 等顺序编号格式编写，与中英文对照的 cybersecurity_control (说明控制措施是技术性还是操作性，以及具体机制类如 SecOC/TLS 等，不要写死硬件型号)；\n"
                 "   - 包含 allocated_to_device (必须是 yes 或 no)；\n"
                 "   - 包含 cybersecurity_requirement_id 并以 CSR-001, CSR-002 等顺序编号格式编写，与中英文对照的 cybersecurity_requirement (规定项目组件的网络安全/运行环境/更新能力/校验校验要求，100%可验证)。\n"
-                "3. 在 summarized_requirements 中，对所有 allocated_to_device 为 'yes' 的安全要求进行去重与归纳整理，生成项目级网络安全需求列表。包含 title, sub_title, security_domain (安全功能分类，中英文对照) 等字段。"
+                "3. 在 summarized_requirements 中，对所有 allocated_to_device 为 'yes' 的安全要求进行去重与归纳整理，生成项目级网络安全需求列表。包含 title, sub_title, security_domain (安全功能分类，中英文对照) 等字段。特别注意：必须在 source_requirement_ids 字段中列出当前归纳去重后的网络安全要求涵盖/对应了前面哪些原始网络安全要求编号 (对应前面的 cybersecurity_requirement_id，例如 ['CSR-001', 'CSR-002'])，以建立严格的追溯映射关系。"
             )
             ai_res = call_llm(msg, prompt, Stage45Output)
             
@@ -1379,7 +1380,8 @@ def tara_ai_analysis_call(db: Session, stage: str, asset: Asset, prev_stages: di
                         "title": item.get("title", ""),
                         "sub_title": item.get("sub_title", ""),
                         "security_domain": item.get("security_domain", "通用安全 / General Security"),
-                        "cybersecurity_requirement": item.get("cybersecurity_requirement", "")
+                        "cybersecurity_requirement": item.get("cybersecurity_requirement", ""),
+                        "source_requirement_ids": item.get("source_requirement_ids", [])
                     })
             else:
                 # Standalone Stage 5 Call
@@ -1397,7 +1399,7 @@ def tara_ai_analysis_call(db: Session, stage: str, asset: Asset, prev_stages: di
                     "   - 包含 cybersecurity_control_id 并以 CSO-001, CSO-002 等顺序编号格式编写，与中英文对照的 cybersecurity_control (说明控制措施是技术性还是操作性，以及具体机制类如 SecOC/TLS 等，不要写死硬件型号)；\n"
                     "   - 包含 allocated_to_device (必须是 yes 或 no)；\n"
                     "   - 包含 cybersecurity_requirement_id 并以 CSR-001, CSR-002 等顺序编号格式编写，与中英文对照的 cybersecurity_requirement (规定项目组件的网络安全/运行环境/更新能力/校验校验要求，100%可验证)。\n"
-                    "2. 对所有 allocated_to_device 为 'yes' 的安全要求进行去重与归纳整理，生成项目级网络安全需求列表 (summarized_requirements)。包含 title, sub_title, security_domain (安全功能分类，中英文对照) 等字段。"
+                    "2. 对所有 allocated_to_device 为 'yes' 的安全要求进行去重与归纳整理，生成项目级网络安全需求列表 (summarized_requirements)。包含 title, sub_title, security_domain (安全功能分类，中英文对照) 等字段。特别注意：必须在 source_requirement_ids 字段中列出当前归纳去重后的网络安全要求涵盖/对应了前面哪些原始网络安全要求编号 (对应前面的 cybersecurity_requirement_id，例如 ['CSR-001', 'CSR-002'])，以建立严格的追溯映射关系。"
                 )
                 ai_res = call_llm(msg, prompt, StandaloneStage5Output)
                 
@@ -1426,7 +1428,8 @@ def tara_ai_analysis_call(db: Session, stage: str, asset: Asset, prev_stages: di
                         "title": item.get("title", ""),
                         "sub_title": item.get("sub_title", ""),
                         "security_domain": item.get("security_domain", "通用安全 / General Security"),
-                        "cybersecurity_requirement": item.get("cybersecurity_requirement", "")
+                        "cybersecurity_requirement": item.get("cybersecurity_requirement", ""),
+                        "source_requirement_ids": item.get("source_requirement_ids", [])
                     })
                     
             all_csr_texts = [r["cybersecurity_requirement"] for r in summarized_csrs]

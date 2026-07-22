@@ -38,6 +38,81 @@ def get_asset_sn(asset) -> str:
     prefix = prefix_map.get(t, "A")
     return f"{prefix}-001_{asset.id:03d}"
 
+def get_csr_traceability_maps(stage5_out: dict, req_map: dict) -> tuple:
+    """
+    建立 TARA 原始需求与合并汇总需求之间的追溯关系
+    Returns:
+      tara_to_csr: dict, 原始需求文本 -> list of summarized CSR hash IDs
+      csr_to_tara: dict, summarized CSR hash ID -> list of original requirement texts
+    """
+    tara_to_csr = {}
+    csr_to_tara = {}
+    
+    requirements = stage5_out.get("requirements", [])
+    summarized_csrs = stage5_out.get("summarized_csrs") or stage5_out.get("summarized_requirements") or []
+    
+    # 1. 建立 local ID -> 原始文本 的映射
+    local_id_to_text = {}
+    for req in requirements:
+        text = str(req.get("cybersecurity_requirement") or "").strip()
+        local_id = str(req.get("cybersecurity_requirement_id") or "").strip()
+        if text and local_id:
+            local_id_to_text[local_id] = text
+            
+    # 2. 通过 source_requirement_ids 或相似度匹配映射
+    for csr in summarized_csrs:
+        csr_text = str(csr.get("cybersecurity_requirement") or "").strip()
+        if not csr_text:
+            continue
+        csr_hash_id = req_map.get(csr_text, csr.get("csr_id") or "N/A")
+        
+        s_ids = csr.get("source_requirement_ids") or []
+        mapped_any = False
+        
+        for sid in s_ids:
+            orig_text = local_id_to_text.get(sid)
+            if orig_text:
+                tara_to_csr.setdefault(orig_text, []).append(csr_hash_id)
+                csr_to_tara.setdefault(csr_hash_id, []).append(orig_text)
+                mapped_any = True
+                
+        # 若大模型未显式输出映射（如历史数据），通过文本包含与相似度兜底
+        if not mapped_any:
+            for orig_req in requirements:
+                orig_text = str(orig_req.get("cybersecurity_requirement") or "").strip()
+                if not orig_text or orig_text == "N/A":
+                    continue
+                orig_clean = orig_text.lower()
+                csr_clean = csr_text.lower()
+                if orig_clean == csr_clean or orig_clean in csr_clean or csr_clean in orig_clean:
+                    tara_to_csr.setdefault(orig_text, []).append(csr_hash_id)
+                    csr_to_tara.setdefault(csr_hash_id, []).append(orig_text)
+                    mapped_any = True
+                    
+            if not mapped_any:
+                import re
+                for orig_req in requirements:
+                    orig_text = str(orig_req.get("cybersecurity_requirement") or "").strip()
+                    if not orig_text or orig_text == "N/A":
+                        continue
+                    orig_words = set(re.findall(r'[\u4e00-\u9fa5]|\w+', orig_text.lower()))
+                    csr_words = set(re.findall(r'[\u4e00-\u9fa5]|\w+', csr_text.lower()))
+                    if orig_words and csr_words:
+                        intersection = orig_words.intersection(csr_words)
+                        union = orig_words.union(csr_words)
+                        jaccard = len(intersection) / len(union)
+                        if jaccard > 0.15:
+                            tara_to_csr.setdefault(orig_text, []).append(csr_hash_id)
+                            csr_to_tara.setdefault(csr_hash_id, []).append(orig_text)
+                            
+    # 去重
+    for k in tara_to_csr:
+        tara_to_csr[k] = list(set(tara_to_csr[k]))
+    for k in csr_to_tara:
+        csr_to_tara[k] = list(set(csr_to_tara[k]))
+        
+    return tara_to_csr, csr_to_tara
+
 def build_id_maps(steps: List[TaraStep]):
     goal_set = set()
     claim_set = set()
@@ -336,6 +411,7 @@ def collect_report_data(steps: List[TaraStep], assets: List[Asset], desensitize:
                         row_data["number"] = f"T_{row_num:04d}"
                         row_data["asset_sn"] = get_asset_sn(asset)
                         row_data["asset_name"] = asset.name
+                        row_data["asset_id"] = asset.id
                         
                         for c in attr_cols:
                             row_data[c] = "Yes" if c == attr else None
@@ -475,6 +551,14 @@ def collect_report_data(steps: List[TaraStep], assets: List[Asset], desensitize:
                         row_num += 1
                         
     goal_map, claim_map, control_map, req_map = build_id_maps(steps)
+    
+    # Pre-build traceability maps for all assets
+    asset_trace_maps = {}
+    for asset in assets:
+        asset_steps = steps_by_asset.get(asset.id, {})
+        stage5_out = asset_steps.get("stage5").analysis_result.get("final_output", {}) if asset_steps.get("stage5") else {}
+        asset_trace_maps[asset.id] = get_csr_traceability_maps(stage5_out, req_map)
+
     for row in rows:
         rt_disp = row.get("risk_treatment")
         is_exempted = rt_disp in ["Share", "Retain"]
@@ -529,6 +613,24 @@ def collect_report_data(steps: List[TaraStep], assets: List[Asset], desensitize:
                 row["cybersecurity_requirement_id"] = new_ids[0] if new_ids else "N/A"
         else:
             row["cybersecurity_requirement_id"] = "N/A"
+
+        # 5. Merged CSR Traceability
+        asset_id = row.get("asset_id")
+        if asset_id and req_val and req_val != "N/A" and is_mitigated:
+            tara_to_csr, _ = asset_trace_maps.get(asset_id, ({}, {}))
+            lines = [line.strip() for line in req_val.split("\n") if line.strip()]
+            matched_csr_ids = []
+            for line in lines:
+                import re
+                cleaned = re.sub(r'^\(\d+\)\s*', '', line).strip()
+                if cleaned and cleaned != "N/A":
+                    matched_csr_ids.extend(tara_to_csr.get(cleaned, []))
+            if matched_csr_ids:
+                row["merged_csr_id"] = ", ".join(sorted(list(set(matched_csr_ids))))
+            else:
+                row["merged_csr_id"] = "N/A"
+        else:
+            row["merged_csr_id"] = "N/A"
 
     return rows
 
@@ -601,6 +703,7 @@ def collect_csr_report_data(steps: List[TaraStep], assets: List[Asset]) -> List[
                 "number": f"CSR_{csr_num:04d}",
                 "csr_id": c_id,
                 "security_domain": csr.get("security_domain") or "通用安全 / General Security",
+                "asset_id": asset.id,
                 "asset_sn": get_asset_sn(asset),
                 "asset_name": asset.name,
                 "title": csr.get("title") or "N/A",
@@ -610,12 +713,34 @@ def collect_csr_report_data(steps: List[TaraStep], assets: List[Asset]) -> List[
             csr_num += 1
             
     _, _, _, req_map = build_id_maps(steps)
+    
+    # Pre-build traceability maps for all assets
+    asset_trace_maps = {}
+    for asset in assets:
+        asset_steps = steps_by_asset.get(asset.id, {})
+        stage5_out = asset_steps.get("stage5").analysis_result.get("final_output", {}) if asset_steps.get("stage5") else {}
+        asset_trace_maps[asset.id] = get_csr_traceability_maps(stage5_out, req_map)
+
     for row in rows:
         req_text = str(row.get("cybersecurity_requirement") or "").strip()
         if req_text and req_text != "N/A":
             row["csr_id"] = req_map.get(req_text, row.get("csr_id"))
         else:
             row["csr_id"] = "N/A"
+            
+        # Add source TARA requirements
+        asset_id = row.get("asset_id")
+        csr_id = row.get("csr_id")
+        if asset_id and csr_id and csr_id != "N/A":
+            _, csr_to_tara = asset_trace_maps.get(asset_id, ({}, {}))
+            orig_texts = csr_to_tara.get(csr_id, [])
+            orig_ids = [req_map.get(ot, "CSR-0000") for ot in orig_texts if ot in req_map]
+            if orig_ids:
+                row["source_tara_requirements"] = ", ".join(sorted(list(set(orig_ids))))
+            else:
+                row["source_tara_requirements"] = "N/A"
+        else:
+            row["source_tara_requirements"] = "N/A"
 
     return rows
 
@@ -654,7 +779,7 @@ def create_excel_report(domain: Domain, steps: List[TaraStep], assets: List[Asse
         ws.row_dimensions[2].height = 35
         
         # 填充所有表头单元格默认格式
-        for col_idx in range(1, 33):
+        for col_idx in range(1, 34):
             cell_r1 = ws.cell(row=1, column=col_idx)
             cell_r1.fill = header_fill_r1
             cell_r1.font = header_font
@@ -684,7 +809,7 @@ def create_excel_report(domain: Domain, steps: List[TaraStep], assets: List[Asse
             "Threat Scenarios", "Attack Path",
             "Time Consuming", "Expertise", "Knowledge about TOE", "Window of opportunity", "Equipment", "Difficulty", "AF Level", "CAF Level",
             "Risk Value", "Risk Treatment Recommend",
-            "Cybersecurity Claims ID", "Cybersecurity Claims", "Cybersecurity Goal ID", "Cybersecurity Goal", "Cybersecurity Control ID", "Cybersecurity Control", "Allocated to Device", "Cybersecurity Requirement ID", "Cybersecurity Requirement"
+            "Cybersecurity Claims ID", "Cybersecurity Claims", "Cybersecurity Goal ID", "Cybersecurity Goal", "Cybersecurity Control ID", "Cybersecurity Control", "Allocated to Device", "Cybersecurity Requirement ID", "Cybersecurity Requirement", "Merged CSR ID / 合并后安全需求ID"
         ]
         
         for col_idx, h in enumerate(headers_r2, 1):
@@ -700,7 +825,7 @@ def create_excel_report(domain: Domain, steps: List[TaraStep], assets: List[Asse
             "threat_scenario", "attack_path",
             "time_consuming", "expertise", "knowledge_about_toe", "window_of_opportunity", "equipment", "difficulty", "af_level", "caf_level",
             "risk_value", "risk_treatment",
-            "cybersecurity_claim_id", "cybersecurity_claim", "cybersecurity_goal_id", "cybersecurity_goal", "cybersecurity_control_id", "cybersecurity_control", "allocated_to_device", "cybersecurity_requirement_id", "cybersecurity_requirement"
+            "cybersecurity_claim_id", "cybersecurity_claim", "cybersecurity_goal_id", "cybersecurity_goal", "cybersecurity_control_id", "cybersecurity_control", "allocated_to_device", "cybersecurity_requirement_id", "cybersecurity_requirement", "merged_csr_id"
         ]
         
         for row_data in rows:
@@ -742,7 +867,7 @@ def create_excel_report(domain: Domain, steps: List[TaraStep], assets: List[Asse
         ws2.views.sheetView[0].showGridLines = True
         
         # 填充所有表头单元格默认格式
-        for col_idx in range(1, 8):
+        for col_idx in range(1, 9):
             cell_r1 = ws2.cell(row=1, column=col_idx)
             cell_r1.fill = header_fill_r1
             cell_r1.font = header_font
@@ -763,13 +888,13 @@ def create_excel_report(domain: Domain, steps: List[TaraStep], assets: List[Asse
         ws2['B1'] = 'Security Domain'
         ws2.merge_cells('C1:D1')
         ws2['C1'] = 'Assets Allocation'
-        ws2.merge_cells('E1:G1')
+        ws2.merge_cells('E1:H1')
         ws2['E1'] = 'Cybersecurity Requirements Details'
         
         # 第二层标题名称 (Row 2 for Sheet 2)
         headers2_r2 = [
             "CSR ID", "Security Domain", "Asset SN", "Asset Name",
-            "Requirement Title", "Requirement Subtitle", "Cybersecurity Requirement"
+            "Requirement Title", "Requirement Subtitle", "Cybersecurity Requirement", "Source TARA Requirements / 追溯原始TARA需求"
         ]
         for col_idx, h in enumerate(headers2_r2, 1):
             ws2.cell(row=2, column=col_idx, value=h)
@@ -777,7 +902,7 @@ def create_excel_report(domain: Domain, steps: List[TaraStep], assets: List[Asse
         csr_rows = collect_csr_report_data(steps, assets)
         
         current_row = 3
-        csr_keys = ["csr_id", "security_domain", "asset_sn", "asset_name", "title", "sub_title", "cybersecurity_requirement"]
+        csr_keys = ["csr_id", "security_domain", "asset_sn", "asset_name", "title", "sub_title", "cybersecurity_requirement", "source_tara_requirements"]
         
         for row_data in csr_rows:
             for col_idx, key in enumerate(csr_keys, 1):
