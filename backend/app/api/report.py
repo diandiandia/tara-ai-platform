@@ -816,11 +816,11 @@ def collect_csr_report_data(steps, assets):
         rows.append({
             "number": f"CSR_{csr_num:04d}",
             "csr_id": global_csr_id,
-            "security_domain": f"{entry['major_category']} -> {entry['sub_category']}",
+            "security_domain": entry['major_category'],
+            "sub_category": entry['sub_category'],
             "asset_sn": asset_sn_str,
             "asset_name": asset_name_str,
             "title": entry["title"],
-            "sub_title": entry["sub_category"],
             "cybersecurity_requirement": entry["requirement_text"],
             "source_tara_requirements": source_tara_ids_str
         })
