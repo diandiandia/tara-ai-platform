@@ -408,11 +408,11 @@ const collectCsrReportData = (steps, assetsList) => {
     rows.push({
       number: `CSR_${padNum}`,
       csr_id: globalCsrId,
-      security_domain: `${entry.majorCategory} -> ${entry.subCategory}`,
+      security_domain: entry.majorCategory,
+      sub_category: entry.subCategory,
       asset_sn: assetSnStr,
       asset_name: assetNameStr,
       title: entry.title,
-      sub_title: entry.subCategory,
       cybersecurity_requirement: entry.requirementText,
       source_tara_requirements: origIdsStr
     });
@@ -1956,10 +1956,10 @@ export default function TaraResults({ setPage, domainId }) {
               <thead>
                 <tr style={{ background: 'rgba(15, 23, 42, 0.05)', borderBottom: '1px solid var(--border-color)' }}>
                   <th style={{ minWidth: '130px', padding: '10px' }}>{t("Security Domain")}</th>
+                  <th style={{ minWidth: '130px', padding: '10px' }}>{t("Sub-category")}</th>
                   <th style={{ minWidth: '80px', padding: '10px' }}>{t("Asset SN")}</th>
                   <th style={{ minWidth: '100px', padding: '10px' }}>{t("Asset Name")}</th>
                   <th style={{ minWidth: '150px', padding: '10px' }}>{t("Requirement Title")}</th>
-                  <th style={{ minWidth: '150px', padding: '10px' }}>{t("Requirement Subtitle")}</th>
                   <th style={{ minWidth: '220px', padding: '10px' }}>{t("Cybersecurity Requirement")}</th>
                 </tr>
               </thead>
@@ -1967,10 +1967,10 @@ export default function TaraResults({ setPage, domainId }) {
                 {matrixPaginatedRows.map((row, idx) => (
                   <tr key={idx} style={{ borderBottom: '1px solid var(--border-color)', height: '40px' }}>
                     <td style={{ padding: '8px' }}>{row.security_domain}</td>
+                    <td style={{ padding: '8px' }}>{row.sub_category}</td>
                     <td style={{ padding: '8px', textAlign: 'center' }}>{row.asset_sn}</td>
                     <td style={{ padding: '8px', fontWeight: '500' }}>{row.asset_name}</td>
                     <td style={{ padding: '8px' }}>{row.title}</td>
-                    <td style={{ padding: '8px' }}>{row.sub_title}</td>
                     <td style={{ padding: '8px', whiteSpace: 'pre-line', wordBreak: 'break-all' }}>{row.cybersecurity_requirement}</td>
                   </tr>
                 ))}

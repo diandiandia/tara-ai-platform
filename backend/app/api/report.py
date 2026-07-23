@@ -972,8 +972,8 @@ def create_excel_report(domain: Domain, steps: List[TaraStep], assets: List[Asse
         
         # 第二层标题名称 (Row 2 for Sheet 2)
         headers2_r2 = [
-            "CSR ID", "Security Domain", "Asset SN", "Asset Name",
-            "Requirement Title", "Requirement Subtitle", "Cybersecurity Requirement", "Source TARA Requirements / 追溯原始TARA需求"
+            "CSR ID", "Security Domain", "Sub-category", "Asset SN", "Asset Name",
+            "Requirement Title", "Cybersecurity Requirement", "Source TARA Requirements / 追溯原始TARA需求"
         ]
         for col_idx, h in enumerate(headers2_r2, 1):
             ws2.cell(row=2, column=col_idx, value=h)
@@ -981,7 +981,7 @@ def create_excel_report(domain: Domain, steps: List[TaraStep], assets: List[Asse
         csr_rows = collect_csr_report_data(steps, assets)
         
         current_row = 3
-        csr_keys = ["csr_id", "security_domain", "asset_sn", "asset_name", "title", "sub_title", "cybersecurity_requirement", "source_tara_requirements"]
+        csr_keys = ["csr_id", "security_domain", "sub_category", "asset_sn", "asset_name", "title", "cybersecurity_requirement", "source_tara_requirements"]
         
         for row_data in csr_rows:
             for col_idx, key in enumerate(csr_keys, 1):
@@ -1116,10 +1116,10 @@ def create_csv_report(domain: Domain, steps: List[TaraStep], assets: List[Asset]
     
     if export_type == "csr":
         headers_r2 = [
-            "CSR ID", "Security Domain", "Asset SN", "Asset Name",
-            "Requirement Title", "Requirement Subtitle", "Cybersecurity Requirement"
+            "CSR ID", "Security Domain", "Sub-category", "Asset SN", "Asset Name",
+            "Requirement Title", "Cybersecurity Requirement"
         ]
-        keys = ["csr_id", "security_domain", "asset_sn", "asset_name", "title", "sub_title", "cybersecurity_requirement"]
+        keys = ["csr_id", "security_domain", "sub_category", "asset_sn", "asset_name", "title", "cybersecurity_requirement"]
         rows = collect_csr_report_data(steps, assets)
     else:
         headers_r2 = [
