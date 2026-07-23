@@ -656,12 +656,12 @@ def clean_major_category(domain_str: str) -> str:
         return "应用安全 / Application Security"
     if "data" in s or "privacy" in s or "数据" in s or "隐私" in s:
         return "数据安全与隐私保护 / Data Security & Privacy"
-    if "monitor" in s or "防护" in s or "监控" in s:
-        return "安全监控与防护 / Security Monitoring & Defense"
+    if "monitor" in s or "防护" in s or "监控" in s or "test" in s or "测试" in s or "respond" in s or "响应" in s:
+        return "安全监控、测试与响应 / Security Monitoring, Testing & Response"
     if "comm" in s or "通信" in s or "通讯" in s or "transmission" in s:
         return "通信安全 / Communication Security"
-    if "dev" in s or "ops" in s or "开发" in s or "运维" in s or "生产" in s:
-        return "安全开发与运维 / Secure Development & Operations"
+    if "dev" in s or "ops" in s or "开发" in s or "运维" in s or "生产" in s or "supply" in s or "chain" in s or "供应链" in s:
+        return "安全开发、供应链与运维 / Secure Development, Supply Chain & Operations"
     return "通用安全与其它 / General & Other Security"
 
 def collect_csr_report_data(steps, assets):
@@ -783,9 +783,9 @@ def collect_csr_report_data(steps, assets):
         "密码安全与密钥管理 / Cryptography & Key Management": 3,
         "应用安全 / Application Security": 4,
         "数据安全与隐私保护 / Data Security & Privacy": 5,
-        "安全监控与防护 / Security Monitoring & Defense": 6,
+        "安全监控、测试与响应 / Security Monitoring, Testing & Response": 6,
         "通信安全 / Communication Security": 7,
-        "安全开发与运维 / Secure Development & Operations": 8
+        "安全开发、供应链与运维 / Secure Development, Supply Chain & Operations": 8
     }
 
     sorted_keys = sorted(

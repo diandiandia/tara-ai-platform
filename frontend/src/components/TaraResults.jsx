@@ -236,14 +236,14 @@ const cleanMajorCategory = (domainStr) => {
   if (s.includes("data") || s.includes("privacy") || s.includes("数据") || s.includes("隐私")) {
     return "数据安全与隐私保护 / Data Security & Privacy";
   }
-  if (s.includes("monitor") || s.includes("防护") || s.includes("监控")) {
-    return "安全监控与防护 / Security Monitoring & Defense";
+  if (s.includes("monitor") || s.includes("防护") || s.includes("监控") || s.includes("test") || s.includes("测试") || s.includes("respond") || s.includes("响应")) {
+    return "安全监控、测试与响应 / Security Monitoring, Testing & Response";
   }
   if (s.includes("comm") || s.includes("通信") || s.includes("通讯") || s.includes("transmission")) {
     return "通信安全 / Communication Security";
   }
-  if (s.includes("dev") || s.includes("ops") || s.includes("开发") || s.includes("运维") || s.includes("生产")) {
-    return "安全开发与运维 / Secure Development & Operations";
+  if (s.includes("dev") || s.includes("ops") || s.includes("开发") || s.includes("运维") || s.includes("生产") || s.includes("supply") || s.includes("chain") || s.includes("供应链")) {
+    return "安全开发、供应链与运维 / Secure Development, Supply Chain & Operations";
   }
   return "通用安全与其它 / General & Other Security";
 };
@@ -376,9 +376,9 @@ const collectCsrReportData = (steps, assetsList) => {
     "密码安全与密钥管理 / Cryptography & Key Management": 3,
     "应用安全 / Application Security": 4,
     "数据安全与隐私保护 / Data Security & Privacy": 5,
-    "安全监控与防护 / Security Monitoring & Defense": 6,
+    "安全监控、测试与响应 / Security Monitoring, Testing & Response": 6,
     "通信安全 / Communication Security": 7,
-    "安全开发与运维 / Secure Development & Operations": 8
+    "安全开发、供应链与运维 / Secure Development, Supply Chain & Operations": 8
   };
 
   const sortedKeys = Array.from(mergedMap.keys()).sort((a, b) => {
