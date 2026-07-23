@@ -592,10 +592,10 @@ class Stage1Output(BaseModel):
 class AttackPathSchema(BaseModel):
     attack_path: str = Field(description="中英文对照的攻击步骤描述，格式：中文 / English")
     time_consuming: str = Field(description="时间消耗，可选值：no_more_than_1d, no_more_than_1w, no_more_than_1m, no_more_than_6m, more_than_6m")
-    expertise: str = Field(description="专业知识，可选值：layman, proficient, expert, multiple expert")
-    knowledge_about_toe: str = Field(description="靶机知识，可选值：public, restricted, confidential, strictly confidential")
+    expertise: str = Field(description="专业知识，可选值：layman, proficient, expert, multiple_expert")
+    knowledge_about_toe: str = Field(description="靶机知识，可选值：public, restricted, confidential, strictly_confidential")
     window_of_opportunity: str = Field(description="攻击窗口，可选值：unlimited, easy, moderate, difficult")
-    equipment: str = Field(description="所需设备，可选值：standard, specialized, bespoke, multiple bespoke")
+    equipment: str = Field(description="所需设备，可选值：standard, specialized, bespoke, multiple_bespoke")
 
 class ThreatScenarioSchema(BaseModel):
     threat_scenario: str = Field(description="中英文对照的威胁场景描述，格式：中文 / English")
@@ -982,14 +982,18 @@ def tara_ai_analysis_call(db: Session, stage: str, asset: Asset, prev_stages: di
             prompt = (
                 f"请根据资产信息及选定的高相关安全属性: {selected_attrs}，为该子系统/资产进行网络安全威胁建模与分析（包括损害场景、威胁场景、攻击路径及评级）。\n"
                 "分析要求：\n"
-                "1. 针对每个已分配的安全属性分别识别 1 到 2 个损害场景 (Damage Scenarios) 及其四个维度的影响评级 (Impact Ratings)。影响级别取值只能是: Negligible, Moderate, Major, Severe。\n"
-                "2. 针对每个损害场景，识别可能导致它的 1 到 2 个威胁场景 (Threat Scenarios)，被破坏的安全属性必须与对应损害场景的属性一致。\n"
+                "1. 针对每个已分配的安全属性分别识别 1 到 2 个损害场景 (Damage Scenarios) 及其四个维度的影响评级 (Impact Ratings)。影响级别取值只能是: Negligible, Moderate, Major, Severe。评估维度说明：\n"
+                "   - Safety (S/安全影响): 影响车辆物理控制，危及车内人员或行人生命安全；\n"
+                "   - Financial (F/财务影响): 造成直接经济损失（如车辆被盗、召回、合规罚款等）；\n"
+                "   - Operational (O/运营影响): 导致车辆或零部件功能降级、失效或不可用；\n"
+                "   - Privacy (P/隐私影响): 泄露用户隐私、位置或敏感个人识别数据（如VIN、行车轨迹）。\n"
+                "2. 针对每个损害场景，识别可能导致它的 1 到 2 个威胁场景 (Threat Scenarios)，被破坏的安全属性必须与对应损害场景的属性一致。威胁场景描述应明确指出威胁源（或攻击接口）与受损属性。\n"
                 "3. 针对每个威胁场景，设计 1 到 2 条具体的攻击路径 (Attack Paths)，并对攻击路径的各个要素进行打分。打分选项只能使用系统规定的标准选项：\n"
                 "   - time_consuming: no_more_than_1d, no_more_than_1w, no_more_than_1m, no_more_than_6m, more_than_6m\n"
-                "   - expertise: layman, proficient, expert, multiple expert\n"
-                "   - knowledge_about_toe: public, restricted, confidential, strictly confidential\n"
+                "   - expertise: layman, proficient, expert, multiple_expert\n"
+                "   - knowledge_about_toe: public, restricted, confidential, strictly_confidential\n"
                 "   - window_of_opportunity: unlimited, easy, moderate, difficult\n"
-                "   - equipment: standard, specialized, bespoke, multiple bespoke\n"
+                "   - equipment: standard, specialized, bespoke, multiple_bespoke\n"
                 "4. 所有损害场景、威胁场景、攻击步骤的文本必须使用中英文双语对照输出，格式为：“中文描述 / English translation.”。\n"
                 f"{type_guideline}"
             )
@@ -1179,10 +1183,10 @@ def tara_ai_analysis_call(db: Session, stage: str, asset: Asset, prev_stages: di
                     "1. 针对每个损害场景，识别可能导致它的 1 到 2 个威胁场景 (Threat Scenarios)，被破坏的安全属性与对应的损害场景一致。\n"
                     "2. 针对每个威胁场景，设计 1 到 2 条具体的攻击路径 (Attack Paths)，并对攻击路径的各个要素进行打分。打分选项只能使用系统规定的标准选项：\n"
                     "   - time_consuming: no_more_than_1d, no_more_than_1w, no_more_than_1m, no_more_than_6m, more_than_6m\n"
-                    "   - expertise: layman, proficient, expert, multiple expert\n"
-                    "   - knowledge_about_toe: public, restricted, confidential, strictly confidential\n"
+                    "   - expertise: layman, proficient, expert, multiple_expert\n"
+                    "   - knowledge_about_toe: public, restricted, confidential, strictly_confidential\n"
                     "   - window_of_opportunity: unlimited, easy, moderate, difficult\n"
-                    "   - equipment: standard, specialized, bespoke, multiple bespoke\n"
+                    "   - equipment: standard, specialized, bespoke, multiple_bespoke\n"
                     "3. 所有威胁场景、攻击步骤的描述必须使用中英文双语对照输出，格式为：“中文描述 / English translation.”。\n"
                     f"{type_guideline}"
                 )
