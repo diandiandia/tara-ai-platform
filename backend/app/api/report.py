@@ -736,9 +736,14 @@ def collect_csr_report_data(steps, assets):
             continue
             
         # 清洗并对齐到 8 大安全分类
-        major_cat = clean_major_category(csr.get("security_domain"))
-        # 获取由 AI 动态输出的子分类 (sub_title)
-        sub_cat = str(csr.get("sub_title") or csr.get("sub_category") or "通用防护 / General Protection").strip()
+        raw_domain = str(csr.get("security_domain") or "").strip()
+        if "->" in raw_domain:
+            parts = raw_domain.split("->")
+            major_cat = clean_major_category(parts[0])
+            sub_cat = parts[1].strip()
+        else:
+            major_cat = clean_major_category(raw_domain)
+            sub_cat = str(csr.get("sub_title") or csr.get("sub_category") or "通用防护 / General Protection").strip()
         
         # 使用大类和标准化文本进行去重
         norm_text = " ".join(req_text.split())

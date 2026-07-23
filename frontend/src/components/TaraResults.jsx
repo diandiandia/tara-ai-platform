@@ -332,8 +332,16 @@ const collectCsrReportData = (steps, assetsList) => {
     const reqText = String(item.csr.cybersecurity_requirement || '').trim();
     if (!reqText || reqText === 'N/A') return;
 
-    const majorCat = cleanMajorCategory(item.csr.security_domain);
-    const subCat = String(item.csr.sub_title || item.csr.sub_category || "通用防护 / General Protection").trim();
+    const rawDomain = String(item.csr.security_domain || '').trim();
+    let majorCat, subCat;
+    if (rawDomain.includes("->")) {
+      const parts = rawDomain.split("->");
+      majorCat = cleanMajorCategory(parts[0]);
+      subCat = parts[1].trim();
+    } else {
+      majorCat = cleanMajorCategory(rawDomain);
+      subCat = String(item.csr.sub_title || item.csr.sub_category || "通用防护 / General Protection").trim();
+    }
     const normText = reqText.replace(/\s+/g, ' ');
     const key = `${majorCat}::${normText}`;
 
