@@ -275,7 +275,24 @@ export default function Workbench({ setPage, setDomainId, setDiagramId, projectI
       rejected: t('已拒绝')
     };
     
-    assets.forEach((asset, index) => {
+    const typeOrder = {
+      hardware: 1,
+      software: 2,
+      data: 3,
+      communication: 4
+    };
+    const sortedAssets = [...assets].sort((a, b) => {
+      const tA = String(a.asset_type || '').toLowerCase().trim();
+      const tB = String(b.asset_type || '').toLowerCase().trim();
+      const orderA = typeOrder[tA] || 99;
+      const orderB = typeOrder[tB] || 99;
+      if (orderA !== orderB) {
+        return orderA - orderB;
+      }
+      return a.id - b.id;
+    });
+    
+    sortedAssets.forEach((asset, index) => {
       const row = [
         index + 1,
         asset.name || '',
