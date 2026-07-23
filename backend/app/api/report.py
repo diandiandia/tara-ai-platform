@@ -27,6 +27,16 @@ EXPORTS_DIR = os.path.join(PROJECT_ROOT, "exports_local")
 if not os.path.exists(EXPORTS_DIR):
     os.makedirs(EXPORTS_DIR)
 
+def get_asset_sort_key(asset) -> tuple:
+    type_order = {
+        "hardware": 1,
+        "software": 2,
+        "data": 3,
+        "communication": 4
+    }
+    t = str(asset.asset_type or "").lower().strip()
+    return (type_order.get(t, 99), asset.id)
+
 def get_asset_sn(asset) -> str:
     prefix_map = {
         "hardware": "H",
@@ -211,8 +221,8 @@ def collect_report_data(steps: List[TaraStep], assets: List[Asset], desensitize:
     row_num = 1
     rows = []
     
-    # 对资产按 ID 排序后依次展开子树
-    for asset in sorted(assets, key=lambda x: x.id):
+    # 对资产按类型（硬件、软件、数据、通信）排序后依次展开子树
+    for asset in sorted(assets, key=get_asset_sort_key):
         asset_steps = steps_by_asset.get(asset.id, {})
         if not asset_steps:
             continue
@@ -662,7 +672,7 @@ def collect_csr_report_data(steps: List[TaraStep], assets: List[Asset]) -> List[
             return "访问控制 / Access Control"
         return "通用安全 / General Security"
 
-    for asset in sorted(assets, key=lambda x: x.id):
+    for asset in sorted(assets, key=get_asset_sort_key):
         asset_steps = steps_by_asset.get(asset.id, {})
         if not asset_steps:
             continue
@@ -986,7 +996,7 @@ def create_excel_report(domain: Domain, steps: List[TaraStep], assets: List[Asse
         }
         
         current_row = 3
-        for idx, asset in enumerate(sorted(assets, key=lambda x: x.id), 1):
+        for idx, asset in enumerate(sorted(assets, key=get_asset_sort_key), 1):
             row_data = [
                 idx,
                 get_asset_sn(asset),

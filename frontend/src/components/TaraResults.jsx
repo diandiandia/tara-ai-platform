@@ -200,6 +200,25 @@ const inferSecurityDomain = (reqText) => {
   return "通用安全 / General Security";
 };
 
+const sortAssetsByType = (list) => {
+  const typeOrder = {
+    "hardware": 1,
+    "software": 2,
+    "data": 3,
+    "communication": 4
+  };
+  return [...list].sort((a, b) => {
+    const tA = String(a.asset_type || '').toLowerCase().trim();
+    const tB = String(b.asset_type || '').toLowerCase().trim();
+    const orderA = typeOrder[tA] || 99;
+    const orderB = typeOrder[tB] || 99;
+    if (orderA !== orderB) {
+      return orderA - orderB;
+    }
+    return a.id - b.id;
+  });
+};
+
 const collectCsrReportData = (steps, assetsList) => {
   const stepsByAsset = {};
   steps.forEach(step => {
@@ -211,7 +230,7 @@ const collectCsrReportData = (steps, assetsList) => {
 
   const rows = [];
   let csrNum = 1;
-  const sortedAssets = [...assetsList].sort((a, b) => a.id - b.id);
+  const sortedAssets = sortAssetsByType(assetsList);
 
   // Generate reqMap from all steps first
   const reqSet = new Set();
@@ -369,8 +388,9 @@ const buildExcelRowsFromSteps = (steps, assetsList) => {
     stepsByAsset[step.asset_id][step.stage] = step;
   });
   
-  // For each asset, build the rows
-  assetsList.forEach(asset => {
+  // For each asset, build the rows (sorted by type: hardware, software, data, communication)
+  const sortedAssets = sortAssetsByType(assetsList);
+  sortedAssets.forEach(asset => {
     const assetSteps = stepsByAsset[asset.id];
     if (!assetSteps) return;
     
