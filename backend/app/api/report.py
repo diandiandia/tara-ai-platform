@@ -201,7 +201,7 @@ def build_id_maps(steps: List[TaraStep]):
 
     return goal_map, claim_map, control_map, req_map
 
-def collect_report_data(steps: List[TaraStep], assets: List[Asset], desensitize: bool) -> List[dict]:
+def collect_report_data(steps: List[TaraStep], assets: List[Asset], desensitize: bool, hash_to_global_map: dict = None) -> List[dict]:
     """
     收集并平铺 TARA 各阶段分析结果数据，返回扁平化字典列表
     """
@@ -640,7 +640,11 @@ def collect_report_data(steps: List[TaraStep], assets: List[Asset], desensitize:
                 if cleaned and cleaned != "N/A":
                     matched_csr_ids.extend(tara_to_csr.get(cleaned, []))
             if matched_csr_ids:
-                row["merged_csr_id"] = ", ".join(sorted(list(set(matched_csr_ids))))
+                if hash_to_global_map:
+                    mapped_ids = [hash_to_global_map.get(cid, cid) for cid in matched_csr_ids]
+                else:
+                    mapped_ids = matched_csr_ids
+                row["merged_csr_id"] = ", ".join(sorted(list(set(mapped_ids))))
             else:
                 row["merged_csr_id"] = "N/A"
         else:
@@ -668,7 +672,7 @@ def clean_major_category(domain_str: str) -> str:
         return "安全开发、供应链与运维 / Secure Development, Supply Chain & Operations"
     return "通用安全与其它 / General & Other Security"
 
-def collect_csr_report_data(steps, assets):
+def collect_csr_report_data(steps, assets, hash_to_global_map: dict = None):
     """
     收集并进行全局去重、合并与两级安全分类（大分类稳定，子分类由 AI 动态生成）整理安全需求（CSR）数据
     """
@@ -816,6 +820,9 @@ def collect_csr_report_data(steps, assets):
             source_tara_ids_str = ", ".join(sorted(list(entry["orig_csr_ids"])))
             
         global_csr_id = f"CSR_SUM_{csr_num:03d}"
+        if hash_to_global_map is not None:
+            for rid in entry.get("orig_csr_ids", []):
+                hash_to_global_map[rid] = global_csr_id
         
         rows.append({
             "number": f"CSR_{csr_num:04d}",
@@ -855,6 +862,10 @@ def create_excel_report(domain: Domain, steps: List[TaraStep], assets: List[Asse
     has_tara = export_type in ["all", "tara"]
     has_csr = export_type in ["all", "csr"]
     has_assets = export_type in ["all", "assets"]
+    
+    # 提前收集合并后安全需求的映射字典
+    hash_to_global_map = {}
+    csr_rows_pre = collect_csr_report_data(steps, assets, hash_to_global_map)
     
     # 导出 TARA Sheet
     if has_tara:
@@ -903,7 +914,7 @@ def create_excel_report(domain: Domain, steps: List[TaraStep], assets: List[Asse
         for col_idx, h in enumerate(headers_r2, 1):
             ws.cell(row=2, column=col_idx, value=h)
             
-        rows = collect_report_data(steps, assets, desensitize)
+        rows = collect_report_data(steps, assets, desensitize, hash_to_global_map)
         
         current_row = 3
         keys = [
@@ -987,7 +998,7 @@ def create_excel_report(domain: Domain, steps: List[TaraStep], assets: List[Asse
         for col_idx, h in enumerate(headers2_r2, 1):
             ws2.cell(row=2, column=col_idx, value=h)
             
-        csr_rows = collect_csr_report_data(steps, assets)
+        csr_rows = csr_rows_pre
         
         current_row = 3
         csr_keys = ["csr_id", "security_domain", "sub_category", "asset_sn", "asset_name", "title", "cybersecurity_requirement", "source_tara_requirements"]
@@ -1149,7 +1160,9 @@ def create_csv_report(domain: Domain, steps: List[TaraStep], assets: List[Asset]
             "risk_value", "risk_treatment",
             "cybersecurity_claim_id", "cybersecurity_claim", "cybersecurity_goal_id", "cybersecurity_goal", "cybersecurity_control_id", "cybersecurity_control", "allocated_to_device", "cybersecurity_requirement_id", "cybersecurity_requirement"
         ]
-        rows = collect_report_data(steps, assets, desensitize)
+        hash_to_global_map = {}
+        collect_csr_report_data(steps, assets, hash_to_global_map)
+        rows = collect_report_data(steps, assets, desensitize, hash_to_global_map)
     
     with open(file_path, mode="w", encoding="utf-8-sig", newline="") as f:
         writer = csv.writer(f)
