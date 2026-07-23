@@ -644,35 +644,142 @@ def collect_report_data(steps: List[TaraStep], assets: List[Asset], desensitize:
 
     return rows
 
-def collect_csr_report_data(steps: List[TaraStep], assets: List[Asset]) -> List[dict]:
+def classify_requirement(req_text: str) -> tuple[str, str]:
+    text = req_text.lower()
+    
+    # 1. 密码安全与密钥管理 / Cryptography & Key Management
+    if any(w in text for w in ["工作密钥", "session key", "working key", "密钥轮换", "rotation"]):
+        return "密码安全与密钥管理 / Cryptography & Key Management", "工作密钥轮换 / Working Key Rotation"
+    if any(w in text for w in ["主密钥", "master key"]):
+        return "密码安全与密钥管理 / Cryptography & Key Management", "主密钥备份 / Master Key Backup"
+    if any(w in text for w in ["口令", "password strength", "密码长度", "密码强度", "password policy"]):
+        return "密码安全与密钥管理 / Cryptography & Key Management", "口令强度策略 / Password Policy"
+    if any(w in text for w in ["证书", "certificate", "crl", "pki"]):
+        return "密码安全与密钥管理 / Cryptography & Key Management", "数字证书生命周期 / Digital Certificate Lifecycle"
+    if any(w in text for w in ["密钥", "secret key", "cryptographic key", "private key", "public key", "kdf"]):
+        return "密码安全与密钥管理 / Cryptography & Key Management", "密钥安全存储与使用 / Cryptographic Key Storage & Usage"
+    if any(w in text for w in ["密码算法", "crypto algorithm", "aes", "rsa", "sm2", "sm3", "sm4", "ecc", "sha"]):
+        return "密码安全与密钥管理 / Cryptography & Key Management", "密码算法选择 / Cryptographic Algorithm Selection"
+        
+    # 2. 硬件安全 / Hardware Security
+    if any(w in text for w in ["防拆", "tamper", "探针", "probe", "物理防篡改"]):
+        return "硬件安全 / Hardware Security", "物理设备与防拆设计 / Physical Device & Tamper Protection"
+    if any(w in text for w in ["pcb", "信号线", "布线", "traces", "电路板", "测试点"]):
+        return "硬件安全 / Hardware Security", "PCBA设计与信号保护 / PCBA Design & Trace Protection"
+    if any(w in text for w in ["封装", "bga", "csp", "pin", "引脚"]):
+        return "硬件安全 / Hardware Security", "芯片封装防护 / Chip Packaging Protection"
+    if any(w in text for w in ["jtag", "swd", "调试口", "debug port", "调试会话"]):
+        return "硬件安全 / Hardware Security", "调试接口安全 / Debug Interface Security"
+    if any(w in text for w in ["hsm", "ehsm", "she", "se", "安全单元", "secure element"]):
+        return "硬件安全 / Hardware Security", "硬件安全模块与密码学实现 / HSM & Cryptographic Implementation"
+    if any(w in text for w in ["bootrom", "rom"]):
+        return "硬件安全 / Hardware Security", "BootROM只读保护 / BootROM Read-Only Protection"
+    if any(w in text for w in ["物理安全", "电路", "屏蔽外壳", "enclosure", "温度监控"]):
+        return "硬件安全 / Hardware Security", "物理设备与硬件组件 / Hardware Components & Physical Protection"
+
+    # 3. 系统安全 / System Security
+    if any(w in text for w in ["启动链", "secure boot", "安全启动", "bootloader", "信任链"]):
+        return "系统安全 / System Security", "启动链代码与过程安全 / Secure Boot Chain & Boot Process"
+    if any(w in text for w in ["刷写", "flashing", "programming"]):
+        return "系统安全 / System Security", "安全刷写控制 / Secure Flashing"
+    if any(w in text for w in ["回滚", "rollback", "防回滚", "版本号", "version counter", "efuse"]):
+        return "系统安全 / System Security", "固件更新过程与防回滚 / Firmware Update & Anti-rollback"
+    if any(w in text for w in ["更新包", "升级包", "payload", "update package"]):
+        return "系统安全 / System Security", "固件更新包完整性与加密 / Firmware Update Payload Protection"
+    if any(w in text for w in ["账号", "账户", "rbac", "user account", "admin account", "管理权限"]):
+        return "系统安全 / System Security", "账户管理与系统访问控制 / Accounts & System Access Control"
+    if any(w in text for w in ["selinux", "sandbox", "沙箱", "进程隔离", "隔离", "cgroups"]):
+        return "系统安全 / System Security", "进程隔离与资源限制 / Process Isolation & Resource Restriction"
+    if any(w in text for w in ["系统服务", "无用端口", "unused port", "禁用服务", "closed port"]):
+        return "系统安全 / System Security", "系统服务最小化与端口控制 / System Services & Port Minimization"
+    if any(w in text for w in ["日志最小化", "清理守护进程", "cleanup daemon", "自动删除", "临时文件"]):
+        return "系统安全 / System Security", "临时文件安全清理 / Temporary Files Security Cleanup"
+    if any(w in text for w in ["trustzone", "tee"]):
+        return "系统安全 / System Security", "TEE安全隔离 / TEE Security Isolation"
+
+    # 4. 数据安全与隐私保护 / Data Security & Privacy
+    if any(w in text for w in ["删除", "销毁", "erase", "destruction", "解绑", "unlink"]):
+        return "数据安全与隐私保护 / Data Security & Privacy", "数据删除与销毁 / Data Erasure & Destruction"
+    if any(w in text for w in ["脱敏", "desensitize", "masking"]):
+        return "数据安全与隐私保护 / Data Security & Privacy", "个人敏感数据脱敏 / Personal Sensitive Data Masking"
+    if any(w in text for w in ["日志签名", "日志加密", "secure log"]):
+        return "数据安全与隐私保护 / Data Security & Privacy", "安全日志加密与完整性 / Secure Log Encryption & Integrity"
+    if any(w in text for w in ["模型加密", "算法文件", "model encryption", "神经网络", "nn"]):
+        return "数据安全与隐私保护 / Data Security & Privacy", "算法与模型文件加密 / Algorithms & AI Model Encryption"
+    if any(w in text for w in ["rxswin", "软件标识", "software identification"]):
+        return "数据安全与隐私保护 / Data Security & Privacy", "软件标识完整性 / RxSWIN Integrity Protection"
+    if any(w in text for w in ["行车视频", "视频数据", "dashcam", "video data"]):
+        return "数据安全与隐私保护 / Data Security & Privacy", "行车视频数据保护 / Driving Video Data Protection"
+    if any(w in text for w in ["轨迹", "位置数据", "trajectory", "gps data"]):
+        return "数据安全与隐私保护 / Data Security & Privacy", "行车轨迹数据隐私 / Driving Trajectory Privacy"
+    if any(w in text for w in ["数据跨境", "跨境", "cross-border", "export block"]):
+        return "数据安全与隐私保护 / Data Security & Privacy", "数据跨境限制 / Data Cross-Border Restrictions"
+    if any(w in text for w in ["数据安全", "加密存储", "encrypted storage", "落盘加密", "sensitive data", "gb/t 44464"]):
+        return "数据安全与隐私保护 / Data Security & Privacy", "存储加密与通用数据保护 / Storage Encryption & General Data Security"
+
+    # 5. 应用安全 / Application Security
+    if any(w in text for w in ["输入验证", "输入校验", "合法性校验", "input validation", "溢出"]):
+        return "应用安全 / Application Security", "输入验证与合法性校验 / Input Validation"
+    if any(w in text for w in ["混淆", "加固", "obfuscation", "shielding", "防逆向", "anti-reverse"]):
+        return "应用安全 / Application Security", "代码保护与防逆向 / Code Obfuscation & Protection"
+
+    # 6. 安全监控与防护 / Security Monitoring & Defense
+    if any(w in text for w in ["资源", "带宽", "cpu", "memory", "存储空间", "监控", "告警", "limit"]):
+        return "安全监控与防护 / Security Monitoring & Defense", "系统资源监控与水位告警 / System Resource Monitoring & Alarm"
+    if any(w in text for w in ["nids", "ids", "idps", "入侵检测", "异常报文", "ddos"]):
+        return "安全监控与防护 / Security Monitoring & Defense", "网络流量入侵检测 / Network Intrusion Detection"
+    if any(w in text for w in ["完整性校验", "完整性监控", "fim", "篡改"]):
+        return "安全监控与防护 / Security Monitoring & Defense", "系统文件完整性检测 / System File Integrity Monitoring"
+    if any(w in text for w in ["病毒", "恶意软件", "malware", "antivirus"]):
+        return "安全监控与防护 / Security Monitoring & Defense", "恶意软件防御 / Malware Defense"
+    if any(w in text for w in ["协同响应", "事件响应", "incident response"]):
+        return "安全监控与防护 / Security Monitoring & Defense", "安全事件协同响应 / Security Incident Response"
+
+    # 7. 通信安全 / Communication Security
+    if any(w in text for w in ["tls", "https", "ssl", "传输层加密", "双向验证", "mtls"]):
+        return "通信安全 / Communication Security", "外部通信加密与双向验证 / External mTLS & TLS Encryption"
+    if any(w in text for w in ["重放", "replay", "新鲜性", "freshness", "时间戳", "timestamp"]):
+        return "通信安全 / Communication Security", "报文防重放与时延验证 / Anti-Replay & Freshness Verification"
+    if any(w in text for w in ["白名单", "whitelist", "通信矩阵"]):
+        return "通信安全 / Communication Security", "通信报文收发白名单 / Message Whitelist Filtering"
+    if any(w in text for w in ["secoc", "mac"]):
+        return "通信安全 / Communication Security", "SecOC报文校验 / SecOC Message Authentication"
+    if any(w in text for w in ["some/ip", "someip", "sd"]):
+        return "通信安全 / Communication Security", "SOME/IP服务认证与安全 / SOME/IP Secure Communication"
+    if any(w in text for w in ["隔离", "apn", "防火墙", "firewall", "网闸"]):
+        return "通信安全 / Communication Security", "网络隔离与域间防火墙 / Network Isolation & Domain Firewall"
+
+    # 8. 安全开发与运维 / Secure Development & Operations
+    if any(w in text for w in ["源代码", "sast", "代码扫描", "misra"]):
+        return "安全开发与运维 / Secure Development & Operations", "源代码安全审计与开发规范 / Secure Coding & Code Audit"
+    if any(w in text for w in ["产线", "灌装", "key provisioning", "manufacturing"]):
+        return "安全开发与运维 / Secure Development & Operations", "产线密钥安全灌装 / Factory Key Provisioning"
+
+    return "通用安全与其它 / General & Other Security", "通用安全控制要求 / General Cybersecurity Controls"
+
+def collect_csr_report_data(steps, assets):
     """
-    收集并去重汇总所有资产在 Stage 5 生成的 summarized_csrs 网络安全需求列表
+    收集并进行全局去重、合并与两级安全分类（大分类 + 子分类）整理安全需求（CSR）数据
     """
     steps_by_asset = {}
     for step in steps:
         if step.asset_id not in steps_by_asset:
             steps_by_asset[step.asset_id] = {}
         steps_by_asset[step.asset_id][step.stage] = step
-        
-    rows = []
-    csr_num = 1
-    
-    # 动态推断 security_domain 的辅助函数，兼容较早未打标 security_domain 的数据
-    def infer_security_domain(req_text: str) -> str:
-        req_lower = req_text.lower()
-        if any(w in req_lower for w in ["ota", "update", "升级"]):
-            return "安全升级 / Secure Update"
-        if any(w in req_lower for w in ["secoc", "transmission", "通信", "message", "bus"]):
-            return "安全通信 / Secure Transmission"
-        if any(w in req_lower for w in ["crypt", "encrypt", "key", "signature", "sign", "verify", "hash", "算法", "密码", "秘钥", "密钥"]):
-            return "密码学与存储安全 / Cryptography & Storage Security"
-        if any(w in req_lower for w in ["diag", "diagnose", "诊断"]):
-            return "诊断安全 / Diagnostics Security"
-        if any(w in req_lower for w in ["access", "auth", "login", "permission", "访问", "授权", "身份"]):
-            return "访问控制 / Access Control"
-        return "通用安全 / General Security"
 
-    for asset in sorted(assets, key=get_asset_sort_key):
+    # 1. 建立全局原始需求映射 (ID maps)
+    _, _, _, req_map = build_id_maps(steps)
+
+    # Pre-build traceability maps for all assets
+    asset_trace_maps = {}
+    for asset in assets:
+        asset_steps = steps_by_asset.get(asset.id, {})
+        stage5_out = asset_steps.get("stage5").analysis_result.get("final_output", {}) if asset_steps.get("stage5") else {}
+        asset_trace_maps[asset.id] = get_csr_traceability_maps(stage5_out, req_map)
+
+    # 2. 收集所有底层的安全需求并进行归档
+    all_csrs = []
+    for asset in assets:
         asset_steps = steps_by_asset.get(asset.id, {})
         if not asset_steps:
             continue
@@ -680,10 +787,11 @@ def collect_csr_report_data(steps: List[TaraStep], assets: List[Asset]) -> List[
         stage5_out = asset_steps.get("stage5").analysis_result.get("final_output", {}) if asset_steps.get("stage5") else {}
         summarized_csrs = stage5_out.get("summarized_csrs", [])
         
-        # 兜底：如果 summarized_csrs 为空，从 requirements 中提取 allocated_to_device == "yes" 的项进行拼装
+        # 兜底：如果 summarized_csrs 为空，从 requirements 中提取
         if not summarized_csrs:
             requirements = stage5_out.get("requirements", [])
-            device_reqs = [req for req in requirements if str(req.get("allocated_to_device", "")).lower().strip() in ["yes", "true"]]
+            # 考虑全部产品安全要求
+            device_reqs = requirements
             
             seen_req_texts = set()
             summarized_csrs = []
@@ -694,63 +802,116 @@ def collect_csr_report_data(steps: List[TaraStep], assets: List[Asset]) -> List[
                 seen_req_texts.add(req_text)
                 
                 req_id = req.get("cybersecurity_requirement_id") or f"CSR-{asset.id:03d}-{len(seen_req_texts):02d}"
-                domain_val = req.get("security_domain") or infer_security_domain(req_text)
                 
                 summarized_csrs.append({
-                    "asset_id": f"ID{asset.id}",
-                    "asset_name": asset.name,
                     "cybersecurity_requirement_id": req_id,
                     "csr_id": req_id,
-                    "title": f"针对 {asset.name} 的安全要求 / Security requirement for {asset.name}",
-                    "sub_title": f"网络安全防护 / Cybersecurity protection for {asset.name}",
-                    "security_domain": domain_val,
+                    "title": req.get("title") or f"针对 {asset.name} 的安全要求 / Security requirement for {asset.name}",
+                    "sub_title": req.get("sub_title") or f"网络安全防护 / Cybersecurity protection for {asset.name}",
+                    "security_domain": req.get("security_domain"),
                     "cybersecurity_requirement": req_text
                 })
                 
         for csr in summarized_csrs:
-            c_id = csr.get("csr_id") or csr.get("cybersecurity_requirement_id") or f"CSR_{csr_num:04d}"
-            rows.append({
-                "number": f"CSR_{csr_num:04d}",
-                "csr_id": c_id,
-                "security_domain": csr.get("security_domain") or "通用安全 / General Security",
-                "asset_id": asset.id,
-                "asset_sn": get_asset_sn(asset),
-                "asset_name": asset.name,
-                "title": csr.get("title") or "N/A",
-                "sub_title": csr.get("sub_title") or "N/A",
-                "cybersecurity_requirement": csr.get("cybersecurity_requirement") or "N/A"
+            all_csrs.append({
+                "asset": asset,
+                "csr": csr
             })
-            csr_num += 1
-            
-    _, _, _, req_map = build_id_maps(steps)
-    
-    # Pre-build traceability maps for all assets
-    asset_trace_maps = {}
-    for asset in assets:
-        asset_steps = steps_by_asset.get(asset.id, {})
-        stage5_out = asset_steps.get("stage5").analysis_result.get("final_output", {}) if asset_steps.get("stage5") else {}
-        asset_trace_maps[asset.id] = get_csr_traceability_maps(stage5_out, req_map)
 
-    for row in rows:
-        req_text = str(row.get("cybersecurity_requirement") or "").strip()
-        if req_text and req_text != "N/A":
-            row["csr_id"] = req_map.get(req_text, row.get("csr_id"))
-        else:
-            row["csr_id"] = "N/A"
+    # 3. 对所有需求按两级分类与内容文本进行去重合并
+    # 键为: (major_category, sub_category, requirement_text_normalized)
+    merged_map = {}
+    
+    for item in all_csrs:
+        asset = item["asset"]
+        csr = item["csr"]
+        req_text = str(csr.get("cybersecurity_requirement") or "").strip()
+        if not req_text or req_text == "N/A":
+            continue
             
-        # Add source TARA requirements
-        asset_id = row.get("asset_id")
-        csr_id = row.get("csr_id")
-        if asset_id and csr_id and csr_id != "N/A":
-            _, csr_to_tara = asset_trace_maps.get(asset_id, ({}, {}))
-            orig_texts = csr_to_tara.get(csr_id, [])
-            orig_ids = [req_map.get(ot, "CSR-0000") for ot in orig_texts if ot in req_map]
-            if orig_ids:
-                row["source_tara_requirements"] = ", ".join(sorted(list(set(orig_ids))))
-            else:
-                row["source_tara_requirements"] = "N/A"
-        else:
-            row["source_tara_requirements"] = "N/A"
+        # 统一两级分类
+        major_cat, sub_cat = classify_requirement(req_text)
+        
+        # 使用去除空白后的文本作为去重唯一键
+        norm_text = " ".join(req_text.split())
+        key = (major_cat, sub_cat, norm_text)
+        
+        if key not in merged_map:
+            merged_map[key] = {
+                "major_category": major_cat,
+                "sub_category": sub_cat,
+                "requirement_text": req_text,
+                "title": csr.get("title") or f"安全要求 / Security Requirement",
+                "sub_title": csr.get("sub_title") or f"安全防护措施 / Cybersecurity Control",
+                "assets": [],  # 保存 (asset_sn, asset_name)
+                "orig_csr_ids": set(),
+                "source_tara_req_ids": set()
+            }
+            
+        entry = merged_map[key]
+        # 添加资产
+        asset_sn = get_asset_sn(asset)
+        if (asset_sn, asset.name) not in entry["assets"]:
+            entry["assets"].append((asset_sn, asset.name))
+            
+        # 获取该资产的 TARA 原始 ID
+        raw_csr_id = req_map.get(req_text, csr.get("csr_id") or csr.get("cybersecurity_requirement_id") or "N/A")
+        if raw_csr_id != "N/A":
+            entry["orig_csr_ids"].add(raw_csr_id)
+            # 添加追溯原始TARA需求 ID
+            _, csr_to_tara = asset_trace_maps.get(asset.id, ({}, {}))
+            orig_ids = csr_to_tara.get(raw_csr_id, [])
+            for oid in orig_ids:
+                entry["source_tara_req_ids"].add(oid)
+
+    # 4. 生成按大类、子类排序的合并后 CSR 表格行
+    # 自定义大类排序顺序
+    major_order = {
+        "硬件安全 / Hardware Security": 1,
+        "系统安全 / System Security": 2,
+        "密码安全与密钥管理 / Cryptography & Key Management": 3,
+        "应用安全 / Application Security": 4,
+        "数据安全与隐私保护 / Data Security & Privacy": 5,
+        "安全监控与防护 / Security Monitoring & Defense": 6,
+        "通信安全 / Communication Security": 7,
+        "安全开发与运维 / Secure Development & Operations": 8
+    }
+
+    sorted_keys = sorted(
+        merged_map.keys(),
+        key=lambda k: (major_order.get(k[0], 99), k[1], k[2])
+    )
+
+    rows = []
+    csr_num = 1
+    for k in sorted_keys:
+        entry = merged_map[k]
+        
+        # 合并资产信息
+        assets_sorted = sorted(entry["assets"], key=lambda x: x[0])
+        asset_sn_str = ", ".join(x[0] for x in assets_sorted)
+        asset_name_str = ", ".join(x[1] for x in assets_sorted)
+        
+        # 追溯 ID 列表
+        source_tara_ids_str = ", ".join(sorted(list(entry["source_tara_req_ids"])))
+        if not source_tara_ids_str:
+            source_tara_ids_str = ", ".join(sorted(list(entry["orig_csr_ids"])))
+            
+        # 分配全新的全局 ID，按照顺序如 CSR_SUM_001
+        global_csr_id = f"CSR_SUM_{csr_num:03d}"
+        
+        rows.append({
+            "number": f"CSR_{csr_num:04d}",
+            "csr_id": global_csr_id,
+            "security_domain": f"{entry['major_category']} -> {entry['sub_category']}",
+            "asset_sn": asset_sn_str,
+            "asset_name": asset_name_str,
+            "title": entry["title"],
+            "sub_title": entry["sub_title"],
+            "cybersecurity_requirement": entry["requirement_text"],
+            "source_tara_requirements": source_tara_ids_str
+        })
+        csr_num += 1
 
     return rows
 

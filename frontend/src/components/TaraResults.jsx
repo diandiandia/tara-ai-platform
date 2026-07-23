@@ -219,6 +219,166 @@ const sortAssetsByType = (list) => {
   });
 };
 
+const classifyRequirement = (reqText) => {
+  const text = String(reqText || '').toLowerCase();
+  
+  // 1. 密码安全与密钥管理 / Cryptography & Key Management
+  if (text.includes("工作密钥") || text.includes("session key") || text.includes("working key") || text.includes("密钥轮换") || text.includes("rotation")) {
+    return ["密码安全与密钥管理 / Cryptography & Key Management", "工作密钥轮换 / Working Key Rotation"];
+  }
+  if (text.includes("主密钥") || text.includes("master key")) {
+    return ["密码安全与密钥管理 / Cryptography & Key Management", "主密钥备份 / Master Key Backup"];
+  }
+  if (text.includes("口令") || text.includes("password strength") || text.includes("密码长度") || text.includes("密码强度") || text.includes("password policy")) {
+    return ["密码安全与密钥管理 / Cryptography & Key Management", "口令强度策略 / Password Policy"];
+  }
+  if (text.includes("证书") || text.includes("certificate") || text.includes("crl") || text.includes("pki")) {
+    return ["密码安全与密钥管理 / Cryptography & Key Management", "数字证书生命周期 / Digital Certificate Lifecycle"];
+  }
+  if (text.includes("密钥") || text.includes("secret key") || text.includes("cryptographic key") || text.includes("private key") || text.includes("public key") || text.includes("kdf")) {
+    return ["密码安全与密钥管理 / Cryptography & Key Management", "密钥安全存储与使用 / Cryptographic Key Storage & Usage"];
+  }
+  if (text.includes("密码算法") || text.includes("crypto algorithm") || text.includes("aes") || text.includes("rsa") || text.includes("sm2") || text.includes("sm3") || text.includes("sm4") || text.includes("ecc") || text.includes("sha")) {
+    return ["密码安全与密钥管理 / Cryptography & Key Management", "密码算法选择 / Cryptographic Algorithm Selection"];
+  }
+  
+  // 2. 硬件安全 / Hardware Security
+  if (text.includes("防拆") || text.includes("tamper") || text.includes("探针") || text.includes("probe") || text.includes("物理防篡改")) {
+    return ["硬件安全 / Hardware Security", "物理设备与防拆设计 / Physical Device & Tamper Protection"];
+  }
+  if (text.includes("pcb") || text.includes("信号线") || text.includes("布线") || text.includes("traces") || text.includes("电路板") || text.includes("测试点")) {
+    return ["硬件安全 / Hardware Security", "PCBA设计与信号保护 / PCBA Design & Trace Protection"];
+  }
+  if (text.includes("封装") || text.includes("bga") || text.includes("csp") || text.includes("pin") || text.includes("引脚")) {
+    return ["硬件安全 / Hardware Security", "芯片封装防护 / Chip Packaging Protection"];
+  }
+  if (text.includes("jtag") || text.includes("swd") || text.includes("调试口") || text.includes("debug port") || text.includes("调试会话")) {
+    return ["硬件安全 / Hardware Security", "调试接口安全 / Debug Interface Security"];
+  }
+  if (text.includes("hsm") || text.includes("ehsm") || text.includes("she") || text.includes("se") || text.includes("安全单元") || text.includes("secure element")) {
+    return ["硬件安全 / Hardware Security", "硬件安全模块与密码学实现 / HSM & Cryptographic Implementation"];
+  }
+  if (text.includes("bootrom") || text.includes("rom")) {
+    return ["硬件安全 / Hardware Security", "BootROM只读保护 / BootROM Read-Only Protection"];
+  }
+  if (text.includes("物理安全") || text.includes("电路") || text.includes("屏蔽外壳") || text.includes("enclosure") || text.includes("温度监控")) {
+    return ["硬件安全 / Hardware Security", "物理设备与硬件组件 / Hardware Components & Physical Protection"];
+  }
+
+  // 3. 系统安全 / System Security
+  if (text.includes("启动链") || text.includes("secure boot") || text.includes("安全启动") || text.includes("bootloader") || text.includes("信任链")) {
+    return ["系统安全 / System Security", "启动链代码与过程安全 / Secure Boot Chain & Boot Process"];
+  }
+  if (text.includes("刷写") || text.includes("flashing") || text.includes("programming")) {
+    return ["系统安全 / System Security", "安全刷写控制 / Secure Flashing"];
+  }
+  if (text.includes("回滚") || text.includes("rollback") || text.includes("防回滚") || text.includes("版本号") || text.includes("version counter") || text.includes("efuse")) {
+    return ["系统安全 / System Security", "固件更新过程与防回滚 / Firmware Update & Anti-rollback"];
+  }
+  if (text.includes("更新包") || text.includes("升级包") || text.includes("payload") || text.includes("update package")) {
+    return ["系统安全 / System Security", "固件更新包完整性与加密 / Firmware Update Payload Protection"];
+  }
+  if (text.includes("账号") || text.includes("账户") || text.includes("rbac") || text.includes("user account") || text.includes("admin account") || text.includes("管理权限")) {
+    return ["系统安全 / System Security", "账户管理与系统访问控制 / Accounts & System Access Control"];
+  }
+  if (text.includes("selinux") || text.includes("sandbox") || text.includes("沙箱") || text.includes("进程隔离") || text.includes("隔离") || text.includes("cgroups")) {
+    return ["系统安全 / System Security", "进程隔离与资源限制 / Process Isolation & Resource Restriction"];
+  }
+  if (text.includes("系统服务") || text.includes("无用端口") || text.includes("unused port") || text.includes("禁用服务") || text.includes("closed port")) {
+    return ["系统安全 / System Security", "系统服务最小化与端口控制 / System Services & Port Minimization"];
+  }
+  if (text.includes("日志最小化") || text.includes("清理守护进程") || text.includes("cleanup daemon") || text.includes("自动删除") || text.includes("临时文件")) {
+    return ["系统安全 / System Security", "临时文件安全清理 / Temporary Files Security Cleanup"];
+  }
+  if (text.includes("trustzone") || text.includes("tee")) {
+    return ["系统安全 / System Security", "TEE安全隔离 / TEE Security Isolation"];
+  }
+
+  // 4. 数据安全与隐私保护 / Data Security & Privacy
+  if (text.includes("删除") || text.includes("销毁") || text.includes("erase") || text.includes("destruction") || text.includes("解绑") || text.includes("unlink")) {
+    return ["数据安全与隐私保护 / Data Security & Privacy", "数据删除与销毁 / Data Erasure & Destruction"];
+  }
+  if (text.includes("脱敏") || text.includes("desensitize") || text.includes("masking")) {
+    return ["数据安全与隐私保护 / Data Security & Privacy", "个人敏感数据脱敏 / Personal Sensitive Data Masking"];
+  }
+  if (text.includes("日志签名") || text.includes("日志加密") || text.includes("secure log")) {
+    return ["数据安全与隐私保护 / Data Security & Privacy", "安全日志加密与完整性 / Secure Log Encryption & Integrity"];
+  }
+  if (text.includes("模型加密") || text.includes("算法文件") || text.includes("model encryption") || text.includes("神经网络") || text.includes("nn")) {
+    return ["数据安全与隐私保护 / Data Security & Privacy", "算法与模型文件加密 / Algorithms & AI Model Encryption"];
+  }
+  if (text.includes("rxswin") || text.includes("软件标识") || text.includes("software identification")) {
+    return ["数据安全与隐私保护 / Data Security & Privacy", "软件标识完整性 / RxSWIN Integrity Protection"];
+  }
+  if (text.includes("行车视频") || text.includes("视频数据") || text.includes("dashcam") || text.includes("video data")) {
+    return ["数据安全与隐私保护 / Data Security & Privacy", "行车视频数据保护 / Driving Video Data Protection"];
+  }
+  if (text.includes("轨迹") || text.includes("位置数据") || text.includes("trajectory") || text.includes("gps data")) {
+    return ["数据安全与隐私保护 / Data Security & Privacy", "行车轨迹数据隐私 / Driving Trajectory Privacy"];
+  }
+  if (text.includes("数据跨境") || text.includes("跨境") || text.includes("cross-border") || text.includes("export block")) {
+    return ["数据安全与隐私保护 / Data Security & Privacy", "数据跨境限制 / Data Cross-Border Restrictions"];
+  }
+  if (text.includes("数据安全") || text.includes("加密存储") || text.includes("encrypted storage") || text.includes("落盘加密") || text.includes("sensitive data") || text.includes("gb/t 44464")) {
+    return ["数据安全与隐私保护 / Data Security & Privacy", "存储加密与通用数据保护 / Storage Encryption & General Data Security"];
+  }
+
+  // 5. 应用安全 / Application Security
+  if (text.includes("输入验证") || text.includes("输入校验") || text.includes("合法性校验") || text.includes("input validation") || text.includes("溢出")) {
+    return ["应用安全 / Application Security", "输入验证与合法性校验 / Input Validation"];
+  }
+  if (text.includes("混淆") || text.includes("加固") || text.includes("obfuscation") || text.includes("shielding") || text.includes("防逆向") || text.includes("anti-reverse")) {
+    return ["应用安全 / Application Security", "代码保护与防逆向 / Code Obfuscation & Protection"];
+  }
+
+  // 6. 安全监控与防护 / Security Monitoring & Defense
+  if (text.includes("资源") || text.includes("带宽") || text.includes("cpu") || text.includes("memory") || text.includes("存储空间") || text.includes("监控") || text.includes("告警") || text.includes("limit")) {
+    return ["安全监控与防护 / Security Monitoring & Defense", "系统资源监控与水位告警 / System Resource Monitoring & Alarm"];
+  }
+  if (text.includes("nids") || text.includes("ids") || text.includes("idps") || text.includes("入侵检测") || text.includes("异常报文") || text.includes("ddos")) {
+    return ["安全监控与防护 / Security Monitoring & Defense", "网络流量入侵检测 / Network Intrusion Detection"];
+  }
+  if (text.includes("完整性校验") || text.includes("完整性监控") || text.includes("fim") || text.includes("篡改")) {
+    return ["安全监控与防护 / Security Monitoring & Defense", "系统文件完整性检测 / System File Integrity Monitoring"];
+  }
+  if (text.includes("病毒") || text.includes("恶意软件") || text.includes("malware") || text.includes("antivirus")) {
+    return ["安全监控与防护 / Security Monitoring & Defense", "恶意软件防御 / Malware Defense"];
+  }
+  if (text.includes("协同响应") || text.includes("事件响应") || text.includes("incident response")) {
+    return ["安全监控与防护 / Security Monitoring & Defense", "安全事件协同响应 / Security Incident Response"];
+  }
+
+  // 7. 通信安全 / Communication Security
+  if (text.includes("tls") || text.includes("https") || text.includes("ssl") || text.includes("传输层加密") || text.includes("双向验证") || text.includes("mtls")) {
+    return ["通信安全 / Communication Security", "外部通信加密与双向验证 / External mTLS & TLS Encryption"];
+  }
+  if (text.includes("重放") || text.includes("replay") || text.includes("新鲜性") || text.includes("freshness") || text.includes("时间戳") || text.includes("timestamp")) {
+    return ["通信安全 / Communication Security", "报文防重放与时延验证 / Anti-Replay & Freshness Verification"];
+  }
+  if (text.includes("白名单") || text.includes("whitelist") || text.includes("通信矩阵")) {
+    return ["通信安全 / Communication Security", "通信报文收发白名单 / Message Whitelist Filtering"];
+  }
+  if (text.includes("secoc") || text.includes("mac")) {
+    return ["通信安全 / Communication Security", "SecOC报文校验 / SecOC Message Authentication"];
+  }
+  if (text.includes("some/ip") || text.includes("someip") || text.includes("sd")) {
+    return ["通信安全 / Communication Security", "SOME/IP服务认证与安全 / SOME/IP Secure Communication"];
+  }
+  if (text.includes("隔离") || text.includes("apn") || text.includes("防火墙") || text.includes("firewall") || text.includes("网闸")) {
+    return ["通信安全 / Communication Security", "网络隔离与域间防火墙 / Network Isolation & Domain Firewall"];
+  }
+
+  // 8. 安全开发与运维 / Secure Development & Operations
+  if (text.includes("源代码") || text.includes("sast") || text.includes("代码扫描") || text.includes("misra")) {
+    return ["安全开发与运维 / Secure Development & Operations", "源代码安全审计与开发规范 / Secure Coding & Code Audit"];
+  }
+  if (text.includes("产线") || text.includes("灌装") || text.includes("key provisioning") || text.includes("manufacturing")) {
+    return ["安全开发与运维 / Secure Development & Operations", "产线密钥安全灌装 / Factory Key Provisioning"];
+  }
+
+  return ["通用安全与其它 / General & Other Security", "通用安全控制要求 / General Cybersecurity Controls"];
+};
+
 const collectCsrReportData = (steps, assetsList) => {
   const stepsByAsset = {};
   steps.forEach(step => {
@@ -228,11 +388,9 @@ const collectCsrReportData = (steps, assetsList) => {
     stepsByAsset[step.asset_id][step.stage] = step;
   });
 
-  const rows = [];
-  let csrNum = 1;
   const sortedAssets = sortAssetsByType(assetsList);
 
-  // Generate reqMap from all steps first
+  // 1. Generate reqMap from all steps first (djb2 content hashing logic)
   const reqSet = new Set();
   sortedAssets.forEach(asset => {
     const assetSteps = stepsByAsset[asset.id];
@@ -258,6 +416,8 @@ const collectCsrReportData = (steps, assetsList) => {
   const sortedReqs = Array.from(reqSet).sort();
   const reqMap = new Map(sortedReqs.map((r, i) => [r, `CSR-${String(i + 1).padStart(4, '0')}`]));
 
+  // 2. Gather all CSRs
+  const allCsrs = [];
   sortedAssets.forEach(asset => {
     const assetSteps = stepsByAsset[asset.id];
     if (!assetSteps) return;
@@ -267,10 +427,7 @@ const collectCsrReportData = (steps, assetsList) => {
 
     if (summarizedCsrs.length === 0) {
       const requirements = stage5Out.requirements || [];
-      const deviceReqs = requirements.filter(req => {
-        const alloc = String(req.allocated_to_device || '').toLowerCase().trim();
-        return alloc === 'yes' || alloc === 'true';
-      });
+      const deviceReqs = requirements;
 
       const seenReqTexts = new Set();
       summarizedCsrs = [];
@@ -279,38 +436,111 @@ const collectCsrReportData = (steps, assetsList) => {
         if (!reqText || seenReqTexts.has(reqText)) return;
         seenReqTexts.add(reqText);
 
-        const domainVal = req.security_domain || inferSecurityDomain(reqText);
         const mappedId = reqMap.get(reqText.trim()) || `CSR-0000`;
 
         summarizedCsrs.push({
-          asset_id: `ID${asset.id}`,
-          asset_name: asset.name,
           cybersecurity_requirement_id: mappedId,
           csr_id: mappedId,
-          title: `针对 ${asset.name} 的安全要求 / Security requirement for ${asset.name}`,
-          sub_title: `网络安全防护 / Cybersecurity protection for ${asset.name}`,
-          security_domain: domainVal,
+          title: req.title || `针对 ${asset.name} 的安全要求 / Security requirement for ${asset.name}`,
+          sub_title: req.sub_title || `网络安全防护 / Cybersecurity protection for ${asset.name}`,
+          security_domain: req.security_domain,
           cybersecurity_requirement: reqText
         });
       });
     }
 
     summarizedCsrs.forEach(csr => {
-      const padNum = String(csrNum).padStart(4, '0');
-      const reqText = String(csr.cybersecurity_requirement || '').trim();
-      const cId = reqMap.get(reqText) || csr.csr_id || csr.cybersecurity_requirement_id || `CSR-${padNum}`;
-      rows.push({
-        number: `CSR_${padNum}`,
-        csr_id: cId,
-        security_domain: csr.security_domain || "通用安全 / General Security",
-        asset_sn: getAssetSn(asset),
-        asset_name: asset.name,
-        title: csr.title || "N/A",
-        sub_title: csr.sub_title || "N/A",
-        cybersecurity_requirement: csr.cybersecurity_requirement || "N/A"
+      allCsrs.push({
+        asset: asset,
+        csr: csr
       });
-      csrNum++;
     });
+  });
+
+  // 3. Perform global grouping and merging
+  const mergedMap = new Map();
+  allCsrs.forEach(item => {
+    const reqText = String(item.csr.cybersecurity_requirement || '').trim();
+    if (!reqText || reqText === 'N/A') return;
+
+    const [majorCat, subCat] = classifyRequirement(reqText);
+    const normText = reqText.replace(/\s+/g, ' ');
+    const key = `${majorCat}::${subCat}::${normText}`;
+
+    if (!mergedMap.has(key)) {
+      mergedMap.set(key, {
+        majorCategory: majorCat,
+        subCategory: subCat,
+        requirementText: reqText,
+        title: item.csr.title || `安全要求 / Security Requirement`,
+        subTitle: item.csr.sub_title || `安全防护措施 / Cybersecurity Control`,
+        assets: [],
+        origCsrIds: new Set()
+      });
+    }
+
+    const entry = mergedMap.get(key);
+    // Add asset
+    const assetSn = getAssetSn(item.asset);
+    if (!entry.assets.some(a => a.sn === assetSn)) {
+      entry.assets.push({ sn: assetSn, name: item.asset.name });
+    }
+
+    // Add raw CSR ID
+    const rawCsrId = reqMap.get(reqText) || item.csr.csr_id || item.csr.cybersecurity_requirement_id || 'N/A';
+    if (rawCsrId !== 'N/A') {
+      entry.origCsrIds.add(rawCsrId);
+    }
+  });
+
+  // 4. Generate sorted rows
+  const majorOrder = {
+    "硬件安全 / Hardware Security": 1,
+    "系统安全 / System Security": 2,
+    "密码安全与密钥管理 / Cryptography & Key Management": 3,
+    "应用安全 / Application Security": 4,
+    "数据安全与隐私保护 / Data Security & Privacy": 5,
+    "安全监控与防护 / Security Monitoring & Defense": 6,
+    "通信安全 / Communication Security": 7,
+    "安全开发与运维 / Secure Development & Operations": 8
+  };
+
+  const sortedKeys = Array.from(mergedMap.keys()).sort((a, b) => {
+    const entryA = mergedMap.get(a);
+    const entryB = mergedMap.get(b);
+    const orderA = majorOrder[entryA.majorCategory] || 99;
+    const orderB = majorOrder[entryB.majorCategory] || 99;
+    if (orderA !== orderB) return orderA - orderB;
+    if (entryA.subCategory !== entryB.subCategory) {
+      return entryA.subCategory.localeCompare(entryB.subCategory, 'zh');
+    }
+    return entryA.requirementText.localeCompare(entryB.requirementText, 'zh');
+  });
+
+  const rows = [];
+  let csrNum = 1;
+  sortedKeys.forEach(key => {
+    const entry = mergedMap.get(key);
+    const sortedAssets = entry.assets.sort((a, b) => a.sn.localeCompare(b.sn));
+    const assetSnStr = sortedAssets.map(a => a.sn).join(", ");
+    const assetNameStr = sortedAssets.map(a => a.name).join(", ");
+    const origIdsStr = Array.from(entry.origCsrIds).sort().join(", ");
+
+    const padNum = String(csrNum).padStart(4, '0');
+    const globalCsrId = `CSR_SUM_${String(csrNum).padStart(3, '0')}`;
+
+    rows.push({
+      number: `CSR_${padNum}`,
+      csr_id: globalCsrId,
+      security_domain: `${entry.majorCategory} -> ${entry.subCategory}`,
+      asset_sn: assetSnStr,
+      asset_name: assetNameStr,
+      title: entry.title,
+      sub_title: entry.subTitle,
+      cybersecurity_requirement: entry.requirementText,
+      source_tara_requirements: origIdsStr
+    });
+    csrNum++;
   });
 
   return rows;
