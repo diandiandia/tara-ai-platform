@@ -53,7 +53,7 @@ def get_csr_traceability_maps(stage5_out: dict, req_map: dict) -> tuple:
     建立 TARA 原始需求与合并汇总需求之间的追溯关系
     Returns:
       tara_to_csr: dict, 原始需求文本 -> list of summarized CSR hash IDs
-      csr_to_tara: dict, summarized CSR hash ID -> list of original requirement texts
+      csr_to_tara: dict, summarized CSR hash ID -> list of original requirement IDs (like CSR_XXXX)
     """
     tara_to_csr = {}
     csr_to_tara = {}
@@ -83,7 +83,7 @@ def get_csr_traceability_maps(stage5_out: dict, req_map: dict) -> tuple:
             orig_text = local_id_to_text.get(sid)
             if orig_text:
                 tara_to_csr.setdefault(orig_text, []).append(csr_hash_id)
-                csr_to_tara.setdefault(csr_hash_id, []).append(orig_text)
+                csr_to_tara.setdefault(csr_hash_id, []).append(sid)
                 mapped_any = True
                 
         # 若大模型未显式输出映射（如历史数据），通过文本包含与相似度兜底
@@ -96,9 +96,11 @@ def get_csr_traceability_maps(stage5_out: dict, req_map: dict) -> tuple:
                 csr_clean = csr_text.lower()
                 if orig_clean == csr_clean or orig_clean in csr_clean or csr_clean in orig_clean:
                     tara_to_csr.setdefault(orig_text, []).append(csr_hash_id)
-                    csr_to_tara.setdefault(csr_hash_id, []).append(orig_text)
-                    mapped_any = True
-                    
+                    orig_id = orig_req.get("cybersecurity_requirement_id") or req_map.get(orig_text)
+                    if orig_id:
+                        csr_to_tara.setdefault(csr_hash_id, []).append(orig_id)
+                        mapped_any = True
+                        
             if not mapped_any:
                 import re
                 for orig_req in requirements:
@@ -113,8 +115,10 @@ def get_csr_traceability_maps(stage5_out: dict, req_map: dict) -> tuple:
                         jaccard = len(intersection) / len(union)
                         if jaccard > 0.15:
                             tara_to_csr.setdefault(orig_text, []).append(csr_hash_id)
-                            csr_to_tara.setdefault(csr_hash_id, []).append(orig_text)
-                            
+                            orig_id = orig_req.get("cybersecurity_requirement_id") or req_map.get(orig_text)
+                            if orig_id:
+                                csr_to_tara.setdefault(csr_hash_id, []).append(orig_id)
+                                
     # 去重
     for k in tara_to_csr:
         tara_to_csr[k] = list(set(tara_to_csr[k]))
