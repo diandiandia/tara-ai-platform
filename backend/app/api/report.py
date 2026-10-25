@@ -4,6 +4,7 @@ from sqlalchemy.orm import Session
 from datetime import datetime
 import hashlib
 import os
+import re
 from typing import List
 import openpyxl
 from openpyxl.styles import Font, Alignment, PatternFill, Border, Side
