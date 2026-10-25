@@ -49,158 +49,10 @@ def get_asset_sn(asset) -> str:
     prefix = prefix_map.get(t, "A")
     return f"{prefix}-001_{asset.id:03d}"
 
-def get_csr_traceability_maps(stage5_out: dict, req_map: dict) -> tuple:
-    """
-    建立 TARA 原始需求与合并汇总需求之间的追溯关系
-    Returns:
-      tara_to_csr: dict, 原始需求文本 -> list of summarized CSR hash IDs
-      csr_to_tara: dict, summarized CSR hash ID -> list of original requirement IDs (like CSR_XXXX)
-    """
-    tara_to_csr = {}
-    csr_to_tara = {}
-    
-    requirements = stage5_out.get("requirements", [])
-    summarized_csrs = stage5_out.get("summarized_csrs") or stage5_out.get("summarized_requirements") or []
-    
-    # 1. 建立 local ID -> 原始文本 的映射
-    local_id_to_text = {}
-    for req in requirements:
-        text = str(req.get("cybersecurity_requirement") or "").strip()
-        local_id = str(req.get("cybersecurity_requirement_id") or "").strip()
-        if text and local_id:
-            local_id_to_text[local_id] = text
-            
-    # 2. 通过 source_requirement_ids 或相似度匹配映射
-    for csr in summarized_csrs:
-        csr_text = str(csr.get("cybersecurity_requirement") or "").strip()
-        if not csr_text:
-            continue
-        csr_hash_id = req_map.get(csr_text, csr.get("csr_id") or "N/A")
-        
-        s_ids = csr.get("source_requirement_ids") or []
-        mapped_any = False
-        
-        for sid in s_ids:
-            orig_text = local_id_to_text.get(sid)
-            if orig_text:
-                tara_to_csr.setdefault(orig_text, []).append(csr_hash_id)
-                csr_to_tara.setdefault(csr_hash_id, []).append(sid)
-                mapped_any = True
-                
-        # 若大模型未显式输出映射（如历史数据），通过文本包含与相似度兜底
-        if not mapped_any:
-            for orig_req in requirements:
-                orig_text = str(orig_req.get("cybersecurity_requirement") or "").strip()
-                if not orig_text or orig_text == "N/A":
-                    continue
-                orig_clean = orig_text.lower()
-                csr_clean = csr_text.lower()
-                if orig_clean == csr_clean or orig_clean in csr_clean or csr_clean in orig_clean:
-                    tara_to_csr.setdefault(orig_text, []).append(csr_hash_id)
-                    orig_id = orig_req.get("cybersecurity_requirement_id") or req_map.get(orig_text)
-                    if orig_id:
-                        csr_to_tara.setdefault(csr_hash_id, []).append(orig_id)
-                        mapped_any = True
-                        
-            if not mapped_any:
-                import re
-                for orig_req in requirements:
-                    orig_text = str(orig_req.get("cybersecurity_requirement") or "").strip()
-                    if not orig_text or orig_text == "N/A":
-                        continue
-                    orig_words = set(re.findall(r'[\u4e00-\u9fa5]|\w+', orig_text.lower()))
-                    csr_words = set(re.findall(r'[\u4e00-\u9fa5]|\w+', csr_text.lower()))
-                    if orig_words and csr_words:
-                        intersection = orig_words.intersection(csr_words)
-                        union = orig_words.union(csr_words)
-                        jaccard = len(intersection) / len(union)
-                        if jaccard > 0.15:
-                            tara_to_csr.setdefault(orig_text, []).append(csr_hash_id)
-                            orig_id = orig_req.get("cybersecurity_requirement_id") or req_map.get(orig_text)
-                            if orig_id:
-                                csr_to_tara.setdefault(csr_hash_id, []).append(orig_id)
-                                
-    # 去重
-    for k in tara_to_csr:
-        tara_to_csr[k] = list(set(tara_to_csr[k]))
-    for k in csr_to_tara:
-        csr_to_tara[k] = list(set(csr_to_tara[k]))
-        
-    return tara_to_csr, csr_to_tara
-
-def build_id_maps(steps: List[TaraStep]):
-    goal_set = set()
-    claim_set = set()
-    control_set = set()
-    req_set = set()
-
-    for step in steps:
-        out = step.analysis_result.get("final_output") if step.analysis_result else None
-        if not isinstance(out, dict):
-            out = {}
-        if step.stage == "stage4":
-            decisions = out.get("risk_decisions") or []
-            if not decisions and (out.get("cybersecurity_goal") or out.get("cybersecurity_claim")):
-                decisions = [{
-                    "risk_treatment": out.get("risk_decision", "Retain"),
-                    "cybersecurity_goal": out.get("cybersecurity_goal", ""),
-                    "cybersecurity_claim": out.get("cybersecurity_claim", "")
-                }]
-            for rd in decisions:
-                rt = str(rd.get("risk_treatment") or rd.get("risk_decision") or "Retain").lower()
-                is_exempted = rt in ["accept", "transfer", "share", "retain"]
-                
-                if is_exempted:
-                    claim = str(rd.get("cybersecurity_claim") or "").strip()
-                    if claim and claim != "N/A":
-                        claim_set.add(claim)
-                else:
-                    goal = str(rd.get("cybersecurity_goal") or "").strip()
-                    if goal and goal != "N/A":
-                        goal_set.add(goal)
-        elif step.stage == "stage5":
-            reqs = out.get("requirements") or []
-            if not reqs:
-                cso_val = out.get("cso") or "N/A"
-                csr_list = out.get("csr") or []
-                if cso_val != "N/A" or csr_list:
-                    if isinstance(csr_list, list) and csr_list:
-                        reqs = [{"cybersecurity_control": cso_val, "cybersecurity_requirement": text} for text in csr_list]
-                    else:
-                        reqs = [{"cybersecurity_control": cso_val, "cybersecurity_requirement": str(csr_list)}]
-            
-            for req in reqs:
-                ctrl = str(req.get("cybersecurity_control") or "").strip()
-                if ctrl and ctrl != "N/A":
-                    control_set.add(ctrl)
-                rq = str(req.get("cybersecurity_requirement") or "").strip()
-                if rq and rq != "N/A":
-                    for line in rq.split("\n"):
-                        import re
-                        cleaned = re.sub(r'^\(\d+\)\s*', '', line).strip()
-                        if cleaned and cleaned != "N/A":
-                            req_set.add(cleaned)
-                            
-            summarized_csrs = out.get("summarized_csrs") or []
-            for csr in summarized_csrs:
-                rq = str(csr.get("cybersecurity_requirement") or "").strip()
-                if rq and rq != "N/A":
-                    for line in rq.split("\n"):
-                        import re
-                        cleaned = re.sub(r'^\(\d+\)\s*', '', line).strip()
-                        if cleaned and cleaned != "N/A":
-                            req_set.add(cleaned)
-
-    def _content_hash_id(prefix: str, text: str) -> str:
-        sha256_hash = hashlib.sha256(text.strip().encode('utf-8')).hexdigest()
-        return f"{prefix}{sha256_hash[:8].upper()}"
-
-    goal_map = {g: _content_hash_id("CSO_", g) for g in goal_set}
-    claim_map = {c: _content_hash_id("CLM_", c) for c in claim_set}
-    control_map = {ct: _content_hash_id("CSC_", ct) for ct in control_set}
-    req_map = {r: _content_hash_id("CSR_", r) for r in req_set}
-
-    return goal_map, claim_map, control_map, req_map
+from app.services.csr_synthesis import (
+    build_id_maps,
+    get_csr_traceability_maps
+)
 
 def collect_report_data(steps: List[TaraStep], assets: List[Asset], desensitize: bool, hash_to_global_map: dict = None) -> List[dict]:
     """
@@ -635,22 +487,35 @@ def collect_report_data(steps: List[TaraStep], assets: List[Asset], desensitize:
         if asset_id and req_val and req_val != "N/A" and is_mitigated:
             tara_to_csr, _ = asset_trace_maps.get(asset_id, ({}, {}))
             lines = [line.strip() for line in req_val.split("\n") if line.strip()]
-            matched_csr_ids = []
+            matched_global_ids = []
+            part_to_global_map = {}
             for line in lines:
                 import re
                 cleaned = re.sub(r'^\(\d+\)\s*', '', line).strip()
-                if cleaned and cleaned != "N/A":
-                    matched_csr_ids.extend(tara_to_csr.get(cleaned, []))
-            if matched_csr_ids:
-                if hash_to_global_map:
-                    mapped_ids = [hash_to_global_map.get(cid, cid) for cid in matched_csr_ids]
-                else:
-                    mapped_ids = matched_csr_ids
-                row["merged_csr_id"] = ", ".join(sorted(list(set(mapped_ids))))
+                if not cleaned or cleaned == "N/A":
+                    continue
+                line_global_ids = []
+                # 1. 优先通过原始需求哈希 ID 映射
+                raw_tid = req_map.get(cleaned)
+                if raw_tid and hash_to_global_map and raw_tid in hash_to_global_map:
+                    line_global_ids.append(hash_to_global_map[raw_tid])
+                # 2. 通过资产级汇总 CSR ID 映射
+                for sm_id in tara_to_csr.get(cleaned, []):
+                    if hash_to_global_map and sm_id in hash_to_global_map:
+                        line_global_ids.append(hash_to_global_map[sm_id])
+                    else:
+                        line_global_ids.append(sm_id)
+                part_to_global_map[cleaned] = sorted(list(set(line_global_ids)))
+                matched_global_ids.extend(line_global_ids)
+
+            row["part_to_global_map"] = part_to_global_map
+            if matched_global_ids:
+                row["merged_csr_id"] = ", ".join(sorted(list(set(matched_global_ids))))
             else:
                 row["merged_csr_id"] = "N/A"
         else:
             row["merged_csr_id"] = "N/A"
+            row["part_to_global_map"] = {}
 
     return rows
 
@@ -907,12 +772,21 @@ def create_excel_report(domain: Domain, steps: List[TaraStep], assets: List[Asse
                 parts = [ctext] * len(cids)
                 
             merged_val = str(tara_r.get("merged_csr_id") or "").strip()
-            mapped_aids = [a.strip() for a in merged_val.split(",") if a.strip() and a.strip() != "N/A"]
-            if not mapped_aids:
-                mapped_aids = ["CSR-GEN-001"]
+            fallback_aids = [a.strip() for a in merged_val.split(",") if a.strip() and a.strip() != "N/A"]
+            if not fallback_aids:
+                fallback_aids = ["CSR-GEN-001"]
+                
+            part_to_global = tara_r.get("part_to_global_map", {})
                 
             for cid, part in zip(cids, parts):
-                for aid in mapped_aids:
+                part_clean = re.sub(r'^\(\d+\)\s*', '', part).strip()
+                specific_aids = part_to_global.get(part_clean) or part_to_global.get(part) or []
+                if not specific_aids and hash_to_global_map and cid in hash_to_global_map:
+                    specific_aids = [hash_to_global_map[cid]]
+                if not specific_aids:
+                    specific_aids = fallback_aids
+
+                for aid in sorted(list(set(specific_aids))):
                     a_title, a_domain = atomic_dict.get(aid, ("安全防护要求 / Security Requirement", "通用安全 / General Security"))
                     m_row = [
                         cid,

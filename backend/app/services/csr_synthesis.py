@@ -2,6 +2,7 @@ import os
 import re
 import json
 import time
+import hashlib
 from typing import List, Dict, Tuple, Set
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from sqlalchemy.orm import Session
@@ -153,6 +154,170 @@ def get_asset_sn(asset) -> str:
     t = str(getattr(asset, "asset_type", "") or "").lower().strip()
     p = prefix_map.get(t, "A")
     return f"{p}-{asset.id:03d}"
+
+def build_id_maps(steps: List[TaraStep]):
+    goal_set = set()
+    claim_set = set()
+    control_set = set()
+    req_set = set()
+
+    for step in steps:
+        out = step.analysis_result.get("final_output") if step.analysis_result else None
+        if not isinstance(out, dict):
+            out = {}
+        if step.stage == "stage4":
+            decisions = out.get("risk_decisions") or []
+            if not decisions and (out.get("cybersecurity_goal") or out.get("cybersecurity_claim")):
+                decisions = [{
+                    "risk_treatment": out.get("risk_decision", "Retain"),
+                    "cybersecurity_goal": out.get("cybersecurity_goal", ""),
+                    "cybersecurity_claim": out.get("cybersecurity_claim", "")
+                }]
+            for rd in decisions:
+                rt = str(rd.get("risk_treatment") or rd.get("risk_decision") or "Retain").lower()
+                is_exempted = rt in ["accept", "transfer", "share", "retain"]
+                
+                if is_exempted:
+                    claim = str(rd.get("cybersecurity_claim") or "").strip()
+                    if claim and claim != "N/A":
+                        claim_set.add(claim)
+                else:
+                    goal = str(rd.get("cybersecurity_goal") or "").strip()
+                    if goal and goal != "N/A":
+                        goal_set.add(goal)
+        elif step.stage == "stage5":
+            reqs = out.get("requirements") or []
+            if not reqs:
+                cso_val = out.get("cso") or "N/A"
+                csr_list = out.get("csr") or []
+                if cso_val != "N/A" or csr_list:
+                    if isinstance(csr_list, list) and csr_list:
+                        reqs = [{"cybersecurity_control": cso_val, "cybersecurity_requirement": text} for text in csr_list]
+                    else:
+                        reqs = [{"cybersecurity_control": cso_val, "cybersecurity_requirement": str(csr_list)}]
+            
+            for req in reqs:
+                ctrl = str(req.get("cybersecurity_control") or "").strip()
+                if ctrl and ctrl != "N/A":
+                    control_set.add(ctrl)
+                rq = str(req.get("cybersecurity_requirement") or "").strip()
+                if rq and rq != "N/A":
+                    for line in rq.split("\n"):
+                        cleaned = re.sub(r'^\(\d+\)\s*', '', line).strip()
+                        if cleaned and cleaned != "N/A":
+                            req_set.add(cleaned)
+                            
+            summarized_csrs = out.get("summarized_csrs") or []
+            for csr in summarized_csrs:
+                rq = str(csr.get("cybersecurity_requirement") or "").strip()
+                if rq and rq != "N/A":
+                    for line in rq.split("\n"):
+                        cleaned = re.sub(r'^\(\d+\)\s*', '', line).strip()
+                        if cleaned and cleaned != "N/A":
+                            req_set.add(cleaned)
+
+    def _content_hash_id(prefix: str, text: str) -> str:
+        sha256_hash = hashlib.sha256(text.strip().encode('utf-8')).hexdigest()
+        return f"{prefix}{sha256_hash[:8].upper()}"
+
+    goal_map = {g: _content_hash_id("CSO_", g) for g in goal_set}
+    claim_map = {c: _content_hash_id("CLM_", c) for c in claim_set}
+    control_map = {ct: _content_hash_id("CSC_", ct) for ct in control_set}
+    req_map = {r: _content_hash_id("CSR_", r) for r in req_set}
+
+    return goal_map, claim_map, control_map, req_map
+
+def get_csr_traceability_maps(stage5_out: dict, req_map: dict) -> tuple:
+    """
+    建立 TARA 原始需求 (Tier 1) 与资产级合并汇总需求 (Tier 2) 之间的追溯关系
+    Returns:
+      tara_to_csr: dict, 原始需求文本 -> list of summarized CSR hash IDs
+      csr_to_tara: dict, summarized CSR hash ID -> list of original raw requirement IDs (CSR_XXXXXXXX)
+    """
+    tara_to_csr = {}
+    csr_to_tara = {}
+    
+    requirements = stage5_out.get("requirements", [])
+    summarized_csrs = stage5_out.get("summarized_csrs") or stage5_out.get("summarized_requirements") or []
+    
+    # 1. 为每个原始需求构建别名索引映射到 (text, raw_tara_id)
+    # 支持 CSR-001, CSR-1, 1, 原始 requirement_id, req_map 中的哈希 ID
+    alias_to_req = {}
+    for idx, req in enumerate(requirements, 1):
+        text = str(req.get("cybersecurity_requirement") or "").strip()
+        if not text or text == "N/A":
+            continue
+        raw_tara_id = req_map.get(text, req.get("cybersecurity_requirement_id") or f"CSR_{idx:04d}")
+        req_entry = (text, raw_tara_id)
+        
+        aliases = [
+            f"CSR-{idx:03d}",
+            f"CSR-{idx}",
+            f"CSR_{idx:03d}",
+            f"CSR_{idx}",
+            str(idx),
+            raw_tara_id
+        ]
+        local_id = str(req.get("cybersecurity_requirement_id") or "").strip()
+        if local_id:
+            aliases.append(local_id)
+            
+        for a in aliases:
+            alias_to_req[str(a).lower().strip()] = req_entry
+
+    # 2. 遍历 summarized_csrs 建立双向追溯
+    for csr in summarized_csrs:
+        csr_text = str(csr.get("cybersecurity_requirement") or "").strip()
+        if not csr_text:
+            continue
+        csr_hash_id = req_map.get(csr_text, csr.get("csr_id") or "N/A")
+        
+        s_ids = csr.get("source_requirement_ids") or []
+        mapped_any = False
+        
+        for sid in s_ids:
+            key = str(sid).lower().strip()
+            if key in alias_to_req:
+                orig_text, raw_tara_id = alias_to_req[key]
+                tara_to_csr.setdefault(orig_text, []).append(csr_hash_id)
+                csr_to_tara.setdefault(csr_hash_id, []).append(raw_tara_id)
+                mapped_any = True
+                
+        # 兜底：如果 source_requirement_ids 无法匹配
+        if not mapped_any:
+            for req in requirements:
+                orig_text = str(req.get("cybersecurity_requirement") or "").strip()
+                if not orig_text or orig_text == "N/A":
+                    continue
+                raw_tara_id = req_map.get(orig_text, req.get("cybersecurity_requirement_id") or "N/A")
+                orig_clean = orig_text.lower()
+                csr_clean = csr_text.lower()
+                if orig_clean == csr_clean or orig_clean in csr_clean or csr_clean in orig_clean:
+                    tara_to_csr.setdefault(orig_text, []).append(csr_hash_id)
+                    csr_to_tara.setdefault(csr_hash_id, []).append(raw_tara_id)
+                    mapped_any = True
+                    
+            if not mapped_any:
+                for req in requirements:
+                    orig_text = str(req.get("cybersecurity_requirement") or "").strip()
+                    if not orig_text or orig_text == "N/A":
+                        continue
+                    raw_tara_id = req_map.get(orig_text, req.get("cybersecurity_requirement_id") or "N/A")
+                    orig_words = set(re.findall(r"[\u4e00-\u9fa5]{2,}|\w{3,}", orig_text.lower()))
+                    csr_words = set(re.findall(r"[\u4e00-\u9fa5]{2,}|\w{3,}", csr_text.lower()))
+                    if orig_words and csr_words:
+                        sim = len(orig_words.intersection(csr_words)) / len(orig_words.union(csr_words))
+                        if sim >= 0.40:
+                            tara_to_csr.setdefault(orig_text, []).append(csr_hash_id)
+                            csr_to_tara.setdefault(csr_hash_id, []).append(raw_tara_id)
+
+    # 去重
+    for k in tara_to_csr:
+        tara_to_csr[k] = list(set(tara_to_csr[k]))
+    for k in csr_to_tara:
+        csr_to_tara[k] = list(set(csr_to_tara[k]))
+        
+    return tara_to_csr, csr_to_tara
 
 def clean_and_parse_json(text: str) -> dict:
     text = text.strip()
@@ -328,9 +493,10 @@ def synthesize_domain_csrs_with_llm(db: Session, domain_name: str, items: list) 
         print(f"[TARA-AI] 警告: 【{domain_name}】大模型提炼失败 ({e})，平滑切换至通用语义算法兜底...")
         return semantic_fallback_clustering(domain_name, items)
 
-def synthesize_project_csrs(db: Session, all_csrs: list) -> list:
+def synthesize_project_csrs(db: Session, all_csrs: list, global_tier2_to_tier1: dict = None) -> list:
     """
-    对跨资产收集到的所有底层安全需求按 8 大安全分类域进行并发大模型全局提炼与编号
+    对跨资产收集到的所有底层安全需求按 8 大安全分类域进行并发大模型全局提炼与编号，
+    并将 Tier 2 资产级汇总 CSR ID 自动穿透解析为 Tier 1 TARA 原始需求 ID (CSR_XXXXXXXX)。
     """
     items_by_domain = {d: [] for d in MAJOR_ORDER.keys()}
     
@@ -399,12 +565,24 @@ def synthesize_project_csrs(db: Session, all_csrs: list) -> list:
                 asset_name_str = str(applicable_assets)
                 
             source_ids = c.get("source_requirement_ids") or []
-            if isinstance(source_ids, list):
-                source_ids_str = ", ".join(sorted(str(s) for s in source_ids if s))
-                source_cnt = len(source_ids)
+            if not isinstance(source_ids, list):
+                source_ids = [s.strip() for s in str(source_ids).split(",") if s.strip()]
+
+            # 将 Tier 2 的资产级汇总 CSR ID 穿透解析为 Tier 1 的 TARA 原始需求 ID (CSR_XXXXXXXX)
+            resolved_tier1_ids = set()
+            if global_tier2_to_tier1:
+                for sid in source_ids:
+                    t1_list = global_tier2_to_tier1.get(sid)
+                    if t1_list:
+                        resolved_tier1_ids.update(t1_list)
+                    else:
+                        resolved_tier1_ids.add(sid)
             else:
-                source_ids_str = str(source_ids)
-                source_cnt = len(source_ids_str.split(","))
+                resolved_tier1_ids.update(source_ids)
+                
+            sorted_tier1_ids = sorted(list(resolved_tier1_ids))
+            source_ids_str = ", ".join(sorted_tier1_ids)
+            source_cnt = len(sorted_tier1_ids)
                 
             final_rows.append({
                 "number": dyn_csr_id,
@@ -419,7 +597,8 @@ def synthesize_project_csrs(db: Session, all_csrs: list) -> list:
                 "cybersecurity_requirement": c.get("cybersecurity_requirement") or "",
                 "source_tara_requirements": source_ids_str,
                 "source_count": source_cnt,
-                "_raw_source_ids": source_ids
+                "_raw_source_ids": sorted_tier1_ids,
+                "_tier2_source_ids": source_ids
             })
             
     return final_rows
@@ -429,26 +608,57 @@ def get_or_synthesize_global_csrs(db: Session, domain: Domain, steps: list, asse
     获取或执行项目级全局网络安全需求归纳提炼。
     优先命中 TaraStep(stage='global_csr') 缓存；若未命中则执行基于大模型+UNECE R155的综合归纳并写入缓存。
     """
-    # 1. 尝试从已有 steps 中读取 global_csr 缓存
-    for s in steps:
-        if s.stage == "global_csr" and s.analysis_result:
-            fo = s.analysis_result.get("final_output", {})
-            cached_rows = fo.get("consolidated_csrs", [])
-            if cached_rows:
-                if hash_to_global_map is not None:
-                    for r in cached_rows:
-                        cid = r.get("csr_id")
-                        for sid in r.get("_raw_source_ids", []):
-                            hash_to_global_map[sid] = cid
-                return cached_rows
-
-    # 2. 收集所有资产在 Stage 5 产出的原始安全需求
     steps_by_asset = {}
     for step in steps:
         if step.asset_id not in steps_by_asset:
             steps_by_asset[step.asset_id] = {}
         steps_by_asset[step.asset_id][step.stage] = step
 
+    # 构建全局 Tier 2 到 Tier 1 (CSR_XXXXXXXX) 的穿透追溯字典
+    goal_map, claim_map, control_map, req_map = build_id_maps(steps)
+    global_tier2_to_tier1 = {}
+    for asset in assets:
+        asset_steps = steps_by_asset.get(asset.id, {})
+        if not asset_steps:
+            continue
+        stage5_out = asset_steps.get("stage5").analysis_result.get("final_output", {}) if asset_steps.get("stage5") else {}
+        _, csr_to_tara = get_csr_traceability_maps(stage5_out, req_map)
+        for k, v in csr_to_tara.items():
+            global_tier2_to_tier1.setdefault(k, set()).update(v)
+
+    # 1. 尝试从已有 steps 中读取 global_csr 缓存
+    for s in steps:
+        if s.stage == "global_csr" and s.analysis_result:
+            fo = s.analysis_result.get("final_output", {})
+            cached_rows = fo.get("consolidated_csrs", [])
+            if cached_rows:
+                # 动态保证 cached_rows 的 source_tara_requirements 解析为 Tier 1 原始 ID
+                for r in cached_rows:
+                    cid = r.get("csr_id")
+                    current_sources = r.get("_raw_source_ids") or []
+                    tier2_sources = r.get("_tier2_source_ids") or current_sources
+                    resolved_t1 = set()
+                    for sid in tier2_sources:
+                        t1_list = global_tier2_to_tier1.get(sid)
+                        if t1_list:
+                            resolved_t1.update(t1_list)
+                        else:
+                            resolved_t1.add(sid)
+                    if resolved_t1:
+                        sorted_t1 = sorted(list(resolved_t1))
+                        r["source_tara_requirements"] = ", ".join(sorted_t1)
+                        r["source_count"] = len(sorted_t1)
+                        r["_raw_source_ids"] = sorted_t1
+                        r["_tier2_source_ids"] = tier2_sources
+                        
+                    if hash_to_global_map is not None:
+                        for tid in r.get("_raw_source_ids", []):
+                            hash_to_global_map[tid] = cid
+                        for sid in tier2_sources:
+                            hash_to_global_map[sid] = cid
+                return cached_rows
+
+    # 2. 收集所有资产在 Stage 5 产出的原始安全需求
     all_csrs = []
     for asset in assets:
         asset_steps = steps_by_asset.get(asset.id, {})
@@ -474,13 +684,15 @@ def get_or_synthesize_global_csrs(db: Session, domain: Domain, steps: list, asse
             all_csrs.append({"asset": asset, "csr": csr})
 
     # 3. 执行全局项目级提炼
-    rows = synthesize_project_csrs(db, all_csrs)
+    rows = synthesize_project_csrs(db, all_csrs, global_tier2_to_tier1)
 
     # 4. 填充 hash_to_global_map 追溯映射
     if hash_to_global_map is not None:
         for r in rows:
             cid = r.get("csr_id")
-            for sid in r.get("_raw_source_ids", []):
+            for tid in r.get("_raw_source_ids", []):
+                hash_to_global_map[tid] = cid
+            for sid in r.get("_tier2_source_ids", []):
                 hash_to_global_map[sid] = cid
 
     # 5. 持久化到数据库 TaraStep 作为缓存
