@@ -16,9 +16,34 @@
 
 ---
 
-## 2. 数据库与后端部署启动
+## 2. Linux 原生一键部署与运行 (推荐)
 
-### Step 2.1: 启动 Redis 缓存服务
+为简化 Linux 服务器环境的部署复杂度，项目已提供全套自动化脚本。在项目根目录下执行一条指令即可完成环境依赖检查、虚拟环境创建、依赖安装、数据库初始化、默认管理员创建、前端生产构建与后台服务拉起：
+
+### Step 2.1: 执行一键部署
+```bash
+# 赋予脚本执行权限并启动部署
+chmod +x *.sh
+./deploy.sh
+```
+
+部署脚本会自动完成后端 FastAPI (8000端口)、Celery 跑批 Worker 及前端静态反代服务 (3000端口) 的后台常驻拉起。
+
+### Step 2.2: 运维管理指令
+```bash
+./status.sh   # 查看所有服务运行状态及访问地址
+./stop.sh     # 一键停止所有后台服务
+./restart.sh  # 一键重启所有服务
+./start.sh    # 快速启动服务（无需重复构建）
+```
+
+---
+
+## 3. 手动分步部署与本地开发模式 (可选)
+
+如需针对单个模块进行代码调试或深入排查，可按照以下分步指南手动启动：
+
+### Step 3.1: 启动 Redis 缓存服务
 确保 Redis 服务已在后台正常运行：
 ```bash
 # Ubuntu/Debian 系统启动并检查
@@ -26,7 +51,7 @@ sudo service redis-server start
 redis-cli ping  # 应返回 PONG
 ```
 
-### Step 2.2: 初始化 Python 虚拟环境与依赖
+### Step 3.2: 初始化 Python 虚拟环境与依赖
 进入 `backend` 文件夹，安装依赖并执行数据库迁移：
 ```bash
 cd backend  # 项目根目录下执行
@@ -40,7 +65,7 @@ pip install --upgrade pip
 pip install -r requirements.txt
 ```
 
-### Step 2.3: 初始化 SQLite 数据库与默认管理员
+### Step 3.3: 初始化 SQLite 数据库与默认管理员
 ```bash
 # 1. 一键建表初始化
 python manage.py init-db
@@ -49,7 +74,7 @@ python manage.py init-db
 python manage.py create-admin --user admin --pwd Admin123
 ```
 
-### Step 2.4: 启动 FastAPI 后端 API 服务
+### Step 3.4: 启动 FastAPI 后端 API 服务
 ```bash
 # 激活虚拟环境并启动测试服务器 (监听 8000 端口)
 source venv/bin/activate
@@ -57,7 +82,7 @@ python -m uvicorn app.main:app --host 0.0.0.0 --port 8000
 ```
 启动成功后，可在浏览器访问 Swagger API 交互文档：[http://localhost:8000/docs](http://localhost:8000/docs)
 
-### Step 2.5: 启动 Celery 异步跑批任务进程
+### Step 3.5: 启动 Celery 异步跑批任务进程
 打开另一个终端，激活虚拟环境并启动异步 Worker：
 ```bash
 cd backend  # 项目根目录下执行
@@ -65,20 +90,21 @@ source venv/bin/activate
 celery -A app.core.celery_app worker --loglevel=info
 ```
 
----
-
-## 3. 前端部署与运行
-
-进入 `frontend` 文件夹，执行依赖安装并启动 Vite 热更新服务器：
+### Step 3.6: 前端生产构建与预览启动
+在另一终端进入 `frontend` 文件夹：
 ```bash
 cd frontend  # 项目根目录下执行
 
 # 1. 安装 npm 包
 npm install
 
-# 2. 启动前端测试服务并监听 3000 端口
-npm run dev -- --host 0.0.0.0 --port 3000
+# 2. 编译生产静态文件
+npm run build
+
+# 3. 启动生产静态反代预览服务 (监听 3000 端口)
+npm run preview -- --host 0.0.0.0 --port 3000
 ```
+> **注意**：线上服务器部署请勿运行 `npm run dev`，避免暴露开发中间件与触发外部扫描语法报错。开发调试可在本地机器运行 `npm run dev`。
 启动成功后，访问前端控制台页面：[http://localhost:3000/](http://localhost:3000/)
 
 ---

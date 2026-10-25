@@ -55,7 +55,26 @@ TARA AI Platform 是一款专门面向汽车行业的网络安全威胁分析与
 
 ## 🚀 快速启动指南
 
-### 方式一：Docker Compose 启动 (推荐)
+### 方式一：Linux 原生一键部署 (推荐)
+
+无需编写繁琐命令或配置 Docker，在 Linux 服务器项目根目录下直接执行一键部署脚本：
+
+```bash
+chmod +x *.sh
+./deploy.sh
+```
+
+脚本将自动检查依赖、初始化后端 Python 虚拟环境与数据库、编译前端生产包并在后台启动所有全栈服务。
+
+**运维管理指令**：
+- 查看服务状态: `./status.sh`
+- 停止所有服务: `./stop.sh`
+- 重启所有服务: `./restart.sh`
+- 快速拉起服务: `./start.sh`
+
+---
+
+### 方式二：Docker Compose 启动 (推荐)
 一键启动完整生产环境服务（包括 API、Web 前端、Redis 及 Celery Worker 异步跑批器）：
 ```bash
 docker-compose up -d --build
@@ -65,7 +84,7 @@ docker-compose up -d --build
 
 ---
 
-### 方式二：本地开发调试启动
+### 方式三：分步本地开发调试启动 (可选)
 
 #### 1. 启动依赖服务 (Redis)
 确保本地 Redis 服务已启动，并在端口 `6379` 上监听。

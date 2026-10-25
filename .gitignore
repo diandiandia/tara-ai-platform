@@ -29,6 +29,9 @@ MANIFEST
 nosetests.xml
 coverage.xml
 *.cover
+# --- Logs and PIDs ---
+logs/
+*.pid
 *.log
 .mypy_cache/
 .dmypy.json
