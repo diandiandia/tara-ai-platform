@@ -676,303 +676,31 @@ def clean_major_category(domain_str: str) -> str:
 
 
 # -------------------------------------------------------------------------
-# ISO/SAE 21434 Concept-Phase Domain Prefix Map & Security Mechanism Taxonomy
+# ISO/SAE 21434 & UNECE R155 Concept-Phase Global CSR Synthesis Integration
 # -------------------------------------------------------------------------
-DOMAIN_PREFIX_MAP = {
-    "硬件安全 / Hardware Security": "CSR-HW",
-    "系统安全 / System Security": "CSR-SYS",
-    "密码安全与密钥管理 / Cryptography & Key Management": "CSR-CRY",
-    "应用安全 / Application Security": "CSR-APP",
-    "数据安全与隐私保护 / Data Security & Privacy": "CSR-DAT",
-    "安全监控、测试与响应 / Security Monitoring, Testing & Response": "CSR-MON",
-    "通信安全 / Communication Security": "CSR-COM",
-    "安全开发、供应链与运维 / Secure Development, Supply Chain & Operations": "CSR-OPS",
-    "通用安全与其它 / General & Other Security": "CSR-GEN"
-}
+from app.services.csr_synthesis import (
+    DOMAIN_PREFIX_MAP,
+    MAJOR_ORDER,
+    get_or_synthesize_global_csrs
+)
 
-# ISO/SAE 21434 & UNECE R155 Standard Security Mechanism Taxonomy for Concept-Phase Deduplication
-MECHANISM_KEYS = {
-    "硬件安全 / Hardware Security": [
-        ("HW_SIDE_CHANNEL", ["侧信道", "故障注入", "功耗", "掩码", "毛刺", "恒定时间", "side-channel", "fault injection"]),
-        ("HW_STORAGE", ["外部存储", "flash", "emmc", "puf", "脱机", "拆焊", "存储绑定"]),
-        ("HW_TAMPER", ["防拆", "外壳", "连接器", "线束", "布线", "探针", "物理防护", "物理防拆", "开盖", "tamper"]),
-        ("HW_LINK_MONITOR", ["物理链路", "供电完整性", "短路", "过压", "鲁棒性", "探头"]),
-        ("HW_BOOT_ROOT", ["信任根", "硬件根", "安全启动", "bootrom"]),
-        ("HW_DEBUG", ["调试", "jtag", "swd", "uart", "测试点", "debug", "熔丝", "熔断"]),
-    ],
-    "系统安全 / System Security": [
-        ("SYS_ROLLBACK", ["防回滚", "单调计数器", "抗回滚", "版本计数器", "anti-rollback", "monotonic"]),
-        ("SYS_AB_UPDATE", ["a/b", "双分区", "刷写回滚", "原子更新", "分区恢复", "安全更新", "更新签名"]),
-        ("SYS_BOOT", ["启动链", "安全启动", "bootrom", "启动完整性", "固件签名校验", "固件签名验证", "引导加载"]),
-        ("SYS_RUNTIME_INTEGRITY", ["运行时", "度量", "代码完整性", "未授权代码执行", "内存破坏", "安全降级", "安全复位", "运行时系统强化", "数据处理完整性"]),
-        ("SYS_COMPILER_MEM", ["内存防护", "aslr", "kaslr", "栈溢出", "dep", "canary", "编译加固", "栈保护", "金丝雀"]),
-        ("SYS_ACCESS_CTRL", ["selinux", "强制访问控制", "mac", "只读分区", "root", "权限隔离", "最小权限", "文件系统细粒度"]),
-        ("SYS_STORAGE_QUOTA", ["配额", "日志轮转", "日志轮换", "存储资源", "防耗尽", "文件服务资源可用性", "防泛洪", "可用性保护"]),
-        ("SYS_WATCHDOG_AVAIL", ["看门狗", "可用性保障", "超时复位", "死锁检测", "时间基准", "故障隔离"]),
-        ("SYS_PRIVILEGE_AUTH", ["特权", "会话身份绑定", "命令滥用", "诊断访问", "配置授权", "接口安全", "会话令牌", "调试授权", "调试接口", "访问控制", "强认证"]),
-    ],
-    "密码安全与密钥管理 / Cryptography & Key Management": [
-        ("CRY_PKI_CERT", ["证书", "pki", "私钥", "证书轮换", "crl", "ocsp", "公钥"]),
-        ("CRY_PAYLOAD_ENC", ["载荷", "端到端加密", "对称加密", "aes", "sm4", "感知数据加密", "图像流机密性", "应用层加密"]),
-        ("CRY_FW_SIGN", ["固件包签名", "更新包加密", "安装后完整性复核", "激活前校验", "验签"]),
-        ("CRY_LOG_SEC", ["转储", "core dump", "调试日志机密性"]),
-        ("CRY_ZEROIZE", ["密码模块侧信道", "零化", "主动置零", "密钥销毁"]),
-        ("CRY_HSM_KEY", ["hsm", "密钥生成", "密钥存储", "密钥管理", "根密钥", "安全存储"]),
-    ],
-    "应用安全 / Application Security": [
-        ("APP_VULN_INPUT", ["输入校验", "路径遍历", "符号链接", "参数校验", "fuzzing", "模糊测试", "格式化字符串", "缓冲区"]),
-        ("APP_MIDDLEWARE", ["some/ip", "服务发布", "服务订阅", "ipc", "中间件授权", "服务注册", "rpc"]),
-        ("APP_FILE_DB", ["ota安装日志接口", "调试日志与核心转储写入流", "文件/数据库", "访问控制列表"]),
-        ("APP_API_AUTH", ["地图与ota授权", "ota下载授权", "外部接口鉴权", "idor", "接口权限"]),
-        ("APP_BRUTE_FORCE", ["未授权访问审计", "账户锁定", "锁定", "防暴力破解"]),
-        ("APP_OBFUSCATION", ["符号剥离", "二进制加固", "知识产权", "代码混淆", "反逆向"]),
-        ("APP_EXEC_ENV", ["安全执行环境", "沙箱", "隔离运行"]),
-    ],
-    "数据安全与隐私保护 / Data Security & Privacy": [
-        ("DAT_SENSOR_PRIVACY", ["视频日志脱敏", "图像帧缓冲隐私", "视频元数据隐私", "人脸", "车牌", "摄像头"]),
-        ("DAT_DRIVING_PRIVACY", ["轨迹", "行驶状态", "感知数据隐私", "个人数据隐私", "去标识化", "匿名化", "位置信息"]),
-        ("DAT_LOG_PRIVACY", ["日志脱敏", "诊断与gnss日志", "点云与诊断日志", "敏感通信数据加密与日志脱敏", "调试数据脱敏", "脱敏与受控导出"]),
-        ("DAT_REST_ENC", ["静态加密", "静态文件", "外置存储加密", "受保护存储", "敏感文件访问控制与静态加密", "片上存储", "敏感参数"]),
-        ("DAT_ERASURE", ["安全擦除", "法定保留边界", "临时敏感数据安全擦除", "数据销毁"]),
-        ("DAT_NON_REPUDIATION", ["防篡改及不可否认", "真实性与防篡改审计", "密码学完整性与防抵赖", "上传数据不可否认", "防抵赖"]),
-        ("DAT_INTEGRITY", ["来源认证与防重放", "校准数据与配置文件完整性", "地图缓存完整性", "缓存与审计记录真实性", "数据完整性"]),
-        ("DAT_EXPORT_CTRL", ["数据导出", "受控导出", "导出授权"]),
-        ("DAT_OTA_INTEGRITY", ["ota固件包完整性与防回滚", "ota与tls元数据隐私", "ota更新包"]),
-        ("DAT_GENERAL", ["数据生命周期", "敏感数据机密性"]),
-    ],
-    "安全监控、测试与响应 / Security Monitoring, Testing & Response": [
-        ("MON_DEBUG_AUDIT", ["调试审计日志", "调试操作审计", "调试会话记录"]),
-        ("MON_OTA_AUDIT", ["ota下载非抵赖", "地图与ota事务不可否认", "ota审计"]),
-        ("MON_AUDIT_QUOTA", ["配额", "写入流的存储配额", "存储耗尽"]),
-        ("MON_TIME_WATCHDOG", ["时间源欺骗", "资源监控与失效安全", "时钟源", "时钟同步"]),
-        ("MON_IDS_BUS", ["总线洪泛", "接口可用性防护", "通信可用性", "总线监控与流量控制", "入侵检测", "异常流量", "ids"]),
-        ("MON_AUDIT_INTEGRITY", ["不可否认性要求", "安全日志防篡改", "安全审计日志防篡改", "安全失效保护与安全事件审计", "时间同步安全事件审计", "日志防篡改"]),
-        ("MON_CONTINUOUS", ["连续监控", "异常检测", "安全事件响应", "应急响应"]),
-    ],
-    "通信安全 / Communication Security": [
-        ("COM_SECOC", ["secoc", "can总线", "can/canfd", "车载总线", "报文认证"]),
-        ("COM_LINK_SEC", ["802.1x", "macsec"]),
-        ("COM_TLS_CLOUD", ["tls", "mtls", "车云通信", "车云双向认证", "安全通道", "车云身份认证", "私有apn"]),
-        ("COM_TIME_SYNC", ["ptp", "时间同步"]),
-        ("COM_MEDIA_STREAM", ["视频流", "rtp", "rtsp", "摄像头源", "图像帧"]),
-        ("COM_SERIAL_BUS", ["spi", "超声波uart", "gnss uart", "uart汇聚流", "gnss数据流", "串行传感器", "串口"]),
-        ("COM_WHITELIST_SEG", ["白名单", "默认拒绝", "通信矩阵", "域隔离", "网络隔离", "防火墙"]),
-        ("COM_RATE_LIMIT", ["流量控制", "限速", "抗拒绝服务", "抗dos", "通信可用性"]),
-        ("COM_SOMEIP", ["some/ip", "服务发布订阅", "中间件服务"]),
-        ("COM_OTA_COMM", ["ota传输", "ota请求", "ota包真实性", "固件下载"]),
-        ("COM_DEBUG_SESSION", ["调试命令", "控制台", "调试与刷写", "诊断与调试会话", "诊断写服务", "安全jtag", "usb调试", "诊断服务"]),
-        ("COM_GENERAL", ["车内通信安全", "防重放"]),
-    ],
-    "安全开发、供应链与运维 / Secure Development, Supply Chain & Operations": [
-        ("OPS_PROD_CLEAN", ["清理", "二进制保护", "调试认证", "量产调试接口清理"]),
-        ("OPS_PROVENANCE", ["来料检验", "溯源", "uid"]),
-        ("OPS_KEY_PROVISION", ["安全配给", "密钥注入"]),
-        ("OPS_VULN_SBOM", ["漏洞管理", "安全编码", "sbom", "开源软件"]),
-        ("OPS_MAINTENANCE", ["维护模式", "备份恢复", "配置核查", "权限基线"]),
-        ("OPS_OTA_MGMT", ["ota端到端", "安全更新", "ota审计"]),
-        ("OPS_LIFECYCLE", ["生命周期管理", "供应链安全"]),
-    ]
-}
-
-def classify_mechanism(major_cat: str, sub_cat: str, title: str, req_text: str) -> str:
+def collect_csr_report_data(steps, assets, hash_to_global_map: dict = None, db: Session = None, domain: Domain = None):
     """
-    基于 ISO/SAE 21434 概念阶段安全机制对需求进行动态语义聚合归类。
-    若匹配标准安全机制分类，则归纳至该机制；
-    若包含新型或特定资产自定义机制，则动态保留其规范化子分类，确保不丢失任何需求且不硬编码静态文本。
+    收集并进行全局去重、合并与两级安全分类整理项目级网络安全需求（CSR）数据。
+    基于 UNECE R155 Annex 5 规范指引与大模型全局综合提炼，支持自动持久化与语义兜底。
     """
-    corpus = f"{major_cat} {sub_cat} {title} {req_text}".lower()
-    patterns = MECHANISM_KEYS.get(major_cat, [])
-    for mech_id, keywords in patterns:
-        if any(k in corpus for k in keywords):
-            return mech_id
-            
-    # 动态兜底机制：提取子分类核心字符作为动态机制键，保证新型/独特安全需求独立成项不被挤压
-    clean_sub = re.sub(r"[^a-zA-Z0-9\u4e00-\u9fa5]", "", sub_cat).lower()[:15]
-    return f"DYN_{clean_sub}" if clean_sub else "DYN_GENERAL"
+    if db is None:
+        from app.core.database import SessionLocal
+        local_db = SessionLocal()
+        try:
+            return get_or_synthesize_global_csrs(local_db, domain, steps, assets, hash_to_global_map)
+        finally:
+            local_db.close()
+    else:
+        return get_or_synthesize_global_csrs(db, domain, steps, assets, hash_to_global_map)
 
 
-def collect_csr_report_data(steps, assets, hash_to_global_map: dict = None):
-    """
-    依据 ISO/SAE 21434 概念阶段规范，对各资产在分析阶段产出的网络安全需求（CSR）进行
-    动态语义聚合、资产解耦、原子化去重与项目级全局编号。
-    
-    100% 保留大模型与系统分析动态生成的真实需求表述与中英文双语内容，杜绝静态写死文本。
-    """
-    steps_by_asset = {}
-    for step in steps:
-        if step.asset_id not in steps_by_asset:
-            steps_by_asset[step.asset_id] = {}
-        steps_by_asset[step.asset_id][step.stage] = step
-
-    _, _, _, req_map = build_id_maps(steps)
-
-    # Pre-build traceability maps for all assets
-    asset_trace_maps = {}
-    for asset in assets:
-        asset_steps = steps_by_asset.get(asset.id, {})
-        stage5_out = asset_steps.get("stage5").analysis_result.get("final_output", {}) if asset_steps.get("stage5") else {}
-        asset_trace_maps[asset.id] = get_csr_traceability_maps(stage5_out, req_map)
-
-    # 1. 收集所有底层的安全需求并进行归档
-    all_csrs = []
-    for asset in assets:
-        asset_steps = steps_by_asset.get(asset.id, {})
-        if not asset_steps:
-            continue
-            
-        stage5_out = asset_steps.get("stage5").analysis_result.get("final_output", {}) if asset_steps.get("stage5") else {}
-        summarized_csrs = stage5_out.get("summarized_csrs", [])
-        
-        # 兜底：如果 summarized_csrs 为空，从 requirements 中提取
-        if not summarized_csrs:
-            requirements = stage5_out.get("requirements", [])
-            seen_req_texts = set()
-            summarized_csrs = []
-            for req in requirements:
-                req_text = req.get("cybersecurity_requirement") or ""
-                if not req_text or req_text in seen_req_texts:
-                    continue
-                seen_req_texts.add(req_text)
-                
-                req_id = req.get("cybersecurity_requirement_id") or f"CSR-{asset.id:03d}-{len(seen_req_texts):02d}"
-                
-                summarized_csrs.append({
-                    "cybersecurity_requirement_id": req_id,
-                    "csr_id": req_id,
-                    "title": req.get("title") or f"针对 {asset.name} 的安全要求 / Security requirement for {asset.name}",
-                    "sub_title": req.get("sub_title") or f"安全防护 / Cybersecurity Protection",
-                    "security_domain": req.get("security_domain"),
-                    "cybersecurity_requirement": req_text
-                })
-                
-        for csr in summarized_csrs:
-            all_csrs.append({
-                "asset": asset,
-                "csr": csr
-            })
-
-    # 2. 对所有需求进行动态语义聚类与跨资产解耦去重
-    merged_map = {}
-    
-    for item in all_csrs:
-        asset = item["asset"]
-        csr = item["csr"]
-        req_text = str(csr.get("cybersecurity_requirement") or "").strip()
-        if not req_text or req_text == "N/A":
-            continue
-            
-        raw_domain = str(csr.get("security_domain") or "").strip()
-        if "->" in raw_domain:
-            parts = raw_domain.split("->")
-            major_cat = clean_major_category(parts[0])
-            sub_cat = parts[1].strip()
-        else:
-            major_cat = clean_major_category(raw_domain)
-            sub_cat = str(csr.get("sub_title") or csr.get("sub_category") or "通用防护 / General Protection").strip()
-            
-        title = str(csr.get("title") or "安全要求 / Security Requirement").strip()
-        
-        # 动态机制归类
-        mech_key = classify_mechanism(major_cat, sub_cat, title, req_text)
-        cluster_key = f"{major_cat}::{mech_key}"
-        
-        if cluster_key not in merged_map:
-            merged_map[cluster_key] = {
-                "major_category": major_cat,
-                "mech_key": mech_key,
-                "items": [],  # 存储大模型生成的所有原始 CSR 条目，用于动态选取最全面表述
-                "assets": [],  # 保存 (asset_sn, asset_name)
-                "orig_csr_ids": set(),
-                "source_tara_req_ids": set()
-            }
-            
-        entry = merged_map[cluster_key]
-        entry["items"].append(csr)
-        
-        asset_sn = get_asset_sn(asset)
-        if (asset_sn, asset.name) not in entry["assets"]:
-            entry["assets"].append((asset_sn, asset.name))
-            
-        raw_csr_id = req_map.get(req_text, csr.get("csr_id") or csr.get("cybersecurity_requirement_id") or "N/A")
-        if raw_csr_id != "N/A":
-            entry["orig_csr_ids"].add(raw_csr_id)
-            _, csr_to_tara = asset_trace_maps.get(asset.id, ({}, {}))
-            orig_ids = csr_to_tara.get(raw_csr_id, [])
-            for oid in orig_ids:
-                entry["source_tara_req_ids"].add(oid)
-
-    # 3. 生成按 ISO 21434 标准 8 大分类域排序的项目级原子 CSR 列表
-    major_order = {
-        "硬件安全 / Hardware Security": 1,
-        "系统安全 / System Security": 2,
-        "密码安全与密钥管理 / Cryptography & Key Management": 3,
-        "应用安全 / Application Security": 4,
-        "数据安全与隐私保护 / Data Security & Privacy": 5,
-        "安全监控、测试与响应 / Security Monitoring, Testing & Response": 6,
-        "通信安全 / Communication Security": 7,
-        "安全开发、供应链与运维 / Secure Development, Supply Chain & Operations": 8,
-        "通用安全与其它 / General & Other Security": 9
-    }
-
-    sorted_keys = sorted(
-        merged_map.keys(),
-        key=lambda k: (major_order.get(merged_map[k]["major_category"], 99), k)
-    )
-
-    domain_counters = {}
-    rows = []
-    
-    for k in sorted_keys:
-        entry = merged_map[k]
-        domain = entry["major_category"]
-        
-        # 动态分配领域内顺序 CSR ID (如 CSR-HW-001, CSR-SYS-001 等)
-        pfx = DOMAIN_PREFIX_MAP.get(domain, "CSR-GEN")
-        domain_counters[domain] = domain_counters.get(domain, 0) + 1
-        dyn_csr_id = f"{pfx}-{domain_counters[domain]:03d}"
-        
-        # 动态选取该聚类中大模型输出的最丰富、最完整的需求内容（保留 AI 原生双语表述，绝不静态替换）
-        best_csr = max(entry["items"], key=lambda x: len(str(x.get("cybersecurity_requirement") or "")))
-        dynamic_title = best_csr.get("title") or "安全要求 / Security Requirement"
-        dynamic_sub_cat = best_csr.get("sub_title") or best_csr.get("sub_category") or "通用防护 / General Protection"
-        dynamic_req_text = best_csr.get("cybersecurity_requirement") or ""
-        
-        assets_sorted = sorted(entry["assets"], key=lambda x: x[0])
-        asset_sn_str = ", ".join(x[0] for x in assets_sorted)
-        asset_name_str = ", ".join(x[1] for x in assets_sorted)
-        applicable_assets_str = "\n".join(f"{sn} ({name})" if name else sn for sn, name in assets_sorted)
-        
-        source_tara_ids_str = ", ".join(sorted(list(entry["source_tara_req_ids"])))
-        if not source_tara_ids_str:
-            source_tara_ids_str = ", ".join(sorted(list(entry["orig_csr_ids"])))
-            
-        if hash_to_global_map is not None:
-            for rid in entry.get("orig_csr_ids", []):
-                hash_to_global_map[rid] = dyn_csr_id
-            for tid in entry.get("source_tara_req_ids", []):
-                hash_to_global_map[tid] = dyn_csr_id
-        
-        source_cnt = len(entry["source_tara_req_ids"]) if entry["source_tara_req_ids"] else len(entry["orig_csr_ids"])
-        
-        rows.append({
-            "number": dyn_csr_id,
-            "csr_id": dyn_csr_id,
-            "security_domain": domain,
-            "sub_category": dynamic_sub_cat,
-            "asset_sn": asset_sn_str,
-            "asset_name": asset_name_str,
-            "applicable_assets": applicable_assets_str,
-            "assets_count": len(assets_sorted),
-            "title": dynamic_title,
-            "cybersecurity_requirement": dynamic_req_text,
-            "source_tara_requirements": source_tara_ids_str,
-            "source_count": source_cnt
-        })
-
-    return rows
-
-
-def create_excel_report(domain: Domain, steps: List[TaraStep], assets: List[Asset], desensitize: bool, export_type: str = "all") -> str:
+def create_excel_report(domain: Domain, steps: List[TaraStep], assets: List[Asset], desensitize: bool, export_type: str = "all", db: Session = None) -> str:
     """
     生成高度美观的 ISO 21434 TARA XLSX 格式报表，支持脱敏过滤，并支持导出安全需求 (CSR_Requirements) 的混合模型 sheet 页
     """
@@ -998,7 +726,7 @@ def create_excel_report(domain: Domain, steps: List[TaraStep], assets: List[Asse
     
     # 提前收集合并后安全需求的映射字典
     hash_to_global_map = {}
-    csr_rows_pre = collect_csr_report_data(steps, assets, hash_to_global_map)
+    csr_rows_pre = collect_csr_report_data(steps, assets, hash_to_global_map, db=db, domain=domain)
     
     # 导出 TARA Sheet
     if has_tara:
@@ -1309,7 +1037,7 @@ def create_excel_report(domain: Domain, steps: List[TaraStep], assets: List[Asse
     wb.save(file_path)
     return file_path
 
-def create_csv_report(domain: Domain, steps: List[TaraStep], assets: List[Asset], desensitize: bool, export_type: str = "tara") -> str:
+def create_csv_report(domain: Domain, steps: List[TaraStep], assets: List[Asset], desensitize: bool, export_type: str = "tara", db: Session = None) -> str:
     """
     生成 ISO 21434 TARA CSV 格式报表，根据 export_type 可选导出 TARA 威胁分析 或 CSR 需求列表
     使用 utf-8-sig 编码，防止中文在 Excel 中打开时显示乱码
@@ -1349,7 +1077,7 @@ def create_csv_report(domain: Domain, steps: List[TaraStep], assets: List[Asset]
             "cybersecurity_claim_id", "cybersecurity_claim", "cybersecurity_goal_id", "cybersecurity_goal", "cybersecurity_control_id", "cybersecurity_control", "allocated_to_device", "cybersecurity_requirement_id", "cybersecurity_requirement"
         ]
         hash_to_global_map = {}
-        collect_csr_report_data(steps, assets, hash_to_global_map)
+        collect_csr_report_data(steps, assets, hash_to_global_map, db=db, domain=domain)
         rows = collect_report_data(steps, assets, desensitize, hash_to_global_map)
     
     with open(file_path, mode="w", encoding="utf-8-sig", newline="") as f:
@@ -1399,11 +1127,11 @@ def export_report(
         raise HTTPException(status_code=400, detail="不支持的导出类型，可选值: all, tara, csr。")
     
     if format.lower() == "xlsx":
-        file_path = create_excel_report(domain, steps, assets, desensitize, export_type_lower)
+        file_path = create_excel_report(domain, steps, assets, desensitize, export_type_lower, db=db)
         media_type = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
         filename = f"TARA_Report_{domain.name}_{export_type_lower}_{'desensitized' if desensitize else 'full'}.xlsx"
     elif format.lower() == "csv":
-        file_path = create_csv_report(domain, steps, assets, desensitize, export_type_lower)
+        file_path = create_csv_report(domain, steps, assets, desensitize, export_type_lower, db=db)
         media_type = "text/csv; charset=utf-8-sig"
         filename = f"TARA_Report_{domain.name}_{export_type_lower}_{'desensitized' if desensitize else 'full'}.csv"
     else:

@@ -1775,6 +1775,15 @@ def run_tara_analysis(self, domain_id: int, run_record_id: int, force: bool = Fa
             db.close()
             return {"status": "cancelled"}
             
+        # 4. 执行基于 UNECE R155 Annex 5 引导的项目级全局安全需求综合提炼
+        try:
+            from app.services.csr_synthesis import get_or_synthesize_global_csrs
+            steps = db.query(TaraStep).filter(TaraStep.run_id == run_record_id).all()
+            assets = db.query(Asset).filter(Asset.domain_id == domain_id).all()
+            get_or_synthesize_global_csrs(db, domain, steps, assets)
+        except Exception as synth_err:
+            print(f"[TARA-AI] 警告: 项目级全局需求提炼任务执行异常: {synth_err}")
+
         run.status = "completed"
         run.completed_at = datetime.now()
         domain.status = "completed"
