@@ -12,11 +12,6 @@ YELLOW='\033[1;33m'
 RED='\033[0;31m'
 NC='\033[0m'
 
-# 先清理已有旧进程
-bash "$PROJECT_ROOT/stop.sh" > /dev/null 2>&1 || true
-
-echo -e "${BLUE}正在快速启动 TARA AI 平台...${NC}"
-
 # 检查 Redis
 if command -v redis-cli &> /dev/null && redis-cli ping &> /dev/null; then
     echo -e "  ✓ Redis: 运行中"
@@ -24,6 +19,20 @@ else
     echo -e "  * 正在启动 Redis..."
     sudo systemctl start redis 2>/dev/null || sudo service redis-server start 2>/dev/null || redis-server --daemonize yes 2>/dev/null || true
 fi
+
+# 如果注册了 Systemd 服务，直接使用 systemctl 拉起
+if systemctl list-unit-files | grep -q "tara-backend.service" 2>/dev/null; then
+    echo -e "${BLUE}正在通过 systemctl 启动托管服务...${NC}"
+    sudo systemctl start tara-backend tara-celery tara-frontend
+    echo -e "${GREEN}✓ 服务已启动完成！${NC}"
+    bash "$PROJECT_ROOT/status.sh"
+    exit 0
+fi
+
+# 独立运行模式
+bash "$PROJECT_ROOT/stop.sh" > /dev/null 2>&1 || true
+
+echo -e "${BLUE}正在后台拉起 TARA AI 平台服务...${NC}"
 
 # 检查虚拟环境
 if [ ! -d "$PROJECT_ROOT/backend/venv" ]; then
@@ -46,7 +55,7 @@ echo -e "  ✓ Celery Worker 已启动 (PID: $(cat "$PROJECT_ROOT/logs/celery.pi
 # 启动前端
 cd "$PROJECT_ROOT/frontend"
 if [ ! -d "dist" ]; then
-    echo -e "  * 首次运行缺少 dist 目录，正在构建前端..."
+    echo -e "  * 缺少 dist 目录，正在编译前端静态文件..."
     npm run build
 fi
 nohup npm run preview -- --host 0.0.0.0 --port 3000 > "$PROJECT_ROOT/logs/frontend.log" 2>&1 &
@@ -56,11 +65,4 @@ echo -e "  ✓ 前端服务已启动 (PID: $(cat "$PROJECT_ROOT/logs/frontend.pi
 cd "$PROJECT_ROOT"
 sleep 2
 
-SERVER_IP=$(hostname -I 2>/dev/null | awk '{print $1}')
-if [ -z "$SERVER_IP" ]; then
-    SERVER_IP="127.0.0.1"
-fi
-
-echo -e "\n${GREEN}✓ TARA AI 平台已启动！${NC}"
-echo -e "  🌐 前端访问地址: http://${SERVER_IP}:3000"
-echo -e "  📖 API 交互文档: http://${SERVER_IP}:8000/docs\n"
+bash "$PROJECT_ROOT/status.sh"

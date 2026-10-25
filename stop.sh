@@ -13,6 +13,12 @@ NC='\033[0m'
 
 echo -e "${YELLOW}正在停止 TARA AI 平台所有服务...${NC}"
 
+# 0. 如果注册了 Systemd 服务，先通过 systemctl 停止
+if systemctl list-unit-files | grep -q "tara-backend.service" 2>/dev/null; then
+    echo -e "  * 正在通过 systemctl 停止已托管服务..."
+    sudo systemctl stop tara-frontend.service tara-backend.service tara-celery.service 2>/dev/null || true
+fi
+
 # 1. 依据 PID 停止
 stop_pid() {
     local pid_file="$1"
@@ -42,9 +48,10 @@ if command -v fuser &> /dev/null; then
     fuser -k 8000/tcp > /dev/null 2>&1 || true
 fi
 
-# 清理残留的 uvicorn 与 celery 进程
+# 清理残留的 uvicorn、celery 与 vite 进程
 pkill -f "uvicorn app.main:app" > /dev/null 2>&1 || true
 pkill -f "celery -A app.core.celery_app" > /dev/null 2>&1 || true
 pkill -f "vite preview --host 0.0.0.0 --port 3000" > /dev/null 2>&1 || true
+pkill -f "vite --host 0.0.0.0 --port 3000" > /dev/null 2>&1 || true
 
 echo -e "${GREEN}✓ 所有服务已成功停止！${NC}"
