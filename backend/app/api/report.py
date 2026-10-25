@@ -701,7 +701,7 @@ CANONICAL_ATOMIC_CATALOG = {
         "domain": "硬件安全 / Hardware Security",
         "category": "存储硬件加密与密钥绑定 / Storage Hardware Encryption & Key Binding",
         "title": "外部存储芯片硬件绑定加密与完整性保护 / External Storage Hardware-Bound Encryption and Integrity Protection",
-        "req": "外置Flash/eMMC中存储的敏感固件、标定数据与私密信息必须使用至少AES-256-XTS或AES-256-GCM进行实时硬件在线加密与完整性保护；解密密钥必须绑定至SoC物理不可克隆功能（PUF）或芯片内部唯一硬件根密钥，脱机拆焊读取存储介质不得获取明文数据。 / Sensitive firmware, calibration data, and confidential information stored in external Flash/eMMC must be protected with real-time on-the-fly hardware encryption and integrity verification using at least AES-256-XTS or AES-256-GCM; decryption keys must be bound to the SoC PUF or internal unique hardware root key, ensuring offline chip desoldering and dumping cannot obtain plaintext data."
+        "req": "外置Flash/eMMC中存储的敏感固件、标定数据与私密信息必须使用经行业认可的高强度对称加密算法进行实时硬件在线加密与完整性保护；解密密钥必须绑定至SoC物理不可克隆功能（PUF）或芯片内部唯一硬件根密钥，脱机拆焊读取存储介质不得获取明文数据。 / Sensitive firmware, calibration data, and confidential information stored in external Flash/eMMC must be protected with real-time on-the-fly hardware encryption and integrity verification using an approved high-strength symmetric encryption algorithm; decryption keys must be bound to the SoC PUF or internal unique hardware root key, ensuring offline chip desoldering and dumping cannot obtain plaintext data."
     },
 
     # 2. 系统安全 / System Security
@@ -709,7 +709,7 @@ CANONICAL_ATOMIC_CATALOG = {
         "domain": "系统安全 / System Security",
         "category": "安全启动与固件签名 / Secure Boot & Firmware Signatures",
         "title": "分级安全启动链与固件签名完整性校验 / Hierarchical Secure Boot Chain and Firmware Signature Verification",
-        "req": "系统必须建立从不可变BootROM、微控制器引导加载程序至应用系统的多级信任链；在执行每一级软件与固件前，必须使用基于硬件信任根的非对称数字签名（至少ECDSA P-256或RSA-3072）校验其真实性与完整性，签名校验失败时系统必须拒绝加载并进入安全降级模式。 / The system must establish a hierarchical chain of trust originating from immutable BootROM and MCU bootloader to the operating application; before executing each software/firmware stage, its authenticity and integrity shall be verified using asymmetric digital signatures (at least ECDSA P-256 or RSA-3072) anchored in hardware root of trust, and the system shall refuse loading and transition to a safe degraded mode upon verification failure."
+        "req": "系统必须建立从不可变BootROM、微控制器引导加载程序至应用系统的多级信任链；在执行每一级软件与固件前，必须使用基于硬件信任根的标准非对称数字签名校验其真实性与完整性，签名校验失败时系统必须拒绝加载并进入安全降级模式。 / The system must establish a hierarchical chain of trust originating from immutable BootROM and MCU bootloader to the operating application; before executing each software/firmware stage, its authenticity and integrity shall be verified using standard asymmetric digital signatures anchored in hardware root of trust, and the system shall refuse loading and transition to a safe degraded mode upon verification failure."
     },
     "CSR-SYS-002": {
         "domain": "系统安全 / System Security",
@@ -771,19 +771,19 @@ CANONICAL_ATOMIC_CATALOG = {
         "domain": "密码安全与密钥管理 / Cryptography & Key Management",
         "category": "敏感载荷加密保护 / Sensitive Payload Encryption",
         "title": "敏感总线与感知数据端到端加密及动态密钥派生 / End-to-End Encryption and Dynamic Key Derivation for Sensitive Bus and Perception Payloads",
-        "req": "在CAN/CANFD及车载以太网上传输的车辆控制敏感指令、高精度环境感知数据及隐私敏感信息应采用AES-GCM-128/256或SM4-GCM实施应用层端到端加密；加密会话密钥应使用经KDF派生的动态密钥，并定期或按会话刷新。 / Sensitive vehicle control commands, high-precision perception payloads, and privacy data transmitted over CAN/CANFD and Ethernet shall be protected with application-layer end-to-end encryption using AES-GCM-128/256 or SM4-GCM; session keys shall be dynamically derived using compliant KDFs and refreshed periodically or per-session."
+        "req": "在CAN/CANFD及车载以太网上传输的车辆控制敏感指令、高精度环境感知数据及隐私敏感信息应采用经行业认可的高强度对称加密算法实施应用层端到端加密与防重放保护；加密会话密钥应使用经合规KDF派生的动态密钥，并定期或按会话刷新。 / Sensitive vehicle control commands, high-precision perception payloads, and privacy data transmitted over CAN/CANFD and Ethernet shall be protected with application-layer end-to-end encryption using compliant high-strength symmetric encryption algorithms; session keys shall be dynamically derived using compliant KDFs and refreshed periodically or per-session."
     },
     "CSR-CRY-004": {
         "domain": "密码安全与密钥管理 / Cryptography & Key Management",
         "category": "固件密码学校验 / Firmware Cryptographic Verification",
         "title": "固件升级包非对称数字签名验签与机密性保护 / Firmware Update Package Asymmetric Digital Signature Verification and Confidentiality Protection",
-        "req": "OTA及本地刷写使用的固件镜像必须采用至少ECDSA P-256（或RSA-3072）配合SHA-256进行签名；在传输与存储过程中，升级包应使用强对称加密算法保护机密性，仅在HSM完成验签且确认来源真实合法后，方可由解密模块在安全内存中解密并刷写。 / Firmware images for OTA and local flashing must be signed using at least ECDSA P-256 (or RSA-3072) with SHA-256; during transfer and storage, packages shall be encrypted with strong symmetric ciphers, and decryption in secure memory shall proceed only after the HSM successfully validates the signature and authentic origin."
+        "req": "OTA及本地刷写使用的固件镜像必须采用标准非对称数字签名与密码安全杂凑算法进行数字签名；在传输与存储过程中，升级包应使用强对称加密算法保护机密性，仅在HSM完成验签且确认来源真实合法后，方可由解密模块在安全内存中解密并刷写。 / Firmware images for OTA and local flashing must be signed using standard asymmetric digital signatures and cryptographic hash functions; during transfer and storage, packages shall be encrypted with strong symmetric ciphers, and decryption in secure memory shall proceed only after the HSM successfully validates the signature and authentic origin."
     },
     "CSR-CRY-005": {
         "domain": "密码安全与密钥管理 / Cryptography & Key Management",
         "category": "日志加密与防泄密 / Log Encryption & Leak Prevention",
         "title": "调试日志与系统核心转储数据静态加密保护 / Encryption-at-Rest for Debug Logs and System Core Dump Data",
-        "req": "包含系统内部状态、内存快照与通信报文的调试日志及核心转储（Core Dump）文件在落盘存储前必须使用AES-256-CBC或AES-256-GCM实施加密；加密密钥由HSM安全派生，未经授权的读写请求一律拒绝，防止敏感数据通过物理脱机提取泄露。 / Debug logs and core dump files containing system internal state, memory snapshots, or bus traffic shall be encrypted at rest using AES-256-CBC or AES-256-GCM prior to disk storage; encryption keys shall be securely derived by the HSM, strictly rejecting unauthorized access to prevent sensitive data leakage via offline extraction."
+        "req": "包含系统内部状态、内存快照与通信报文的调试日志及核心转储（Core Dump）文件在落盘存储前必须使用高强度对称加密算法实施落盘加密保护；加密密钥由HSM安全派生，未经授权的读写请求一律拒绝，防止敏感数据通过物理脱机提取泄露。 / Debug logs and core dump files containing system internal state, memory snapshots, or bus traffic shall be encrypted at rest using high-strength symmetric encryption algorithms prior to disk storage; encryption keys shall be securely derived by the HSM, strictly rejecting unauthorized access to prevent sensitive data leakage via offline extraction."
     },
     "CSR-CRY-006": {
         "domain": "密码安全与密钥管理 / Cryptography & Key Management",
@@ -840,8 +840,8 @@ CANONICAL_ATOMIC_CATALOG = {
     "CSR-DAT-001": {
         "domain": "数据安全与隐私保护 / Data Security & Privacy",
         "category": "静态敏感数据存储加密 / At-Rest Data Encryption",
-        "title": "静态敏感文件、数据库与存储缓存AES-256-GCM硬件绑定加密存储 / Static Sensitive File, Database and Storage Cache AES-256-GCM Hardware-Bound Encryption at Rest",
-        "req": "存储在ADCU非易失介质中的敏感配置文件、标定数据、模型文件及数据库，必须使用至少AES-256-GCM或AES-256-XTS实施静态落盘加密；加密密钥应由HSM或芯片内部硬件根密钥保护，确保外部脱机读取介质无法恢复明文。 / Sensitive configuration files, calibration data, model files, and databases stored in ADCU non-volatile media must be encrypted at rest using at least AES-256-GCM or AES-256-XTS; encryption keys shall be managed by HSM or chip internal root keys, ensuring offline desoldering cannot recover plaintext."
+        "title": "静态敏感文件、数据库与存储缓存硬件绑定落盘加密存储 / Static Sensitive File, Database and Storage Cache Hardware-Bound Encryption at Rest",
+        "req": "存储在ADCU非易失介质中的敏感配置文件、标定数据、模型文件及数据库，必须使用经行业认可的高强度对称加密算法实施静态落盘加密与完整性保护；加密密钥应由HSM或芯片内部硬件根密钥保护，确保外部脱机读取介质无法恢复明文。 / Sensitive configuration files, calibration data, model files, and databases stored in ADCU non-volatile media must be encrypted at rest using an approved high-strength symmetric encryption algorithm with integrity protection; encryption keys shall be managed by HSM or chip internal root keys, ensuring offline desoldering cannot recover plaintext."
     },
     "CSR-DAT-002": {
         "domain": "数据安全与隐私保护 / Data Security & Privacy",
@@ -865,7 +865,7 @@ CANONICAL_ATOMIC_CATALOG = {
         "domain": "数据安全与隐私保护 / Data Security & Privacy",
         "category": "传输机密性端到端保护 / End-to-End Transmission Confidentiality",
         "title": "敏感业务数据、固件与调试数据传输外发端到端强加密保护 / End-to-End Strong Encryption for Sensitive Business Data, Firmware and Debug Transmission",
-        "req": "在车云通信、OTA升级下载、传感器融合外发及以太网调试过程中，承载敏感固件、标定参数及私密业务数据的通信链路，必须通过TLS 1.2+、mTLS或应用层AES-GCM加密保护，确保网络窃听者无法截获并解密通信明文。 / Communication links carrying sensitive firmware, calibration data, and private operational information during vehicle-cloud, OTA download, sensor fusion export, and Ethernet debug must be protected via TLS 1.2+, mTLS, or application-layer AES-GCM, preventing network eavesdroppers from intercepting plaintext."
+        "req": "在车云通信、OTA升级下载、传感器融合外发及以太网调试过程中，承载敏感固件、标定参数及私密业务数据的通信链路，必须通过标准安全加密传输通道（如mTLS或应用层端到端对称加密）保护，确保网络窃听者无法截获并解密通信明文。 / Communication links carrying sensitive firmware, calibration data, and private operational information during vehicle-cloud, OTA download, sensor fusion export, and Ethernet debug must be protected via standard secure encrypted transmission channels or application-layer end-to-end encryption, preventing network eavesdroppers from intercepting plaintext."
     },
     "CSR-DAT-006": {
         "domain": "数据安全与隐私保护 / Data Security & Privacy",
@@ -895,7 +895,7 @@ CANONICAL_ATOMIC_CATALOG = {
         "domain": "数据安全与隐私保护 / Data Security & Privacy",
         "category": "OTA包端到端完整性保护 / OTA Package End-to-End Integrity",
         "title": "OTA安装包与元数据端到端哈希完整性校验及版本新鲜度保障 / End-to-End Hash Integrity Verification and Version Freshness for OTA Update Packages and Metadata",
-        "req": "OTA固件升级包及其描述清单（Manifest）在从云端下载至车辆并刷入闪存的全流程中，必须使用SHA-256进行全量端到端哈希校验；在写入前必须校验Manifest内各镜像校验和与版本防回滚新鲜度信息，保证分发交付过程中的完整性与来源可信。 / OTA update packages and manifests must be validated with SHA-256 end-to-end hash checks throughout download and flashing; manifests must verify individual image checksums and anti-rollback freshness prior to installation, guaranteeing authenticity and integrity across distribution."
+        "req": "OTA固件升级包及其描述清单（Manifest）在从云端下载至车辆并刷入闪存的全流程中，必须使用密码安全杂凑算法进行全量端到端哈希完整性校验；在写入前必须校验Manifest内各镜像校验和与版本防回滚新鲜度信息，保证分发交付过程中的完整性与来源可信。 / OTA update packages and manifests must be validated with cryptographic hash functions for end-to-end integrity checks throughout download and flashing; manifests must verify individual image checksums and anti-rollback freshness prior to installation, guaranteeing authenticity and integrity across distribution."
     },
 
     # 6. 安全监控、测试与响应 / Security Monitoring, Testing & Response
@@ -946,8 +946,8 @@ CANONICAL_ATOMIC_CATALOG = {
     "CSR-COM-001": {
         "domain": "通信安全 / Communication Security",
         "category": "总线消息认证与SecOC / Bus Message Authentication & SecOC",
-        "title": "CAN/CANFD总线SecOC消息认证(AES-CMAC-128)与单调新鲜度防重放保护 / CAN/CANFD Bus SecOC Message Authentication (AES-CMAC-128) and Monotonic Freshness Anti-Replay",
-        "req": "ADCU在CAN/CANFD总线上发送与接收的安全关键车辆控制报文、底盘状态及执行器控制指令，必须启用符合AUTOSAR标准的SecOC消息认证；使用AES-CMAC-128或HMAC算法生成消息认证码（MAC），并集成单调递增的新鲜度计数器（Freshness Value），拒绝MAC不匹配或计数器重复的报文。 / Safety-critical vehicle control messages, chassis states, and actuator commands on CAN/CANFD must enforce AUTOSAR-compliant SecOC message authentication; Message Authentication Codes (MAC) generated with AES-CMAC-128 or HMAC shall be verified alongside monotonic Freshness Values, strictly rejecting mismatched MACs or replayed counter values."
+        "title": "CAN/CANFD总线SecOC消息认证与单调新鲜度防重放保护 / CAN/CANFD Bus SecOC Message Authentication and Monotonic Freshness Anti-Replay",
+        "req": "ADCU在CAN/CANFD总线上发送与接收的安全关键车辆控制报文、底盘状态及执行器控制指令，必须启用符合AUTOSAR标准的SecOC消息认证；使用标准消息认证码（MAC）算法并集成单调递增的新鲜度计数器（Freshness Value），拒绝MAC不匹配或计数器重复的报文。 / Safety-critical vehicle control messages, chassis states, and actuator commands on CAN/CANFD must enforce AUTOSAR-compliant SecOC message authentication; Message Authentication Codes (MAC) generated with compliant MAC algorithms shall be verified alongside monotonic Freshness Values, strictly rejecting mismatched MACs or replayed counter values."
     },
     "CSR-COM-002": {
         "domain": "通信安全 / Communication Security",
@@ -959,7 +959,7 @@ CANONICAL_ATOMIC_CATALOG = {
         "domain": "通信安全 / Communication Security",
         "category": "以太网接入认证与MACsec / Ethernet 802.1X & MACsec",
         "title": "车载以太网IEEE 802.1X端口设备认证与IEEE 802.1AE MACsec链路层加密 / Automotive Ethernet IEEE 802.1X Port Device Authentication and IEEE 802.1AE MACsec Link Encryption",
-        "req": "车载以太网交换机与物理端口必须启用IEEE 802.1X EAP-TLS端口级设备双向身份认证，未通过认证的传感器或设备禁止接入以太网；关键以太网链路（如SGMII感知数据链路）应启用IEEE 802.1AE MACsec链路加密（AES-GCM-128），提供逐跳线速数据机密性、完整性与防重放保护。 / Automotive Ethernet switches and physical ports shall enforce IEEE 802.1X EAP-TLS port-level mutual device authentication, denying network access to unauthenticated nodes; critical links (such as SGMII perception trunks) shall enable IEEE 802.1AE MACsec (AES-GCM-128) line-rate link encryption for hop-by-hop confidentiality, integrity, and anti-replay protection."
+        "req": "车载以太网交换机与物理端口必须启用IEEE 802.1X EAP-TLS端口级设备双向身份认证，未通过认证的传感器或设备禁止接入以太网；关键以太网链路（如SGMII感知数据链路）应启用IEEE 802.1AE MACsec链路加密，提供逐跳线速数据机密性、完整性与防重放保护。 / Automotive Ethernet switches and physical ports shall enforce IEEE 802.1X EAP-TLS port-level mutual device authentication, denying network access to unauthenticated nodes; critical links (such as SGMII perception trunks) shall enable IEEE 802.1AE MACsec line-rate link encryption for hop-by-hop confidentiality, integrity, and anti-replay protection."
     },
     "CSR-COM-004": {
         "domain": "通信安全 / Communication Security",
@@ -1001,7 +1001,7 @@ CANONICAL_ATOMIC_CATALOG = {
         "domain": "通信安全 / Communication Security",
         "category": "调试诊断通道安全保护 / Debug & Diagnostic Channel Security",
         "title": "调试与诊断通信通道(USB/DoIP/Console)双向身份认证、传输加密与防重放 / Mutual Authentication, Encrypted Channel and Anti-Replay for Debug and Diagnostic Communications (USB/DoIP/Console)",
-        "req": "所有通过USB、车载以太网DoIP或串口控制台发起的调试与诊断通信，必须建立在强双向身份认证基础之上；通信会话必须采用TLS 1.2+或会话级对称加密（AES-GCM）进行全流量加密，对交互命令实施时间戳与单调序号防重放校验。 / All debug and diagnostic sessions initiated via USB, automotive Ethernet DoIP, or serial console must establish mutual strong authentication; session communications must enforce full encryption using TLS 1.2+ or session-level AES-GCM, validating timestamps and monotonic counters to prevent command replay."
+        "req": "所有通过USB、车载以太网DoIP或串口控制台发起的调试与诊断通信，必须建立在强双向身份认证基础之上；通信会话必须采用安全加密通信协议或会话级对称加密进行全流量加密，对交互命令实施时间戳与单调序号防重放校验。 / All debug and diagnostic sessions initiated via USB, automotive Ethernet DoIP, or serial console must establish mutual strong authentication; session communications must enforce full encryption using secure encrypted communication protocols or session-level symmetric encryption, validating timestamps and monotonic counters to prevent command replay."
     },
     "CSR-COM-011": {
         "domain": "通信安全 / Communication Security",

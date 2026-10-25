@@ -879,7 +879,7 @@ def tara_ai_analysis_call(db: Session, stage: str, asset: Asset, prev_stages: di
                 "\n【软件与应用安全需求制定指南 (Software & Application Security Requirements Guidelines)】:\n"
                 "由于当前资产为 software/系统，制定的安全控制措施与要求应重点覆盖以下软件与操作系统核心安全维度（请结合威胁场景合理选择，描述必须100%可验证，不要指明具体芯片型号，写成机制）：\n"
                 "1. 分级安全启动 (Secure Boot Chain)：必须实现从 BootROM、Bootloader、内核到应用层的完整校验链，每个阶段加载前都必须验证下一阶段代码的数字签名与完整性（如使用 RSA-3072+ 或 ECC P-256+）；且必须将各阶段验证结果（成功/失败及度量 Hash 值）安全记录（如写入安全日志或 HSM/TPM 存储中）。\n"
-                "2. 安全刷写与更新认证 (Secure Flashing & Update Verification)：支持安全的本地/OTA刷写；安装固件更新包前必须使用非对称密码算法验证其数字签名，确保来源真实且内容完整；在传输和存储固件更新包时，必须使用强对称加密算法（如 AES-256-GCM/CBC）进行加密防止固件泄漏。\n"
+                "2. 安全刷写与更新认证 (Secure Flashing & Update Verification)：支持安全的本地/OTA刷写；安装固件更新包前必须使用非对称密码算法验证其数字签名，确保来源真实且内容完整；在传输和存储固件更新包时，必须使用经行业认可的高强度对称加密算法进行加密防止固件泄漏。\n"
                 "3. 双分区恢复与数据清理 (A/B Recovery & Data Erasure)：实现 A/B 分区系统备份或等效回滚机制，确保更新失败后能自动恢复至正常版本；固件更新成功并确认系统稳定后，必须安全擦除/置零（Zeroization）临时解压的固件包和解密密钥。\n"
                 "4. 固件版本抗回滚 (Firmware Anti-Rollback)：维护安全版本计数器（需绑定硬件只读 eFuse/OTP 或 HSM Secure NVM 存储），安装新固件前验证版本号大于当前版本，防止降级攻击。\n"
                 "5. 访问控制与强身份认证 (Access Control & 2FA)：实现基于角色访问控制（RBAC），用户分配最小必要权限；对诊断接口的关键配置与标定参数（如制动参数、安全气囊阈值、动力电池参数）的写操作必须实施基于 UDS 0x27/0x29 安全访问服务的双向/单向挑战应答鉴权；针对后台/登录访问配置连续失败锁定策略。\n"
