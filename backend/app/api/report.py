@@ -494,18 +494,26 @@ def collect_report_data(steps: List[TaraStep], assets: List[Asset], desensitize:
                 cleaned = re.sub(r'^\(\d+\)\s*', '', line).strip()
                 if not cleaned or cleaned == "N/A":
                     continue
-                line_global_ids = []
+                line_global_ids = set()
                 # 1. 优先通过原始需求哈希 ID 映射
                 raw_tid = req_map.get(cleaned)
                 if raw_tid and hash_to_global_map and raw_tid in hash_to_global_map:
-                    line_global_ids.append(hash_to_global_map[raw_tid])
+                    val = hash_to_global_map[raw_tid]
+                    if isinstance(val, (set, list)):
+                        line_global_ids.update(val)
+                    else:
+                        line_global_ids.add(val)
                 # 2. 通过资产级汇总 CSR ID 映射
                 for sm_id in tara_to_csr.get(cleaned, []):
                     if hash_to_global_map and sm_id in hash_to_global_map:
-                        line_global_ids.append(hash_to_global_map[sm_id])
+                        val = hash_to_global_map[sm_id]
+                        if isinstance(val, (set, list)):
+                            line_global_ids.update(val)
+                        else:
+                            line_global_ids.add(val)
                     else:
-                        line_global_ids.append(sm_id)
-                part_to_global_map[cleaned] = sorted(list(set(line_global_ids)))
+                        line_global_ids.add(sm_id)
+                part_to_global_map[cleaned] = sorted(list(line_global_ids))
                 matched_global_ids.extend(line_global_ids)
 
             row["part_to_global_map"] = part_to_global_map
@@ -782,7 +790,8 @@ def create_excel_report(domain: Domain, steps: List[TaraStep], assets: List[Asse
                 part_clean = re.sub(r'^\(\d+\)\s*', '', part).strip()
                 specific_aids = part_to_global.get(part_clean) or part_to_global.get(part) or []
                 if not specific_aids and hash_to_global_map and cid in hash_to_global_map:
-                    specific_aids = [hash_to_global_map[cid]]
+                    val = hash_to_global_map[cid]
+                    specific_aids = list(val) if isinstance(val, (set, list)) else [val]
                 if not specific_aids:
                     specific_aids = fallback_aids
 

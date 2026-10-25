@@ -653,9 +653,17 @@ def get_or_synthesize_global_csrs(db: Session, domain: Domain, steps: list, asse
                         
                     if hash_to_global_map is not None:
                         for tid in r.get("_raw_source_ids", []):
-                            hash_to_global_map[tid] = cid
+                            if tid not in hash_to_global_map:
+                                hash_to_global_map[tid] = set()
+                            elif isinstance(hash_to_global_map[tid], str):
+                                hash_to_global_map[tid] = {hash_to_global_map[tid]}
+                            hash_to_global_map[tid].add(cid)
                         for sid in tier2_sources:
-                            hash_to_global_map[sid] = cid
+                            if sid not in hash_to_global_map:
+                                hash_to_global_map[sid] = set()
+                            elif isinstance(hash_to_global_map[sid], str):
+                                hash_to_global_map[sid] = {hash_to_global_map[sid]}
+                            hash_to_global_map[sid].add(cid)
                 return cached_rows
 
     # 2. 收集所有资产在 Stage 5 产出的原始安全需求
@@ -691,9 +699,17 @@ def get_or_synthesize_global_csrs(db: Session, domain: Domain, steps: list, asse
         for r in rows:
             cid = r.get("csr_id")
             for tid in r.get("_raw_source_ids", []):
-                hash_to_global_map[tid] = cid
+                if tid not in hash_to_global_map:
+                    hash_to_global_map[tid] = set()
+                elif isinstance(hash_to_global_map[tid], str):
+                    hash_to_global_map[tid] = {hash_to_global_map[tid]}
+                hash_to_global_map[tid].add(cid)
             for sid in r.get("_tier2_source_ids", []):
-                hash_to_global_map[sid] = cid
+                if sid not in hash_to_global_map:
+                    hash_to_global_map[sid] = set()
+                elif isinstance(hash_to_global_map[sid], str):
+                    hash_to_global_map[sid] = {hash_to_global_map[sid]}
+                hash_to_global_map[sid].add(cid)
 
     # 5. 持久化到数据库 TaraStep 作为缓存
     try:
