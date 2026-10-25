@@ -272,8 +272,16 @@ def get_csr_traceability_maps(stage5_out: dict, req_map: dict) -> tuple:
             continue
         csr_hash_id = req_map.get(csr_text, csr.get("csr_id") or "N/A")
         
+        # 0. 精确文本匹配优先自动包含自身
+        for req in requirements:
+            orig_text = str(req.get("cybersecurity_requirement") or "").strip()
+            if orig_text and orig_text == csr_text:
+                raw_tara_id = req_map.get(orig_text, req.get("cybersecurity_requirement_id"))
+                tara_to_csr.setdefault(orig_text, []).append(csr_hash_id)
+                csr_to_tara.setdefault(csr_hash_id, []).append(raw_tara_id)
+
         s_ids = csr.get("source_requirement_ids") or []
-        mapped_any = False
+        mapped_any = bool(csr_to_tara.get(csr_hash_id))
         
         for sid in s_ids:
             key = str(sid).lower().strip()
