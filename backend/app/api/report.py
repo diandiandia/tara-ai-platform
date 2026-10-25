@@ -731,27 +731,33 @@ CANONICAL_ATOMIC_CATALOG = {
     },
     "CSR-SYS-005": {
         "domain": "系统安全 / System Security",
-        "category": "运行时完整性与防御 / Runtime Integrity & Defense",
-        "title": "运行时代码配置完整性度量与安全状态保护 / Runtime Code and Configuration Integrity Measurement and Safe State Protection",
-        "req": "系统应启用内核地址空间布局随机化（KASLR）、数据执行保护（DEP/NX）及栈溢出金丝雀（Stack Canary）等内存防护；应周期性度量关键运行时代码与核心配置的内存完整性，当检测到未授权代码执行或内存破坏时触发受控安全降级或安全复位。 / The system shall enable memory mitigations including Kernel Address Space Layout Randomization (KASLR), Data Execution Prevention (DEP/NX), and Stack Canaries; critical runtime code and core configurations shall undergo periodic memory integrity measurements, triggering a controlled safe degradation or secure reset upon detecting unauthorized execution or memory corruption."
+        "category": "编译加固与内存防护 / Compiler Hardening & Memory Protection",
+        "title": "编译与引导加载期内存防护与漏洞利用缓解机制 / Compile-Time and Boot-Time Memory Exploit Mitigations",
+        "req": "操作系统及可执行程序在编译与镜像构建阶段应启用标准内存漏洞利用缓解机制，包括地址空间布局随机化（ASLR/KASLR）、数据执行保护（DEP/NX）及栈溢出防护金丝雀（Stack Canary），防止攻击者利用缓冲区溢出执行任意代码。 / The operating system and executable binaries shall enable standard memory exploit mitigations during compilation and image generation, including Address Space Layout Randomization (ASLR/KASLR), Data Execution Prevention (DEP/NX), and Stack Canaries, preventing arbitrary code execution via buffer overflows."
     },
     "CSR-SYS-006": {
         "domain": "系统安全 / System Security",
         "category": "存储资源配额与可用性 / Storage Resource Quota & Availability",
         "title": "本地存储资源配额隔离、日志轮转与抗耗尽保护 / Local Storage Resource Quota Isolation, Log Rotation and Anti-Exhaustion Protection",
-        "req": "系统应对日志记录、核心转储（Core Dump）与临时缓存划分独立的存储挂载分区并设定写入配额与速率限制；实施日志轮转（Log Rotation）与自动修剪机制，当存储空间达到阈值（如85%）时触发告警并按优先级清理，防止磁盘耗尽导致核心功能异常。 / The system shall allocate isolated storage partitions with write quotas and rate limits for logs, core dumps, and temporary caches; automated log rotation and pruning policies shall be implemented, triggering an alert and clearing low-priority data when storage capacity reaches defined thresholds (e.g., 85%), preventing disk exhaustion from impairing core functions."
+        "req": "系统应对日志记录、核心转储（Core Dump）与临时缓存划分独立的存储挂载分区并设定写入配额与速率限制；实施日志轮转（Log Rotation）与自动修剪机制，当存储空间达到预警阈值时触发告警并按优先级清理，防止磁盘耗尽导致核心功能异常。 / The system shall allocate isolated storage partitions with write quotas and rate limits for logs, core dumps, and temporary caches; automated log rotation and pruning policies shall be implemented, triggering an alert and clearing low-priority data when storage capacity reaches defined thresholds, preventing disk exhaustion from impairing core functions."
     },
     "CSR-SYS-007": {
         "domain": "系统安全 / System Security",
         "category": "特权与调试访问授权 / Privilege & Debug Access Authorization",
         "title": "调试与诊断特权命令基于角色的授权与会话控制 / Role-Based Authorization and Session Control for Debug and Diagnostic Privileged Commands",
-        "req": "对调试控制台、系统诊断及维护接口实施基于角色的访问控制（RBAC），严格遵循默认拒绝策略；所有特权操作必须生成单次有效且具备安全时效（如最大15分钟无操作超时）的加密令牌，严禁在量产环境使用默认或通用密码凭据。 / Access to debug consoles, system diagnostics, and maintenance interfaces shall enforce Role-Based Access Control (RBAC) with a default-deny policy; all privileged commands must generate single-use, time-limited (e.g., 15-minute inactivity timeout) cryptographic session tokens, strictly prohibiting default or hardcoded credentials in production environments."
+        "req": "对调试控制台、系统诊断及维护接口实施基于角色的访问控制（RBAC），严格遵循默认拒绝策略；所有特权操作必须生成单次有效且具备安全时效（配置合理的无操作安全超时）的加密令牌，严禁在量产环境使用默认或通用密码凭据。 / Access to debug consoles, system diagnostics, and maintenance interfaces shall enforce Role-Based Access Control (RBAC) with a default-deny policy; all privileged commands must generate single-use, time-limited cryptographic session tokens, strictly prohibiting default or hardcoded credentials in production environments."
     },
     "CSR-SYS-008": {
         "domain": "系统安全 / System Security",
         "category": "服务健壮性与看门狗监控 / Service Robustness & Watchdog Monitoring",
         "title": "核心系统服务独立看门狗监控、请求限速与异常恢复 / Core System Service Independent Watchdog Monitoring, Rate Limiting and Fault Recovery",
-        "req": "ADCU各核心系统服务应配置独立硬件与软件看门狗（Watchdog）进行健康状态监测；服务接口应配置输入命令速率限制（如100 req/s）与畸形报文过滤，当服务无响应或异常崩溃时应能在2秒内独立重启恢复，且不影响整车安全关键控制逻辑。 / Core system services on the ADCU shall be monitored by independent hardware and software watchdogs; service interfaces shall implement command rate limiting (e.g., 100 req/s) and malformed packet filtering, recovering via independent restart within 2 seconds upon unresponsive failure without disrupting vehicle safety-critical control loops."
+        "req": "ADCU各核心系统服务应配置独立硬件与软件看门狗（Watchdog）进行健康状态监测；服务接口应配置输入命令速率限制与畸形报文过滤，当服务无响应或异常崩溃时应具备独立重启恢复能力，且不影响整车安全关键控制逻辑。 / Core system services on the ADCU shall be monitored by independent hardware and software watchdogs; service interfaces shall implement command rate limiting and malformed packet filtering, recovering via independent restart upon unresponsive failure without disrupting vehicle safety-critical control loops."
+    },
+    "CSR-SYS-009": {
+        "domain": "系统安全 / System Security",
+        "category": "运行时完整性与防御 / Runtime Integrity & Defense",
+        "title": "运行时代码配置完整性周期度量与安全状态保护 / Periodic Runtime Code and Configuration Integrity Measurement and Safe State Protection",
+        "req": "系统在运行阶段应对关键执行代码与核心配置实施周期性内存完整性度量；当检测到未授权代码执行、配置被非法篡改或内存破坏时，应触发预定义的安全降级状态或受控安全复位。 / The system shall periodically perform runtime memory integrity measurements on critical execution code and core configurations; upon detecting unauthorized code execution, illegal configuration tampering, or memory corruption, it shall trigger a predefined safe degraded state or controlled secure reset."
     },
 
     # 3. 密码安全与密钥管理 / Cryptography & Key Management
@@ -1070,8 +1076,10 @@ def classify_canonical_csr(major_cat: str, sub_cat: str, title: str, req_text: s
             return "CSR-SYS-003"
         if any(k in t for k in ["selinux", "强制访问控制", "rbac与默认凭证", "rbac与默认拒绝", "进程隔离", "只读分区", "root"]):
             return "CSR-SYS-004"
-        if any(k in t for k in ["内存防护", "aslr", "栈溢出", "dep", "运行时完整性与安全状态", "运行时系统强化"]):
+        if any(k in t for k in ["内存防护", "aslr", "kaslr", "栈溢出", "dep", "canary", "编译加固", "栈保护"]):
             return "CSR-SYS-005"
+        if any(k in t for k in ["度量", "运行时完整性", "未授权代码执行", "内存破坏", "安全降级", "安全复位", "运行时系统强化"]):
+            return "CSR-SYS-009"
         if any(k in t for k in ["配额", "日志轮转", "日志轮换", "存储资源", "文件服务资源可用性", "防泛洪"]):
             return "CSR-SYS-006"
         if any(k in t for k in ["特权", "会话身份绑定", "命令滥用", "诊断访问与配置授权", "诊断与调试接口安全", "调试数据与固件完整性", "调试高权限", "调试授权", "会话令牌"]):

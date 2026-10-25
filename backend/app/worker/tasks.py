@@ -911,7 +911,7 @@ def tara_ai_analysis_call(db: Session, stage: str, asset: Asset, prev_stages: di
             req_guideline = (
                 "\n【数据与密码安全需求制定指南 (Data & Cryptographic Security Requirements Guidelines)】:\n"
                 "由于当前资产为数据或涉及密码学计算，制定的安全控制措施与要求应重点覆盖以下数据与密钥安全核心维度（请结合威胁场景合理选择，描述必须100%可验证，不要指明具体芯片型号，写成机制）：\n"
-                "1. 强密码算法选型 (Strong Cryptographic Algorithms)：所有密码学操作必须使用行业批准的强健算法，禁用已破译的弱算法。国际算法推荐 AES-256, RSA-3072+（或 RSA-2048 最低限度）, ECC-256/384, SHA-256+；国密算法推荐 SM2, SM3, SM4。禁用 MD5, SHA1, DES 等不安全算法。\n"
+                "1. 强密码算法选型 (Strong Cryptographic Algorithms)：所有密码学操作必须使用行业批准的强健算法，禁用已破译的弱算法。应结合项目适用的合规体系（如国际密码体系或中国商用密码国密体系）选择经认证的强密码算法，技术描述保持机制中立。严格禁用 MD5, SHA1, DES 等已知不安全算法。\n"
                 "2. 密码学密钥安全存储 (Hardware Key Storage)：所有密码学密钥（根密钥、工作密钥、私钥）必须存储在 HSM、SHE 或 eFuse 等专用安全硬件中，严禁在软件代码或常规存储分区中明文存储，密钥对 CPU 必须是不可直接读取的。\n"
                 "3. 随机数发生器防泛洪 (TRNG & Flooding Defense)：生成密钥、IV或挑战值必须采用物理真随机数发生器(TRNG)，随机数品质应符合 FIPS 140-2 验证标准；且必须设计防泛洪攻击机制，在面临高频请求时通过速率限制或拒绝部分非必要请求，确保随机数发生器始终可靠返回真随机数，防止其耗尽熵源导致退化或系统挂起。\n"
                 "4. 密钥完整性与派生保护 (Key Integrity & Wrapping)：外发或存储非 HSM 固化工作密钥时，应使用符合标准的密钥派生函数(KDF, 如 HKDF/PBKDF2)或密钥包装技术(Key Wrapping, 如 AES-KeyWrap)进行加密与完整性保护。\n"
@@ -926,7 +926,7 @@ def tara_ai_analysis_call(db: Session, stage: str, asset: Asset, prev_stages: di
                 "13. 个人隐私保护与实时脱敏 (Privacy Protection & Real-time Masking)：在数据采集后或显示前，对个人身份标识信息（如面部识别数据、账号信息、人脸、车牌）进行实时脱敏处理（如模糊化、匿名化）；所有存储的行车轨迹数据、用户隐私数据必须以加密形式存储，并且访问必须通过基于角色的访问控制（RBAC）模块检查。\n"
                 "14. 算法与机密文件加密存储 (Algorithm File Confidentiality)：应对评估组件处理器 (SoC/MCU) 上运行的软件应用所包含的机密算法文件/AI模型权重实施高强度静态加密存储，防止 IP 被逆向提取。\n"
                 "15. 软硬件身份及版本标识完整性 (Software/Hardware Identifier Integrity)：应防止软硬件版本号、VIN号、RxSWIN或软件识别码被恶意篡改，系统在启动和使用时必须校验其完整性（如通过签名或哈希链校验）。\n"
-                "16. 关键配置与物理安全参数保护 (Calibration & Safety Data Protection)：对于影响行车物理安全的关键参数（如制动标定、安全气囊展开阈值、动力电池安全阈值等配置），必须采用安全访问机制和基于密码学数字签名（如使用 RSA-2048+）或 HSM/安全芯片的完整性保护防线，防止非授权删除与越权篡改；外部通道应使用加密或完整性校验（如 SecOC/TLS）进行保护，并关闭不必要的调试、诊断及网络服务端口。\n"
+                "16. 关键配置与物理安全参数保护 (Calibration & Safety Data Protection)：对于影响行车物理安全的关键参数（如制动标定、安全气囊展开阈值、动力电池安全阈值等配置），必须采用安全访问机制和基于标准非对称数字签名或 HSM/安全芯片的完整性保护防线，防止非授权删除与越权篡改；外部通道应使用加密或完整性校验（如 SecOC/TLS）进行保护，并关闭不必要的调试、诊断及网络服务端口。\n"
                 "17. 数据跨境传输限制 (Cross-border Data Restriction)：严格遵守国家汽车数据安全法规，评估组件禁止向任何未经合规审计的境外 IP 地址或境外服务器传输敏感车辆或个人数据，确保本地化存储与合规出境要求。\n"
             )
 
