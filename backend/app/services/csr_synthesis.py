@@ -3,6 +3,7 @@ import re
 import json
 import time
 import hashlib
+from collections import Counter
 from typing import List, Dict, Tuple, Set
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from sqlalchemy.orm import Session
@@ -16,133 +17,97 @@ from app.models.system_settings import SystemSettings
 # -------------------------------------------------------------------------
 # ISO/SAE 21434 & UNECE R155 Standard Domain Taxonomy
 # -------------------------------------------------------------------------
-DOMAIN_PREFIX_MAP = {
-    "硬件安全 / Hardware Security": "CSR-HW",
-    "系统安全 / System Security": "CSR-SYS",
-    "密码安全与密钥管理 / Cryptography & Key Management": "CSR-CRY",
-    "应用安全 / Application Security": "CSR-APP",
-    "数据安全与隐私保护 / Data Security & Privacy": "CSR-DAT",
-    "安全监控、测试与响应 / Security Monitoring, Testing & Response": "CSR-MON",
-    "通信安全 / Communication Security": "CSR-COM",
-    "安全开发、供应链与运维 / Secure Development, Supply Chain & Operations": "CSR-OPS",
-    "通用安全与其它 / General & Other Security": "CSR-GEN"
-}
+from app.core.taxonomy import (
+    DOMAIN_PREFIX_MAP,
+    MAJOR_ORDER,
+    CANONICAL_DOMAINS,
+    clean_major_category,
+)
 
-MAJOR_ORDER = {
-    "硬件安全 / Hardware Security": 1,
-    "系统安全 / System Security": 2,
-    "密码安全与密钥管理 / Cryptography & Key Management": 3,
-    "应用安全 / Application Security": 4,
-    "数据安全与隐私保护 / Data Security & Privacy": 5,
-    "安全监控、测试与响应 / Security Monitoring, Testing & Response": 6,
-    "通信安全 / Communication Security": 7,
-    "安全开发、供应链与运维 / Secure Development, Supply Chain & Operations": 8,
-    "通用安全与其它 / General & Other Security": 9
-}
-
-# -------------------------------------------------------------------------
-# UNECE R155 Annex 5 Regulatory Guidance Prompts for LLM Synthesis
-# -------------------------------------------------------------------------
+# R155 Annex 5 is used here as a mitigation-dimension checklist, not as a
+# technology selection list. Do not add concrete protocol names, algorithm
+# names, port numbers, or numeric thresholds to these strings: the synthesis
+# prompt must stay capability-level so downstream design can choose the
+# implementation.
 UNECE_R155_ANNEX5_GUIDELINES = {
     "硬件安全 / Hardware Security": (
-        "参考 UNECE R155 Annex 5 Part A (Table A1 - Mitigations related to vehicle hardware/interfaces):\n"
-        "- 物理防拆与外壳/连接器开盖检测、PCB内层布线与敏感测试点隐藏 (Tamper detection, enclosure monitoring, PCB inner-layer routing);\n"
-        "- 调试接口（JTAG, SWD, UART, USB等）量产硬件不可逆熔断锁定（eFuse/OTP）与售后受控挑战-应答授权解锁机制;\n"
-        "- 密码运算侧信道攻击防御（恒定时间执行、掩码平衡）与硬件电压/时钟毛刺故障注入检测及安全复位;\n"
-        "- 外部非易失存储（Flash, eMMC）硬件绑定加密与物理不可克隆（PUF/Root-of-Trust）防脱机拆焊读取保护。"
+        "参考 UNECE R155 Annex 5 的硬件/物理接口防护维度：\n"
+        "- 物理防拆、外壳/连接器开盖检测与预定义安全响应；\n"
+        "- 电路板走线/测试点隐藏、封装与物理加固；\n"
+        "- 调试/编程接口的量产不可逆禁用与受控授权解锁；\n"
+        "- 故障注入与侧信道攻击的基础防护；\n"
+        "- 外部非易失存储的硬件绑定加密与防脱机读取；\n"
+        "- 硬件信任根、安全配给与供应链可追溯。"
     ),
     "系统安全 / System Security": (
-        "参考 UNECE R155 Annex 5 Part A (Table A1 - Mitigations related to vehicle software/execution environment):\n"
-        "- 基于硬件信任根的分级安全启动链（Secure Boot Chain）与不可变BootROM固件数字签名完整性校验;\n"
-        "- 固件安全版本硬件单调防回滚控制（Hardware Monotonic Anti-Rollback）;\n"
-        "- A/B独立双分区原子刷写与更新异常安全回滚保护机制;\n"
-        "- 操作系统强制访问控制（MAC/SELinux）与最小权限隔离，系统核心只读挂载;\n"
-        "- 编译期与引导期内存漏洞利用缓解机制（ASLR/KASLR, DEP/NX, Stack Canary）;\n"
-        "- 运行时内存代码与核心配置完整性周期度量，异常时触发受控安全降级或安全复位;\n"
-        "- 独立硬件安全看门狗（Watchdog）心跳监控与失效安全保护机制."
+        "参考 UNECE R155 Annex 5 的系统/执行环境防护维度：\n"
+        "- 基于硬件信任根的分级安全启动与完整性校验；\n"
+        "- 安全版本防回滚；\n"
+        "- 原子更新与可回退/可恢复机制；\n"
+        "- 强制访问控制、最小权限与系统分区保护；\n"
+        "- 运行时完整性度量、异常检测与安全看门狗；\n"
+        "- 内存漏洞利用缓解与安全降级。"
     ),
     "密码安全与密钥管理 / Cryptography & Key Management": (
-        "参考 UNECE R155 Annex 5 Part A (Table A1 - Mitigations related to cryptographic mechanisms):\n"
-        "- 硬件安全模块（HSM/SHE）非易失密钥硬件隔离存储与物理禁止导出保护;\n"
-        "- 车载PKI数字证书全生命周期安全管理、证书吊销检查（CRL/OCSP）与私钥片上安全生成;\n"
-        "- 跨网络与应用层端到端数据传输加密与完整性保护;\n"
-        "- OTA固件包构建端端数字签名与分发传输加密;\n"
-        "- 易失性内存（RAM）中的会话密钥与敏感衍生材料使用后即时安全零化（Zeroization）销毁;\n"
-        "- 崩溃核心转储（Core Dump）与调试异常日志中内存切片的即时密码学加密保护."
+        "参考 UNECE R155 Annex 5 的密码机制防护维度：\n"
+        "- 密钥/证书在隔离安全硬件或受保护密码服务内存储与使用；\n"
+        "- 密钥与证书的生成、注入、更新、轮换、吊销、销毁全生命周期；\n"
+        "- 传输、存储与应用层数据的机密性/完整性保护；\n"
+        "- 数字签名、消息认证与防重放；\n"
+        "- 高质量随机数与熵源；\n"
+        "- 易失性敏感材料的零化与销毁。"
     ),
     "应用安全 / Application Security": (
-        "参考 UNECE R155 Annex 5 Part A (Table A1 - Mitigations related to vehicle applications):\n"
-        "- 安全编码规范（MISRA C/C++, AUTOSAR）与输入边界深度模糊测试（Fuzzing）检查;\n"
-        "- 外部通信、总线与接口输入参数全量白名单结构化校验与畸形报文过滤;\n"
-        "- 服务化中间件与进程间通信（SOME/IP, IPC, RPC）对端身份双向认证与调用授权控制;\n"
-        "- 本地数据库与参数配置文件细粒度访问控制权限管理（ACL/权限最小化）;\n"
-        "- 应用层API对象级权限防越权校验（BOLA/IDOR）与会话鉴权;\n"
-        "- 安全认证接口防暴力破解、尝试速率限制与阶梯式安全锁定;\n"
-        "- 量产二进制代码符号剥离（Symbol Stripping）与抗逆向工程加固."
+        "参考 UNECE R155 Annex 5 的应用/服务防护维度：\n"
+        "- 安全编码、输入校验与模糊测试；\n"
+        "- 服务、接口与进程间通信的身份认证与最小权限授权；\n"
+        "- 会话管理、防暴力破解与权限回收；\n"
+        "- 二进制抗逆向、符号剥离与后门清理；\n"
+        "- 应用完整性、日志与异常处理；\n"
+        "- 安全失效与降级策略。"
     ),
     "数据安全与隐私保护 / Data Security & Privacy": (
-        "参考 UNECE R155 Annex 5 Part A (Table A1 - Mitigations related to data/storage/privacy):\n"
-        "- 本地持久化存储中敏感参数、标定数据与网络凭证的静态透明加密（Data at Rest Encryption）;\n"
-        "- 行车轨迹、高精度定位坐标及驾驶行为数据的边缘去标识化、匿名化与最小化处理;\n"
-        "- 外部感知摄像头采集的车外人脸与车牌数据实时边缘模糊化或马赛克脱敏;\n"
-        "- 系统运行日志、故障转储及诊断跟踪记录敏感信息全量掩码与脱敏;\n"
-        "- 车载敏感数据流信道级传输加密与防窃听监听;\n"
-        "- 出厂重置（Factory Reset）与报废时用户隐私数据密码学安全擦除（Crypto-Shredding）;\n"
-        "- 关键标定参数与配置清单密码学完整性（HMAC/数字签名）防篡改校验;\n"
-        "- 车载业务数据来源真实性与单调计数器防重放保护."
+        "参考 UNECE R155 Annex 5 的数据/隐私防护维度：\n"
+        "- 数据分类分级、最小化、目的限制与保留期限；\n"
+        "- 静态数据加密与访问控制；\n"
+        "- 传输通道加密与来源真实性；\n"
+        "- 个人数据去标识化、匿名化与实时脱敏；\n"
+        "- 用户数据删除、解绑与跨境传输限制；\n"
+        "- 关键配置/标定数据的完整性与防篡改。"
     ),
     "安全监控、测试与响应 / Security Monitoring, Testing & Response": (
-        "参考 UNECE R155 Annex 5 Part A (Table A1 - Mitigations related to security monitoring):\n"
-        "- 车载网络入侵检测系统（CAN/Ethernet IDS）异常流量与未知报文实时监测与告警上报;\n"
-        "- 格式标准化的关键网络安全事件审计日志加密存储、防篡改（哈希链/数字签名）与防删除;\n"
-        "- 调试控制台与售后特权诊断操作全过程端到端审计追踪与操作员身份绑定;\n"
-        "- OTA软件升级全生命周期各关键里程碑不可抵赖审计记录与上报备案;\n"
-        "- 通信接口报文流量速率整形、洪泛丢弃与总线抗拒绝服务（Anti-DoS）;\n"
-        "- 安全时钟源冗余一致性交叉校验、跳变检测与抗时间欺骗防御;\n"
-        "- 安全审计日志专用存储配额隔离与抗泛洪覆盖保留策略."
+        "参考 UNECE R155 Annex 5 的监控/响应防护维度：\n"
+        "- 车载网络与主机入侵检测、异常流量监控与告警；\n"
+        "- 安全事件审计日志的完整性、防篡改与留存；\n"
+        "- 特权操作/调试会话的审计与身份绑定；\n"
+        "- 安全事件的分级响应、限流、阻断与恢复；\n"
+        "- 日志/存储资源配额与抗泛洪保护；\n"
+        "- 安全测试、漏洞扫描与渗透验证。"
     ),
     "通信安全 / Communication Security": (
-        "参考 UNECE R155 Annex 5 Part A (Table A1 - Mitigations related to communication channels):\n"
-        "- CAN/CAN-FD总线关键控制报文AUTOSAR SecOC真实性、新鲜度值（FV）与防重放保护;\n"
-        "- 车云通信与以太网传输层安全协议（TLS 1.2/1.3）双向认证（mTLS）与强密码套件;\n"
-        "- 骨干以太网物理端口IEEE 802.1X网络准入与MACsec线速硬件加密完整性保护;\n"
-        "- 预定义通信矩阵报文白名单过滤、默认拒绝策略与跨安全域访问控制隔离;\n"
-        "- 网络协议栈畸形报文深度防御与资源耗尽型连接池防护;\n"
-        "- 服务化中间件（SOME/IP）发布订阅与RPC远程方法调用的安全策略鉴权;\n"
-        "- 高速传感器串行总线（SPI, UART, MIPI CSI）数据校验与硬件屏蔽防护;\n"
-        "- 高精度时间同步协议（IEEE 802.1AS/PTP）报文密码学TLV签名验证与抗时钟篡改;\n"
-        "- 多路感知视频流来源硬件数字指纹鉴别与防帧重放/伪造;\n"
-        "- UDS 27服务与DoIP诊断会话非对称/高强度安全访问鉴权与写服务保护."
+        "参考 UNECE R155 Annex 5 的通信/网络防护维度：\n"
+        "- 关键总线报文的真实性、完整性与新鲜度；\n"
+        "- 车云/车载网络安全通道、双向身份认证与证书校验；\n"
+        "- 网络分区、通信矩阵白名单与跨域访问控制；\n"
+        "- 诊断/服务接口的安全访问与授权；\n"
+        "- 资源耗尽、泛洪与拒绝服务防护；\n"
+        "- 时间同步与传感器链路的数据完整性。"
     ),
     "安全开发、供应链与运维 / Secure Development, Supply Chain & Operations": (
-        "参考 UNECE R155 Annex 5 Part C (Threats/mitigations to cybersecurity lifecycle and supply chain):\n"
-        "- 量产交付固件工程测试代码完全剥离与后门调试指令清零;\n"
-        "- 核心半导体芯片唯一硬件标识（UID）防伪溯源与供应链防假冒核查;\n"
-        "- 制造工厂专用硬件安全设备（HSM）产线端到端加密密钥注入与配给;\n"
-        "- 机器可读软件物料清单（SBOM）全量跟踪与第三方组件已知漏洞（CVE）持续监控;\n"
-        "- 符合ISO/SAE 21434第13章要求的网络安全应急响应流程（PSIRT）与漏洞披露协同机制."
-    )
+        "参考 UNECE R155 Annex 5 的生命周期/供应链防护维度：\n"
+        "- 安全编码规范、静态分析与代码审查；\n"
+        "- 漏洞管理、软件物料清单与第三方组件治理；\n"
+        "- 产线密钥/证书注入、配置基线与可追溯；\n"
+        "- 供应链防假冒与组件来源核查；\n"
+        "- 安全测试、渗透测试与发布门禁；\n"
+        "- 售后维护、备份恢复与安全更新。"
+    ),
+    "通用安全与其它 / General & Other Security": (
+        "参考 UNECE R155 Annex 5 的通用安全维度：\n"
+        "- 不属于上述分类的安全能力、流程或支撑要求；\n"
+        "- 应说明保护对象、控制目标与验证方法，保持技术中立。"
+    ),
 }
-
-def clean_major_category(domain_str: str) -> str:
-    s = str(domain_str or "").lower()
-    if "hardware" in s or "硬件" in s:
-        return "硬件安全 / Hardware Security"
-    if "system" in s or "系统" in s:
-        return "系统安全 / System Security"
-    if "crypt" in s or "key" in s or "密码" in s or "密钥" in s:
-        return "密码安全与密钥管理 / Cryptography & Key Management"
-    if "app" in s or "应用" in s:
-        return "应用安全 / Application Security"
-    if "data" in s or "privacy" in s or "数据" in s or "隐私" in s:
-        return "数据安全与隐私保护 / Data Security & Privacy"
-    if "monitor" in s or "防护" in s or "监控" in s or "test" in s or "测试" in s or "respond" in s or "响应" in s:
-        return "安全监控、测试与响应 / Security Monitoring, Testing & Response"
-    if "comm" in s or "通信" in s or "通讯" in s or "transmission" in s:
-        return "通信安全 / Communication Security"
-    if "dev" in s or "ops" in s or "开发" in s or "运维" in s or "生产" in s or "supply" in s or "chain" in s or "供应链" in s:
-        return "安全开发、供应链与运维 / Secure Development, Supply Chain & Operations"
-    return "通用安全与其它 / General & Other Security"
 
 def get_asset_sn(asset) -> str:
     prefix_map = {
@@ -202,6 +167,10 @@ def build_id_maps(steps: List[TaraStep]):
                     control_set.add(ctrl)
                 rq = str(req.get("cybersecurity_requirement") or "").strip()
                 if rq and rq != "N/A":
+                    # Keep the full requirement text as a lookup key too. A
+                    # multi-line requirement must not lose its full-text alias
+                    # just because per-line keys are also registered.
+                    req_set.add(rq)
                     for line in rq.split("\n"):
                         cleaned = re.sub(r'^\(\d+\)\s*', '', line).strip()
                         if cleaned and cleaned != "N/A":
@@ -211,6 +180,7 @@ def build_id_maps(steps: List[TaraStep]):
             for csr in summarized_csrs:
                 rq = str(csr.get("cybersecurity_requirement") or "").strip()
                 if rq and rq != "N/A":
+                    req_set.add(rq)
                     for line in rq.split("\n"):
                         cleaned = re.sub(r'^\(\d+\)\s*', '', line).strip()
                         if cleaned and cleaned != "N/A":
@@ -227,9 +197,13 @@ def build_id_maps(steps: List[TaraStep]):
 
     return goal_map, claim_map, control_map, req_map
 
-def get_csr_traceability_maps(stage5_out: dict, req_map: dict) -> tuple:
+def get_csr_traceability_maps(stage5_out: dict, req_map: dict, strict: bool = True) -> tuple:
     """
-    建立 TARA 原始需求 (Tier 1) 与资产级合并汇总需求 (Tier 2) 之间的追溯关系
+    建立 TARA 原始需求 (Tier 1) 与资产级合并汇总需求 (Tier 2) 之间的追溯关系。
+
+    strict=True（默认）只接受精确文本/别名/ID 匹配；无法匹配时保留为未映射，
+    不再用子串或词重合度猜测，避免制造“看起来有追溯、实际不成立”的假阳性。
+    strict=False 保留旧版模糊兜底，仅用于兼容历史数据。
     Returns:
       tara_to_csr: dict, 原始需求文本 -> list of summarized CSR hash IDs
       csr_to_tara: dict, summarized CSR hash ID -> list of original raw requirement IDs (CSR_XXXXXXXX)
@@ -261,16 +235,25 @@ def get_csr_traceability_maps(stage5_out: dict, req_map: dict) -> tuple:
         local_id = str(req.get("cybersecurity_requirement_id") or "").strip()
         if local_id:
             aliases.append(local_id)
-            
+        # Older maps keyed multi-line requirements per line; keep those
+        # content-hash aliases so historical source IDs still resolve.
+        for line in text.split("\n"):
+            cleaned = re.sub(r'^\(\d+\)\s*', '', line).strip()
+            line_id = req_map.get(cleaned) if cleaned else None
+            if line_id:
+                aliases.append(line_id)
+
         for a in aliases:
             alias_to_req[str(a).lower().strip()] = req_entry
 
     # 2. 遍历 summarized_csrs 建立双向追溯
+    all_csr_ids = set()
     for csr in summarized_csrs:
         csr_text = str(csr.get("cybersecurity_requirement") or "").strip()
         if not csr_text:
             continue
         csr_hash_id = req_map.get(csr_text, csr.get("csr_id") or "N/A")
+        all_csr_ids.add(csr_hash_id)
         
         # 0. 精确文本匹配优先自动包含自身
         for req in requirements:
@@ -291,8 +274,9 @@ def get_csr_traceability_maps(stage5_out: dict, req_map: dict) -> tuple:
                 csr_to_tara.setdefault(csr_hash_id, []).append(raw_tara_id)
                 mapped_any = True
                 
-        # 兜底：如果 source_requirement_ids 无法匹配
-        if not mapped_any:
+        # 兜底：如果 source_requirement_ids 无法匹配。
+        # 默认 strict 模式不做模糊猜测；只有显式 strict=False 才启用历史兜底。
+        if not mapped_any and not strict:
             for req in requirements:
                 orig_text = str(req.get("cybersecurity_requirement") or "").strip()
                 if not orig_text or orig_text == "N/A":
@@ -318,6 +302,11 @@ def get_csr_traceability_maps(stage5_out: dict, req_map: dict) -> tuple:
                         if sim >= 0.40:
                             tara_to_csr.setdefault(orig_text, []).append(csr_hash_id)
                             csr_to_tara.setdefault(csr_hash_id, []).append(raw_tara_id)
+
+    if strict:
+        unmapped = sorted(cid for cid in all_csr_ids if cid not in csr_to_tara)
+        if unmapped:
+            print(f"[TARA-AI] 追溯警告: {len(unmapped)} 项 CSR 无精确来源映射（strict 模式）: {', '.join(unmapped[:8])}")
 
     # 去重
     for k in tara_to_csr:
@@ -384,7 +373,7 @@ def semantic_fallback_clustering(domain_name: str, items: list) -> list:
 
     clusters = []  # list of dict: {"tokens": set, "items": list}
     for it in items:
-        toks = _extract_tokens((it.get("sub_title") or "") + " " + (it.get("title") or ""))
+        toks = _extract_tokens((it.get("sub_title") or "") + " " + (it.get("title") or "") + " " + (it.get("req") or ""))
         best_c = None
         best_sim = 0.0
         for c in clusters:
@@ -421,7 +410,12 @@ def semantic_fallback_clustering(domain_name: str, items: list) -> list:
             "title": best_item.get("title") or "安全需求 / Security Requirement",
             "cybersecurity_requirement": best_item.get("req") or "",
             "applicable_assets": all_assets,
-            "source_requirement_ids": all_sources
+            "source_requirement_ids": all_sources,
+            "verification_method": "检查/测试（语义兜底，需人工复核） / Inspection/Test (semantic fallback, manual review required)",
+            "requirement_type": "product",
+            "rationale": "语义兜底聚类，需人工复核 / Semantic fallback clustering, manual review required",
+            "_degraded": True,
+            "_degraded_reason": "LLM unavailable or failed; semantic fallback used"
         })
         
     return consolidated
@@ -429,33 +423,146 @@ def semantic_fallback_clustering(domain_name: str, items: list) -> list:
 # -------------------------------------------------------------------------
 # LLM-Powered UNECE R155 Annex 5 Guided Synthesis
 # -------------------------------------------------------------------------
-def synthesize_domain_csrs_with_llm(db: Session, domain_name: str, items: list) -> list:
+def enforce_csr_coverage(items: list, cons: list) -> tuple:
+    """Ensure every input raw_id is covered by at least one consolidated CSR.
+
+    The prompt asks the model for 100% traceability, but prompts alone are not
+    a guarantee. This function is the code-level contract:
+      - strips hallucinated source IDs that were not in the input;
+      - appends one conservative fallback CSR for every missing raw_id;
+      - reports duplicates (allowed only for intentional splits).
+    """
+    input_ids = []
+    for it in items:
+        rid = str(it.get("raw_id") or "").strip()
+        if rid and rid not in input_ids:
+            input_ids.append(rid)
+    input_set = set(input_ids)
+
+    seen = set()
+    for c in cons:
+        raw_ids = c.get("source_requirement_ids") or []
+        if not isinstance(raw_ids, list):
+            raw_ids = [x.strip() for x in str(raw_ids).split(",") if x.strip()]
+        normalized = []
+        for sid in raw_ids:
+            sid = str(sid).strip()
+            if sid and sid not in normalized:
+                normalized.append(sid)
+        c["source_requirement_ids"] = normalized
+        seen.update(normalized)
+
+    extra = sorted(seen - input_set)
+    if extra:
+        for c in cons:
+            c["source_requirement_ids"] = [
+                sid for sid in c["source_requirement_ids"] if sid in input_set
+            ]
+
+    missing = [rid for rid in input_ids if rid not in seen]
+    for rid in missing:
+        item = next((x for x in items if str(x.get("raw_id")) == rid), None)
+        if not item:
+            continue
+        cons.append({
+            "sub_category": item.get("sub_title") or "通用安全防护 / General Security Protection",
+            "title": item.get("title") or "安全需求 / Security Requirement",
+            "cybersecurity_requirement": item.get("req") or "",
+            "applicable_assets": [item.get("asset_name")] if item.get("asset_name") else [],
+            "source_requirement_ids": [rid],
+            "verification_method": "检查/测试（覆盖兜底条目，需人工复核） / Inspection/Test (coverage fallback, manual review required)",
+            "requirement_type": "product",
+            "rationale": "原始需求兜底保留，需人工复核 / Original requirement preserved as coverage fallback, manual review required",
+            "_coverage_status": "fallback_original",
+        })
+
+    counts = Counter(
+        sid for c in cons for sid in c.get("source_requirement_ids", [])
+    )
+    duplicates = {sid: n for sid, n in counts.items() if n > 1}
+    all_covered = all(rid in counts for rid in input_ids)
+
+    verification_missing = []
+    for c in cons:
+        if not str(c.get("verification_method") or "").strip():
+            verification_missing.append(
+                ", ".join(c.get("source_requirement_ids", [])) or str(c.get("title") or "")
+            )
+            c["verification_method"] = (
+                "检查/测试（验证方法待补充，需人工复核） / "
+                "Inspection/Test (verification method TBD, manual review required)"
+            )
+            c["_coverage_status"] = c.get("_coverage_status") or "verification_missing"
+
+    report = {
+        "input_count": len(input_ids),
+        "output_source_count": len(counts),
+        "missing_raw_ids": missing,
+        "extra_raw_ids": extra,
+        "duplicate_raw_ids": duplicates,
+        "fallback_count": len(missing),
+        "verification_missing_count": len(verification_missing),
+        "verification_complete": not verification_missing,
+        # complete=True means the model itself covered every input ID.
+        # all_covered=True means the final export is safe because fallback
+        # entries filled the gaps.
+        "complete": not missing and not extra,
+        "all_covered": all_covered,
+    }
+    if missing or extra or verification_missing:
+        print(
+            f"[TARA-AI] CSR 覆盖校验: missing={len(missing)}, extra={len(extra)}, "
+            f"duplicates={len(duplicates)}, verification_missing={len(verification_missing)}"
+        )
+    return cons, report
+
+
+def synthesize_domain_csrs_with_llm(db: Session, domain_name: str, items: list) -> tuple:
     """
     使用大模型依据 UNECE R155 Annex 5 规范指引，对某一分类域下的资产原始安全需求进行
     项目级（Item-level）全局归纳、去重、资产解耦与原子化提炼。
+
+    Returns:
+        (consolidated_csrs, coverage_report)
     """
     if not items:
-        return []
-        
+        return [], {"input_count": 0, "complete": True}
+
     settings = db.query(SystemSettings).first()
     if not settings or not settings.api_key or settings.api_key in ["mock_test_key", ""]:
         print(f"[TARA-AI] 未配置有效大模型 API Key，启用通用语义算法兜底聚类 ({domain_name})")
-        return semantic_fallback_clustering(domain_name, items)
-        
-    guideline = UNECE_R155_ANNEX5_GUIDELINES.get(domain_name, "参考 UNECE R155 Annex 5 汽车网络安全威胁与缓解通用规范。")
-    
+        cons = semantic_fallback_clustering(domain_name, items)
+        cons, report = enforce_csr_coverage(items, cons)
+        report["mode"] = "semantic_fallback"
+        return cons, report
+
+    guideline = UNECE_R155_ANNEX5_GUIDELINES.get(
+        domain_name, "参考 UNECE R155 Annex 5 汽车网络安全威胁与缓解通用规范。"
+    )
+
     prompt = f"""你是一名资深汽车网络安全系统架构专家（精通 ISO/SAE 21434 与 UNECE R155 法规）。
 当前正在执行【{domain_name}】领域的项目级网络安全需求（Item-level Cybersecurity Requirements, CSR）全局综合提炼与去重。
 
 【法规参考依据 (UNECE R155 Annex 5 核心指引)】：
 {guideline}
 
+【写作边界】：
+- Cybersecurity Goal：对资产/接口的安全属性与期望结果的高层声明；技术中立，不写协议、算法、产品、阈值。
+- Cybersecurity Claim：剩余风险可接受/已转移的正式声明；说明剩余风险、依据、适用条件、有效期与批准角色。
+- Cybersecurity Control：控制类型（预防/检测/纠正；技术/操作）+ 控制目标 + 作用点；不写具体协议/算法/产品。
+- Cybersecurity Requirement：保护对象 + 安全属性/控制目标 + 应/不应行为 + 适用条件 + 验证方法；技术中立。
+- 即使输入需求包含具体协议、算法、端口或数值，输出必须抽象为能力要求，不得原样保留。
+
 【任务与合并原则】：
-1. 跨资产归纳合并：输入是当前被评估对象（Item）中各个底层资产提出的网络安全要求列表。若多个资产的需求涉及相同的安全防御机制和防护目标，必须将其合并为一个高度提炼、职责单一、100%可验证的项目级原子网络安全需求（CSR）；
-2. 技术中立原则（ISO/SAE 21434 概念阶段规范）：聚焦安全功能能力与防御目标（What & Why），严禁过早写死具体微观算法型号或单一数值（例如：避免写死 AES-256-XTS、ECDSA P-256、15分钟超时等，应表述为“经行业认可的高强度对称加密算法”、“标准非对称数字签名”、“安全会话超时退出机制”等），为后续软硬件架构设计保留选型与国密/商密合规空间；
-3. 中英文双语规范：每一项输出的 sub_category、title、cybersecurity_requirement 必须是中英文双语对照输出，格式为“中文描述 / English translation”；
-4. 100% 完整双向追溯：必须在每一项的 source_requirement_ids 数组中，精确列出该项归纳合并所涵盖的所有原始 raw_id。输入中的每一个 raw_id 必须被至少一项 CSR 覆盖，绝不允许丢项！
-5. 适用资产映射：在 applicable_assets 数组中列出所有适用的资产名称列表。
+1. 跨资产归纳合并：输入是当前被评估对象（Item）中各个底层资产提出的网络安全要求列表。
+2. 原子化边界：一条 CSR = 一个保护对象 + 一个控制目标 + 一个可验证结果。
+3. 只有“同一资产类别、同一攻击面、同一控制目标、同一验证方法”才合并；适用范围、适用资产或安全等级不同的，必须拆成多条。
+4. 合并后必须保留所有来源的适用条件差异，不能用一个来源的阈值/例外代表全部来源。
+5. 技术中立：聚焦安全功能能力与防御目标（What & Why），严禁写死具体算法型号、协议版本、端口号或单一数值；用“经行业认可的高强度算法”“标准安全通道”“安全会话超时”等能力表述。
+6. 每条 CSR 必须给出验证方法（测试/分析/检查/演示）、需求类型（product/process/supplier）和需求依据（rationale）；没有验证方法的条目不能作为最终 CSR。
+7. 中英文双语规范：sub_category、title、cybersecurity_requirement、verification_method、rationale 必须中英文对照，格式为“中文 / English”。
+8. 100% 完整双向追溯：source_requirement_ids 必须精确列出该项涵盖的所有原始 raw_id；输入中的每一个 raw_id 必须被至少一项 CSR 覆盖，绝不允许丢项。
+9. 适用资产映射：applicable_assets 数组列出所有适用的资产名称。
 
 请严格输出如下 JSON 格式：
 {{
@@ -464,6 +571,9 @@ def synthesize_domain_csrs_with_llm(db: Session, domain_name: str, items: list) 
       "sub_category": "安全机制子分类名称 / Sub-category mechanism",
       "title": "项目级需求标题 / Project-level requirement title",
       "cybersecurity_requirement": "中文需求完整规范描述... / English requirement specification...",
+      "verification_method": "测试/分析/检查/演示方法 / Verification method",
+      "requirement_type": "product | process | supplier",
+      "rationale": "需求依据与对应威胁/攻击路径 / Requirement rationale and linked threat/attack path",
       "applicable_assets": ["资产名称1", "资产名称2"],
       "source_requirement_ids": ["raw_id_1", "raw_id_2"]
     }}
@@ -484,7 +594,7 @@ def synthesize_domain_csrs_with_llm(db: Session, domain_name: str, items: list) 
         ],
         "response_format": {"type": "json_object"}
     }
-    
+
     try:
         print(f"[TARA-AI] 正在通过大模型进行【{domain_name}】项目级全局需求提炼 ({len(items)} 项原始需求)...")
         resp = post_llm_request_with_retry(url, headers, payload, max_retries=2)
@@ -494,16 +604,71 @@ def synthesize_domain_csrs_with_llm(db: Session, domain_name: str, items: list) 
         cons = parsed.get("consolidated_csrs", [])
         if not cons:
             raise ValueError("大模型返回 consolidated_csrs 列表为空")
-            
-        print(f"[TARA-AI] 【{domain_name}】提炼成功: {len(items)} 项原始需求成功综合归纳为 {len(cons)} 项项目级原子 CSR！")
-        return cons
+
+        cons, report = enforce_csr_coverage(items, cons)
+
+        # Coverage is a hard contract. If the first pass dropped input IDs, ask
+        # the model once to re-emit the complete set, then keep whichever
+        # result covers more inputs. Fallback entries still protect the export
+        # if the retry also fails.
+        missing_ids = report.get("missing_raw_ids") or []
+        if missing_ids:
+            print(
+                f"[TARA-AI] 【{domain_name}】首次覆盖不完整，重试一次: "
+                f"{', '.join(missing_ids[:8])}"
+            )
+            repair_instruction = (
+                "上一次输出遗漏了以下原始 raw_id："
+                f"{', '.join(missing_ids)}。\n"
+                "请重新输出完整的 consolidated_csrs（不是增量），确保输入中的每一个 raw_id "
+                "都至少被一项 CSR 的 source_requirement_ids 覆盖；禁止编造不存在的 raw_id。"
+            )
+            repair_payload = {
+                "model": settings.model_name,
+                "messages": payload["messages"] + [
+                    {"role": "assistant", "content": raw_text},
+                    {"role": "user", "content": repair_instruction},
+                ],
+                "response_format": payload["response_format"],
+            }
+            try:
+                resp_repair = post_llm_request_with_retry(
+                    url, headers, repair_payload, max_retries=2
+                )
+                raw_text_repair = resp_repair.json()["choices"][0]["message"]["content"]
+                parsed_repair = clean_and_parse_json(raw_text_repair)
+                cons_repair = parsed_repair.get("consolidated_csrs", [])
+                if cons_repair:
+                    cons_repair, report_repair = enforce_csr_coverage(items, cons_repair)
+                    if len(report_repair.get("missing_raw_ids") or []) < len(missing_ids):
+                        cons, report = cons_repair, report_repair
+                        report["mode"] = "llm_coverage_retry"
+                        print(
+                            f"[TARA-AI] 【{domain_name}】覆盖重试改善: "
+                            f"missing={len(report.get('missing_raw_ids') or [])}"
+                        )
+            except Exception as retry_err:
+                print(
+                    f"[TARA-AI] 警告: 【{domain_name}】覆盖重试失败 "
+                    f"({retry_err})，保留首次结果并用兜底条目补齐。"
+                )
+
+        print(
+            f"[TARA-AI] 【{domain_name}】提炼成功: {len(items)} 项原始需求 -> {len(cons)} 项 CSR；"
+            f"覆盖完整={report.get('complete')}"
+        )
+        return cons, report
     except Exception as e:
         print(f"[TARA-AI] 警告: 【{domain_name}】大模型提炼失败 ({e})，平滑切换至通用语义算法兜底...")
-        return semantic_fallback_clustering(domain_name, items)
+        cons = semantic_fallback_clustering(domain_name, items)
+        cons, report = enforce_csr_coverage(items, cons)
+        report["mode"] = "semantic_fallback_after_error"
+        return cons, report
+
 
 def synthesize_project_csrs(db: Session, all_csrs: list, global_tier2_to_tier1: dict = None) -> list:
     """
-    对跨资产收集到的所有底层安全需求按 8 大安全分类域进行并发大模型全局提炼与编号，
+    对跨资产收集到的所有底层安全需求按标准安全分类域进行并发大模型全局提炼与编号，
     并将 Tier 2 资产级汇总 CSR ID 自动穿透解析为 Tier 1 TARA 原始需求 ID (CSR_XXXXXXXX)。
     """
     items_by_domain = {d: [] for d in MAJOR_ORDER.keys()}
@@ -547,17 +712,34 @@ def synthesize_project_csrs(db: Session, all_csrs: list, global_tier2_to_tier1: 
         for future in as_completed(future_to_domain):
             d = future_to_domain[future]
             try:
-                domain_results[d] = future.result()
+                res = future.result()
+                if isinstance(res, tuple):
+                    domain_results[d] = res
+                else:
+                    # Backward-compatible path for callers/mocks returning a list.
+                    domain_results[d] = (res, {"mode": "legacy_list", "complete": True})
             except Exception as e:
                 print(f"[TARA-AI] 线程执行异常 ({d}): {e}")
-                domain_results[d] = semantic_fallback_clustering(d, items_by_domain[d])
+                cons = semantic_fallback_clustering(d, items_by_domain[d])
+                cons, report = enforce_csr_coverage(items_by_domain[d], cons)
+                report["mode"] = "semantic_fallback_after_exception"
+                domain_results[d] = (cons, report)
 
     # 按照标准分类域排序，生成全局顺序编号与扁平化行数据
     sorted_domains = sorted(active_domains, key=lambda d: MAJOR_ORDER.get(d, 99))
     
     final_rows = []
     for d in sorted_domains:
-        cons_list = domain_results.get(d, [])
+        domain_result = domain_results.get(d, ([], {}))
+        if isinstance(domain_result, tuple):
+            cons_list, coverage_report = domain_result
+        else:
+            cons_list, coverage_report = domain_result, {"mode": "legacy_list", "complete": True}
+        if coverage_report.get("all_covered") is False:
+            raise ValueError(
+                f"CSR coverage incomplete for domain {d}: "
+                f"missing={coverage_report.get('missing_raw_ids')}"
+            )
         pfx = DOMAIN_PREFIX_MAP.get(d, "CSR-GEN")
         
         for idx, c in enumerate(cons_list, 1):
@@ -603,10 +785,17 @@ def synthesize_project_csrs(db: Session, all_csrs: list, global_tier2_to_tier1: 
                 "assets_count": len(applicable_assets) if isinstance(applicable_assets, list) else 1,
                 "title": c.get("title") or "网络安全要求 / Cybersecurity Requirement",
                 "cybersecurity_requirement": c.get("cybersecurity_requirement") or "",
+                "verification_method": c.get("verification_method") or "",
+                "requirement_type": c.get("requirement_type") or "product",
+                "rationale": c.get("rationale") or "",
                 "source_tara_requirements": source_ids_str,
                 "source_count": source_cnt,
                 "_raw_source_ids": sorted_tier1_ids,
-                "_tier2_source_ids": source_ids
+                "_tier2_source_ids": source_ids,
+                "_coverage_report": coverage_report,
+                "_coverage_status": c.get("_coverage_status") or "merged",
+                "_degraded": bool(c.get("_degraded")),
+                "_degraded_reason": c.get("_degraded_reason") or "",
             })
             
     return final_rows
@@ -688,13 +877,17 @@ def get_or_synthesize_global_csrs(db: Session, domain: Domain, steps: list, asse
                 req_text = req.get("cybersecurity_requirement") or ""
                 if not req_text:
                     continue
+                req_id = req.get("cybersecurity_requirement_id") or f"CSR-{asset.id:03d}"
                 summarized_csrs.append({
-                    "cybersecurity_requirement_id": req.get("cybersecurity_requirement_id") or f"CSR-{asset.id:03d}",
-                    "csr_id": req.get("cybersecurity_requirement_id") or f"CSR-{asset.id:03d}",
+                    "cybersecurity_requirement_id": req_id,
+                    "csr_id": req_id,
                     "title": req.get("title") or f"针对 {asset.name} 的安全要求 / Security requirement for {asset.name}",
                     "sub_title": req.get("sub_title") or "安全防护 / Cybersecurity Protection",
                     "security_domain": req.get("security_domain"),
-                    "cybersecurity_requirement": req_text
+                    "cybersecurity_requirement": req_text,
+                    "verification_method": req.get("verification_method", ""),
+                    "requirement_type": req.get("requirement_type", "product"),
+                    "source_requirement_ids": [req_id]
                 })
         for csr in summarized_csrs:
             all_csrs.append({"asset": asset, "csr": csr})

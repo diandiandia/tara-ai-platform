@@ -573,6 +573,99 @@ def collect_csr_report_data(steps, assets, hash_to_global_map: dict = None, db: 
         return get_or_synthesize_global_csrs(db, domain, steps, assets, hash_to_global_map)
 
 
+def build_csr_coverage_rows(csr_rows: list) -> list:
+    """Build a raw-requirement -> final-CSR coverage audit table.
+
+    The synthesis layer records missing/extra/duplicate IDs inside
+    ``_coverage_report`` and marks auto-filled rows with
+    ``_coverage_status == 'fallback_original'``. This function turns those
+    markers into a human-readable sheet so a reviewer can see exactly which
+    input requirement was covered, by which CSR, and which IDs were missing,
+    duplicated, or hallucinated.
+    """
+    coverage = {}
+    reports_by_domain = {}
+
+    for row in csr_rows:
+        domain = str(row.get("security_domain") or "")
+        csr_id = str(row.get("csr_id") or "")
+        status = str(row.get("_coverage_status") or "merged")
+        raw_ids = row.get("_tier2_source_ids") or row.get("_raw_source_ids") or []
+        if not isinstance(raw_ids, list):
+            raw_ids = [str(raw_ids)]
+        if not raw_ids:
+            # Older cached rows only have the rendered source field.
+            raw_ids = [
+                part.strip()
+                for part in str(row.get("source_tara_requirements") or "").split(",")
+                if part.strip()
+            ]
+        for raw_id in raw_ids:
+            raw_id = str(raw_id).strip()
+            if not raw_id:
+                continue
+            key = (domain, raw_id)
+            entry = coverage.setdefault(
+                key,
+                {"csr_ids": [], "status": status},
+            )
+            if csr_id and csr_id not in entry["csr_ids"]:
+                entry["csr_ids"].append(csr_id)
+            if status == "fallback_original":
+                entry["status"] = "fallback_original"
+
+        report = row.get("_coverage_report") or {}
+        if report:
+            reports_by_domain.setdefault(domain, report)
+
+    result = []
+    for (domain, raw_id), entry in sorted(coverage.items()):
+        report = reports_by_domain.get(domain, {})
+        duplicate = raw_id in (report.get("duplicate_raw_ids") or {})
+        notes = []
+        if entry["status"] == "fallback_original":
+            notes.append("模型未覆盖，已用原始需求兜底 / model gap, original requirement preserved")
+        if duplicate:
+            notes.append("被多条 CSR 引用（允许的拆分） / referenced by multiple CSRs (intentional split)")
+        if report.get("verification_missing_count"):
+            notes.append(f"verification_missing={report.get('verification_missing_count')}（已验证方法兜底） / verification method filled as TBD")
+        if report.get("mode"):
+            notes.append(f"mode={report.get('mode')}")
+        result.append({
+            "raw_id": raw_id,
+            "security_domain": domain,
+            "csr_id": ", ".join(entry["csr_ids"]),
+            "coverage_status": entry["status"],
+            "duplicate": "yes" if duplicate else "no",
+            "note": "; ".join(notes),
+        })
+
+    # IDs the model invented are stripped before export; keep them visible in
+    # the audit sheet rather than silently dropping them.
+    for domain, report in reports_by_domain.items():
+        for raw_id in report.get("extra_raw_ids") or []:
+            result.append({
+                "raw_id": raw_id,
+                "security_domain": domain,
+                "csr_id": "",
+                "coverage_status": "extra_stripped",
+                "duplicate": "no",
+                "note": "模型编造，已从输出剔除 / hallucinated, stripped from output",
+            })
+        for raw_id in report.get("missing_raw_ids") or []:
+            if (domain, raw_id) not in coverage:
+                result.append({
+                    "raw_id": raw_id,
+                    "security_domain": domain,
+                    "csr_id": "",
+                    "coverage_status": "missing_no_fallback",
+                    "duplicate": "no",
+                    "note": "缺失且无自动兜底，需人工处理 / missing without fallback, manual action required",
+                })
+
+    return result
+
+
 def create_excel_report(domain: Domain, steps: List[TaraStep], assets: List[Asset], desensitize: bool, export_type: str = "all", db: Session = None) -> str:
     """
     生成高度美观的 ISO 21434 TARA XLSX 格式报表，支持脱敏过滤，并支持导出安全需求 (CSR_Requirements) 的混合模型 sheet 页
@@ -702,6 +795,7 @@ def create_excel_report(domain: Domain, steps: List[TaraStep], assets: List[Asse
         
         headers2 = [
             "Atomic CSR ID", "Security Domain", "Control Category", "Requirement Title", "Cybersecurity Requirement (CN/EN)",
+            "Verification Method / 验证方法", "Requirement Type / 需求类型", "Rationale / 需求依据",
             "Applicable Assets / 适用资产列表", "Assets Count / 覆盖资产数",
             "Source TARA CSR IDs / 追溯原始TARA需求", "Source Count / 追溯条目数"
         ]
@@ -715,7 +809,7 @@ def create_excel_report(domain: Domain, steps: List[TaraStep], assets: List[Asse
         ws2.row_dimensions[1].height = 30
         csr_rows = csr_rows_pre
         current_row = 2
-        csr_keys = ["csr_id", "security_domain", "sub_category", "title", "cybersecurity_requirement", "applicable_assets", "assets_count", "source_tara_requirements", "source_count"]
+        csr_keys = ["csr_id", "security_domain", "sub_category", "title", "cybersecurity_requirement", "verification_method", "requirement_type", "rationale", "applicable_assets", "assets_count", "source_tara_requirements", "source_count"]
         
         for row_data in csr_rows:
             for col_idx, key in enumerate(csr_keys, 1):
@@ -724,7 +818,7 @@ def create_excel_report(domain: Domain, steps: List[TaraStep], assets: List[Asse
                 cell.font = cell_font
                 cell.border = thin_border
                 
-                if key in ["title", "cybersecurity_requirement", "applicable_assets"]:
+                if key in ["title", "cybersecurity_requirement", "verification_method", "rationale", "applicable_assets"]:
                     cell.alignment = Alignment(horizontal="left", vertical="center", wrap_text=True)
                 else:
                     cell.alignment = Alignment(horizontal="center", vertical="center", wrap_text=True)
@@ -733,10 +827,52 @@ def create_excel_report(domain: Domain, steps: List[TaraStep], assets: List[Asse
             current_row += 1
             
         # 列宽设置 (Sheet 2)
-        col_w_map2 = {1: 16, 2: 24, 3: 28, 4: 35, 5: 65, 6: 32, 7: 14, 8: 40, 9: 14}
+        col_w_map2 = {1: 16, 2: 24, 3: 28, 4: 35, 5: 65, 6: 32, 7: 14, 8: 45, 9: 40, 10: 14, 11: 40, 12: 14}
         for c_idx, width in col_w_map2.items():
             col_letter = openpyxl.utils.get_column_letter(c_idx)
             ws2.column_dimensions[col_letter].width = width
+
+        # 导出 CSR_Coverage Sheet（raw_id -> Final CSR 覆盖审计）
+        ws_cov = wb.create_sheet(title="CSR_Coverage")
+        ws_cov.views.sheetView[0].showGridLines = True
+        cov_headers = [
+            "Raw Requirement ID / 原始需求ID", "Security Domain / 安全域",
+            "Final CSR ID / 最终CSR", "Coverage Status / 覆盖状态",
+            "Duplicate / 重复引用", "Note / 说明",
+        ]
+        for col_idx, header in enumerate(cov_headers, 1):
+            cell = ws_cov.cell(row=1, column=col_idx, value=header)
+            cell.fill = header_fill_r1
+            cell.font = header_font
+            cell.alignment = Alignment(horizontal="center", vertical="center", wrap_text=True)
+            cell.border = thin_border
+        ws_cov.row_dimensions[1].height = 30
+
+        status_fills = {
+            "fallback_original": PatternFill(start_color="FEF3C7", end_color="FEF3C7", fill_type="solid"),
+            "extra_stripped": PatternFill(start_color="FEE2E2", end_color="FEE2E2", fill_type="solid"),
+            "missing_no_fallback": PatternFill(start_color="FECACA", end_color="FECACA", fill_type="solid"),
+            "verification_missing": PatternFill(start_color="FEF3C7", end_color="FEF3C7", fill_type="solid"),
+        }
+        for row_idx, cov_row in enumerate(build_csr_coverage_rows(csr_rows_pre), 2):
+            values = [
+                cov_row["raw_id"], cov_row["security_domain"], cov_row["csr_id"],
+                cov_row["coverage_status"], cov_row["duplicate"], cov_row["note"],
+            ]
+            for col_idx, value in enumerate(values, 1):
+                cell = ws_cov.cell(row=row_idx, column=col_idx, value=value)
+                cell.font = cell_font
+                cell.border = thin_border
+                cell.alignment = Alignment(
+                    horizontal="left" if col_idx in (1, 3, 6) else "center",
+                    vertical="center",
+                    wrap_text=True,
+                )
+                if col_idx == 4 and cov_row["coverage_status"] in status_fills:
+                    cell.fill = status_fills[cov_row["coverage_status"]]
+
+        for c_idx, width in {1: 30, 2: 26, 3: 24, 4: 22, 5: 12, 6: 60}.items():
+            ws_cov.column_dimensions[openpyxl.utils.get_column_letter(c_idx)].width = width
 
     # 导出 Traceability_Matrix Sheet (全景双向追溯矩阵)
     if has_tara and has_csr:
@@ -931,12 +1067,13 @@ def create_csv_report(domain: Domain, steps: List[TaraStep], assets: List[Asset]
     if export_type == "csr":
         headers_r2 = [
             "Atomic CSR ID", "Security Domain", "Control Category", "Requirement Title",
-            "Cybersecurity Requirement", "Applicable Assets", "Assets Count",
+            "Cybersecurity Requirement", "Verification Method", "Requirement Type", "Rationale",
+            "Applicable Assets", "Assets Count",
             "Source TARA CSR IDs", "Source Count"
         ]
         keys = [
             "csr_id", "security_domain", "sub_category", "title",
-            "cybersecurity_requirement", "applicable_assets", "assets_count",
+            "cybersecurity_requirement", "verification_method", "requirement_type", "rationale", "applicable_assets", "assets_count",
             "source_tara_requirements", "source_count"
         ]
         rows = collect_csr_report_data(steps, assets)

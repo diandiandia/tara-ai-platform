@@ -9,6 +9,7 @@ from sqlalchemy.orm import Session
 from datetime import datetime
 
 from app.core.celery_app import celery_app
+from app.core.taxonomy import DOMAIN_PROMPT_LIST
 from app.core.database import SessionLocal
 from app.models.domain import Domain
 from app.models.project import Project
@@ -487,8 +488,16 @@ def mock_tara_ai_call(stage: str, asset: Asset, prev_stages: dict) -> dict:
                 "item_change": change,
                 "cybersecurity_goal_id": generate_content_id("CSO_", goal) if goal else "",
                 "cybersecurity_goal": goal,
+                "security_property": ts.get("attribute") if goal else "",
+                "goal_asset": asset.name if goal else "",
+                "success_criteria": "",
                 "cybersecurity_claim_id": generate_content_id("CLM_", claim) if claim else "",
-                "cybersecurity_claim": claim
+                "cybersecurity_claim": claim,
+                "residual_risk": f"风险值 {risk_val} / Risk value {risk_val}" if claim else "",
+                "claim_justification": "基于风险矩阵评估 / Based on risk matrix assessment" if claim else "",
+                "claim_conditions": "",
+                "claim_validity": "",
+                "claim_owner": ""
             })
             
             justifications.append(f"安全风险为 {risk_val} ({ts.get('attribute')}属性)，采取 {decision} 决策。 / Cybersecurity risk is {risk_val} ({ts.get('attribute')} attribute), decision: {decision} decision.")
@@ -539,14 +548,21 @@ def mock_tara_ai_call(stage: str, asset: Asset, prev_stages: dict) -> dict:
             if dec.get("risk_treatment") == "Reduce":
                 req_text = f"系统应对针对 {asset.name} 的 {dec['attribute']} 关键消息启用强制签名及抗重放序号校验。 / The system shall enable mandatory signature and anti-replay sequence number checks for critical messages targeting the {dec['attribute']} of {asset.name}."
                 
-                ctrl_text = f"通过部署安全通信算法（如SecOC或TLS）保护 {asset.name} 的数据传输通道。 / Protect the data transmission channel of {asset.name} by deploying secure communication algorithms such as SecOC or TLS."
+                ctrl_text = f"通过部署经行业认可的安全通信机制保护 {asset.name} 的数据传输通道。 / Protect the data transmission channel of {asset.name} by deploying industry-recognized secure communication mechanisms."
                 requirements.append({
                     "threat_id": dec["threat_id"],
                     "cybersecurity_control_id": generate_content_id("CSC_", ctrl_text),
                     "cybersecurity_control": ctrl_text,
+                    "control_type": "预防 / Preventive",
+                    "implementation_type": "技术 / Technical",
+                    "control_objective": ctrl_text,
+                    "control_point": asset.name,
                     "allocated_to_device": "yes",
                     "cybersecurity_requirement_id": generate_content_id("CSR_", req_text),
-                    "cybersecurity_requirement": req_text
+                    "cybersecurity_requirement": req_text,
+                    "verification_method": "测试/检查 / Test/Inspection",
+                    "requirement_type": "product",
+                    "rationale": dec.get("threat_scenario", "")
                 })
                 
                 s_dom = "安全通信 / Secure Transmission" if dec.get('attribute') in ["Integrity", "Authenticity", "Non-repudiation"] else "系统安全 / System Security"
@@ -558,7 +574,11 @@ def mock_tara_ai_call(stage: str, asset: Asset, prev_stages: dict) -> dict:
                     "title": f"针对 {asset.name} {dec['attribute']} 的报文防伪要求 / Packet anti-counterfeiting requirements targeting {asset.name} {dec['attribute']}",
                     "sub_title": "双向通信安全签名 / Bidirectional secure communication signature",
                     "security_domain": s_dom,
-                    "cybersecurity_requirement": req_text
+                    "cybersecurity_requirement": req_text,
+                    "verification_method": "测试/检查 / Test/Inspection",
+                    "requirement_type": "product",
+                    "rationale": dec.get("threat_scenario", ""),
+                    "source_requirement_ids": [generate_content_id("CSR_", req_text)]
                 })
                 
         # Consolidated CSR list
@@ -619,16 +639,31 @@ class RequirementSchema(BaseModel):
     threat_id: Optional[str] = Field(default="", description="对应威胁场景的编号，例如 TS_Integrity_1")
     cybersecurity_control_id: str = Field(description="安全控制措施编号，格式以 CSO-001, CSO-002 等递增顺序编号编写，不使用 CSO-XXX 字面量")
     cybersecurity_control: str = Field(description="中英文对照的安全控制措施目标，格式：中文 / English")
+    control_type: str = Field(default="", description="控制类型：预防/检测/纠正 / Preventive/Detective/Corrective")
+    implementation_type: str = Field(default="", description="实现类型：技术/操作 / Technical/Operational")
+    control_objective: str = Field(default="", description="控制目标（中英文对照）")
+    control_point: str = Field(default="", description="控制作用点，例如资产、接口或生命周期阶段（中英文对照）")
     allocated_to_device: str = Field(description="是否分配给设备，可选值：yes, no")
     cybersecurity_requirement_id: str = Field(description="网络安全要求编号，格式以 CSR-001, CSR-002 等递增顺序编号编写，不使用 CSR-XXX 字面量")
     cybersecurity_requirement: str = Field(description="中英文对照的具体网络安全要求，格式：中文 / English")
+    verification_method: str = Field(default="", description="验证方法（测试/分析/检查/演示），中英文对照；没有验证方法的要求不能作为最终 CSR")
+    requirement_type: str = Field(default="product", description="需求类型：product（产品）/ process（流程）/ supplier（供应商）")
+    rationale: str = Field(default="", description="需求依据及对应的威胁/攻击路径（中英文对照）")
 
 class RiskDecisionSchema(BaseModel):
     threat_id: str = Field(description="对应威胁场景的编号，例如 TS_Integrity_1")
     risk_treatment: str = Field(description="风险处理选项，可选值：Avoid, Reduce, Share, Retain")
     item_change: str = Field(description="如果选择 Avoid，提供 item_change 中英文理由，否则填空字符串")
     cybersecurity_goal: str = Field(description="如果选择 Reduce，提供 cybersecurity_goal 中英文目标描述，否则填空字符串")
+    security_property: str = Field(default="", description="Goal 对应的安全属性，例如 Integrity / Confidentiality")
+    goal_asset: str = Field(default="", description="Goal 保护对象（中英文对照）")
+    success_criteria: str = Field(default="", description="Goal 的可验证成功判据（中英文对照）")
     cybersecurity_claim: str = Field(description="如果选择 Share/Retain，提供 cybersecurity_claim 中英文声明，否则填空字符串")
+    residual_risk: str = Field(default="", description="Claim 的剩余风险说明（中英文对照）")
+    claim_justification: str = Field(default="", description="Claim 的可接受/可转移依据（中英文对照）")
+    claim_conditions: str = Field(default="", description="Claim 的适用条件与依赖（中英文对照）")
+    claim_validity: str = Field(default="", description="Claim 的有效期（中英文对照）")
+    claim_owner: str = Field(default="", description="Claim 的批准角色/责任人（中英文对照）")
     requirements: List[RequirementSchema] = Field(description="仅在 Reduce 时编写该威胁场景的安全要求列表，否则为空列表")
 
 class SummarizedRequirementSchema(BaseModel):
@@ -638,6 +673,9 @@ class SummarizedRequirementSchema(BaseModel):
     sub_title: str = Field(description="中英文对照的要求副标题，格式：中文 / English")
     security_domain: str = Field(description="中英文对照的安全领域，例如：安全通信 / Secure Transmission")
     cybersecurity_requirement: str = Field(description="中英文对照的网络安全要求内容，格式：中文 / English")
+    verification_method: str = Field(default="", description="验证方法（测试/分析/检查/演示），中英文对照")
+    requirement_type: str = Field(default="product", description="需求类型：product / process / supplier")
+    rationale: str = Field(default="", description="需求依据及对应的威胁/攻击路径（中英文对照）")
     source_requirement_ids: List[str] = Field(default=[], description="该归纳/去重后的网络安全需求所涵盖的原始网络安全要求编号列表 (即前面 requirements 中的 cybersecurity_requirement_id，例如 ['CSR-001', 'CSR-002'])，以体现严格的追溯关系")
 
 class Stage45Output(BaseModel):
@@ -668,12 +706,20 @@ def tara_ai_analysis_call(db: Session, stage: str, asset: Asset, prev_stages: di
     # 核心系统专家提示词 (基于 pyTara_V 设定)
     system_prompt = (
         f"你现在是拥有丰富经验的 ISO 21434 汽车网络安全专家。{item_context}。\n"
+        "【术语与写作边界】\n"
+        "- Damage Scenario：资产/安全属性受损后对车辆、人员、业务或隐私造成的影响；不描述攻击手段。\n"
+        "- Threat Scenario：威胁源或攻击接口 + 被破坏的安全属性 + 攻击行为；不写具体实现方案。\n"
+        "- Cybersecurity Goal：对资产/接口的安全属性与期望结果的高层声明；技术中立，不写协议、算法、产品、阈值。\n"
+        "- Cybersecurity Claim：Share/Retain 时对剩余风险可接受/已转移的正式声明；说明剩余风险、依据、适用条件、有效期与批准角色。\n"
+        "- Cybersecurity Control：控制类型（预防/检测/纠正；技术/操作）+ 控制目标 + 作用点；不写具体协议/算法/产品。\n"
+        "- Cybersecurity Requirement：保护对象 + 安全属性/控制目标 + 应/不应行为 + 适用条件 + 验证方法；技术中立。\n"
         "1. 所有描述性内容、场景描述、路径、理由、安全目标和安全控制/需求必须使用中英文双语对照输出，格式为“中文描述 / English translation” (例如：“由于系统受损，功能失效。 / Impaired functions due to system compromise.”)，保证翻译的专业性与准确性；\n"
         "2. 绝对不使用 Markdown 代码块；\n"
         "3. 绝对不包含任何思考过程、推理步骤或解释说明；\n"
         "4. 只返回最终的 JSON 格式结果；\n"
         "5. 确保JSON格式正确，并完全符合要求；\n"
-        "6. 不要返回思考过程。"
+        "6. 不要返回思考过程；\n"
+        "7. 如果输入需求中包含具体协议、算法、端口或数值，输出必须抽象为能力要求，不得原样保留。"
     )
 
     url = f"{settings.api_base_url.rstrip('/')}/chat/completions"
@@ -864,70 +910,64 @@ def tara_ai_analysis_call(db: Session, stage: str, asset: Asset, prev_stages: di
         req_guideline = ""
         if asset_type_lower == "hardware":
             req_guideline = (
-                "\n【硬件安全需求制定指南 (Hardware Security Requirements Guidelines)】:\n"
-                "由于当前资产为硬件，制定的安全控制措施与要求应重点覆盖以下硬件核心安全维度（请结合威胁场景合理选择，描述必须100%可验证，不要指明具体芯片型号，写成机制）：\n"
-                "1. 物理防拆防探 (Physical Tampering Defense)：设计外壳防拆开关，触发清除易失性密钥、进入死锁模式等预定义安全动作；敏感布线于PCB内层或进行混淆；采用BGA/CSP封装并隐藏测试点。\n"
-                "2. 调试端口安全 (Debug Port Protection)：量产时通过永久熔丝(eFuse/Fuse)禁用 JTAG/SWD 等物理调试接口，或实施基于非对称密码学的安全挑战应答(Challenge-Response)解锁调试机制。\n"
-                "3. 侧信道与故障注入防护 (SCA & Fault Injection Mitigation)：芯片采用恒定时间算法、掩码、功耗平衡及电磁屏蔽以抵御侧信道攻击；集成电压/时钟/温度监控传感器，在检测到异常故障注入时触发安全复位或置零。\n"
-                "4. 外部存储绑定与加密 (Storage Binding & Encryption)：外置非易失存储（Flash/eMMC/UFS）中的敏感固件与数据实施实时硬件加密(OTF/Inline Encryption)，且必须将数据解密密钥与SoC物理不可克隆函数(PUF)或SoC内部唯一硬件根密钥绑定，防止脱机读取或假冒克隆。\n"
-                "5. 信任根与防回滚 (Root of Trust & Anti-rollback)：基于只读 BootROM 建立安全启动，集成硬件安全模块(HSM/eHSM/SHE)提供密码学操作隔离；硬件提供防回滚单调计数器(Anti-rollback Counter)。\n"
-                "6. 供应链与安全配给 (Provisioning & Supply Chain)：建立芯片及组件的可溯源管理，量产根密钥注入必须在本地产线安全设备(HSM)保护下进行，防范代工厂环节泄漏。\n"
-                "7. 高熵真随机数生成 (TRNG)：必须集成符合标准的硬件真随机数发生器，为密码学操作提供高质量熵源。\n"
+                "\n【硬件安全需求维度 (Hardware Security Requirement Dimensions)】:\n"
+                "请结合威胁场景选择适用维度，只写“应具备什么能力/达到什么结果”，不要写具体芯片、封装、传感器型号或实现电路：\n"
+                "1. 物理防拆与安全响应：应能检测外壳开启、物理接触或探测事件，并按预定义策略记录、告警、锁定或进入安全状态。\n"
+                "2. 调试/编程接口保护：量产应不可逆禁用；确需保留时，应实施强身份认证、最小权限和审计。\n"
+                "3. 故障注入与侧信道防护：应具备电压/时钟/温度异常监测和行业认可的侧信道防护能力。\n"
+                "4. 外部存储保护：外部非易失存储中的敏感数据应使用设备唯一密钥进行硬件绑定加密，防止脱机读取/克隆。\n"
+                "5. 信任根与防回滚：应基于只读信任根建立安全启动，并提供安全版本防回滚能力。\n"
+                "6. 安全配给与溯源：产线密钥/证书注入应受安全硬件保护，并与部件唯一标识建立可追溯记录。\n"
+                "7. 随机数与熵源：应为密码学操作提供符合项目认可标准的高质量随机数/熵源。\n"
+                "写作约束：禁止写死芯片型号、封装型号、具体传感器型号、具体算法/协议/端口/数值阈值；这些留到设计阶段。\n"
             )
         elif asset_type_lower == "software":
             req_guideline = (
-                "\n【软件与应用安全需求制定指南 (Software & Application Security Requirements Guidelines)】:\n"
-                "由于当前资产为 software/系统，制定的安全控制措施与要求应重点覆盖以下软件与操作系统核心安全维度（请结合威胁场景合理选择，描述必须100%可验证，不要指明具体芯片型号，写成机制）：\n"
-                "1. 分级安全启动 (Secure Boot Chain)：必须实现从 BootROM、Bootloader、内核到应用层的完整校验链，每个阶段加载前都必须验证下一阶段代码的数字签名与完整性（如使用 RSA-3072+ 或 ECC P-256+）；且必须将各阶段验证结果（成功/失败及度量 Hash 值）安全记录（如写入安全日志或 HSM/TPM 存储中）。\n"
-                "2. 安全刷写与更新认证 (Secure Flashing & Update Verification)：支持安全的本地/OTA刷写；安装固件更新包前必须使用非对称密码算法验证其数字签名，确保来源真实且内容完整；在传输和存储固件更新包时，必须使用经行业认可的高强度对称加密算法进行加密防止固件泄漏。\n"
-                "3. 双分区恢复与数据清理 (A/B Recovery & Data Erasure)：实现 A/B 分区系统备份或等效回滚机制，确保更新失败后能自动恢复至正常版本；固件更新成功并确认系统稳定后，必须安全擦除/置零（Zeroization）临时解压的固件包和解密密钥。\n"
-                "4. 固件版本抗回滚 (Firmware Anti-Rollback)：维护安全版本计数器（需绑定硬件只读 eFuse/OTP 或 HSM Secure NVM 存储），安装新固件前验证版本号大于当前版本，防止降级攻击。\n"
-                "5. 访问控制与强身份认证 (Access Control & 2FA)：实现基于角色访问控制（RBAC），用户分配最小必要权限；对诊断接口的关键配置与标定参数（如制动参数、安全气囊阈值、动力电池参数）的写操作必须实施基于 UDS 0x27/0x29 安全访问服务的双向/单向挑战应答鉴权；针对后台/登录访问配置连续失败锁定策略。\n"
-                "6. 运行时系统强化与进程隔离 (Runtime Hardening & OS Isolation)：运行时必须关闭所有无关的网络端口与服务（如以太网 Telnet/FTP 等，并提供通信矩阵）；对于微控制器/RTOS系统，必须通过硬件 MPU 或内核特权级实施特权隔离与沙盒化隔离（如将 CAN 接口、传感器接口等核心驱动在低权限模式或沙盒进程中运行，与其它低权限进程和安全无关业务完全隔离，防止内存非法破坏）；对于高阶 OS 必须配置 SELinux Enforcing 模式并启用 ASLR/NX 等编译期加固防护。\n"
-                "7. 应用程序输入合法性校验 (Input Validation Defense)：运行 the 应用程序应对所有外部输入数据（网络报文、读取文件、外部 API/进程参数）进行严格的类型、长度、边界和合法性校验，防止缓冲区溢出、格式字符串等漏洞。\n"
-                "8. 中间件安全与身份权限校验 (Middleware Secure Communication)：应用程序在通过 SOME/IP、DDS 等中间件进行通信前，必须使用安全通信通道（如 TLS/DTLS、IPsec 或车载 SOME/IP-Security），在通信前验证通信对端的身份和权限。\n"
-                "9. 二进制代码保护与后门清理 (Binary Protection & SOP Debug Cleanup)：量产发布版本（SOP 后）必须完全移除调试驱动程序、调试工具与调试服务端口；交付的二进制文件必须剔除调试符号（`strip`）并做混淆加固；严禁在代码中直接或间接引入任何旨在绕过安全访问规则的未授权“后门”或隐蔽接口。\n"
-                "10. 系统完整性与资源安全监控 (Host Monitoring & File Integrity)：应实时监控 CPU、内存、存储空间和网络带宽的使用率，并在资源耗尽前触发告警或防过载缓解；应支持周期性的关键文件及二进制程序完整性校验（发现篡改触发安全事件）；部署数据泄露防护（DLP）监控，对可疑的外发数据操作触发安全事件；应部署防病毒白名单或恶意软件检测引擎，并定期更新库以防恶意代码执行。\n"
-                "11. 安全日志审计与分级存储 (Security Event Auditing & Log Retention)：必须记录安全启动失败、关键配置/标定变更、异常网络行为（如 CAN 拒绝服务、UDS 会话异常、以太网重放等）等安全事件日志；日志应划分危险级别（高、中、低），格式至少包括时间、事件类型、执行操作及结果。车内本地日志应具备防修改与防非授权删除的安全存储机制，支持离线加密导出，本地存储不少于 7 天，并及时安全上传云端后台审计，云端存储不少于 6 个月。\n"
-                "12. 漏洞生命周期管理 (Vulnerability Management)：建立常态化漏洞扫描流程，定期使用 CAVD（汽车漏洞共享平台）、CNVD、CNNVD、CVE 等数据库检索三方软件组件，确保不存在已公布超过一定时间（如6个月）且未处置的高危及以上漏洞。\n"
-                "13. 安全失效保护机制 (Fail-Secure & Fail-Safe Mechanisms)：在检测到系统发生持续网络攻击、严重安全入侵事件或安全组件发生永久性故障时，系统应能够执行安全降级、关闭非必要接口或进入预定义的信息安全失效安全状态，并可靠记录安全事件日志，防范安全威胁进一步扩散。\n"
-                "14. 安全开发与编码规范 (Secure Development & Coding Standards)：源代码编写应符合 MISRA C/C++ 或 SEI CERT C/C++ 安全编码规范；开发期必须使用静态应用安全测试 (SAST) 工具进行源代码扫描，确保在 SOP (Start of Production) 前修复所有已识别的高危及以上级别漏洞。\n"
-                "15. 初始密钥产线安全灌装 (Factory Provisioning Security)：在产线上，设备的初始密钥/证书灌装必须在物理隔离的网络环境中，通过专用的、认证过的灌装设备完成，灌装日志必须实时加密上传至中央审计服务器备查。\n"
+                "\n【软件与系统安全需求维度 (Software & System Security Requirement Dimensions)】:\n"
+                "请结合威胁场景选择适用维度，只写“应具备什么能力/达到什么结果”，不要写具体协议、算法、产品版本或数值阈值：\n"
+                "1. 分级安全启动：应建立从只读信任根到应用层的逐级完整性校验链，校验失败应阻止启动并记录事件。\n"
+                "2. 安全更新：更新包应验证来源真实性与完整性；应支持失败恢复和临时更新数据清理。\n"
+                "3. 防回滚：应使用绑定安全硬件的安全版本机制，拒绝低于当前安全基线的版本。\n"
+                "4. 访问控制与认证：应实施最小权限、基于角色的授权和强身份认证；关键操作应支持会话超时、失败锁定和审计。\n"
+                "5. 运行时加固与隔离：应关闭非必要服务/端口，实施进程/权限隔离和运行时完整性监控。\n"
+                "6. 输入合法性：应对所有外部输入实施类型、长度、边界和合法性校验，拒绝畸形输入并记录。\n"
+                "7. 中间件与服务鉴权：服务化/进程间通信应验证对端身份和调用权限。\n"
+                "8. 二进制与后门防护：量产版本应移除调试能力、剥离调试符号、实施抗逆向加固，不得保留未授权后门。\n"
+                "9. 日志与监控：应记录关键安全事件，日志应防篡改、可追溯并满足留存要求。\n"
+                "10. 漏洞管理：应建立第三方组件/漏洞库检索和高危漏洞闭环机制。\n"
+                "11. 安全失效：检测到持续攻击或安全组件故障时，应安全降级/关闭非必要接口并记录事件。\n"
+                "12. 安全开发：应遵循安全编码规范，使用静态分析/代码审查，并在发布前关闭高危缺陷。\n"
+                "13. 产线配给：初始密钥/证书应在受控产线环境中注入，并保留审计记录。\n"
+                "写作约束：禁止写死协议名+版本、算法名+密钥长度、端口号、具体毫秒/次数阈值；这些留到设计阶段。\n"
             )
         elif asset_type_lower == "communication":
             req_guideline = (
-                "\n【通信安全需求制定指南 (Communication Security Requirements Guidelines)】:\n"
-                "由于当前资产为通信链路/协议，制定的安全控制措施与要求应重点覆盖以下车载网络与车云通信核心安全维度（请结合威胁场景合理选择，描述必须100%可验证，不要指明具体芯片型号，写成机制）：\n"
-                "1. 传输与应用层双重加密 (Transport & App-Layer Encryption)：外部数据通信应全部进行传输层加密（采用 TLS 1.2 或更高版本）；传输个人敏感数据时，除 TLS 加密外，还必须在应用层使用对称加密算法（如 AES-GCM 或国密 SM4）进行端到端加密防护。\n"
-                "2. 报文真实性与鉴权 (SecOC & SOME/IP Auth)：对发送和接收的关键 CAN/CAN FD 报文实施基于 AUTOSAR SecOC 的认证码校验，确保报文的真实性与完整性；对关键的 SOME/IP 服务数据或服务发现(SD Offer/Find)报文进行基于 TLS、预共享密钥(PSK)或数字签名的双向身份校验与权限过滤，防范非授权发布虚假服务。\n"
-                "3. 报文时效性与防重放 (Anti-Replay & Latency Checks)：关键业务报文（如控制指令、诊断报文）必须添加序列号或时间戳以验证新鲜性，丢弃重复/超时报文。特别是通过 CAN FD 接收车辆控制指令（如目标加速度）时，必须检查序列号及时间戳，丢弃任何重复或延迟超过 50ms 的过时报文。\n"
-                "4. 通信可用性、入侵检测与过滤 (IDPS & Network Monitor)：应根据通信矩阵定义，严格实施总线报文收发白名单机制（仅允许合法的 CAN ID 或以太网报文）；必须部署基于规则的入侵检测系统（IDS/IDPS），实时监控以太网及 CAN 通信流量，检测并告警/阻断 DDoS 攻击、端口扫描和异常报文注入。\n"
-                "5. 诊断会话安全访问与密钥存储 (UDS Security Access & HSM)：诊断服务必须实施基于 UDS 0x27/0x29（安全访问）服务的安全挑战应答认证，防止非授权的诊断和刷写；诊断功能使用的算法和密钥存储与运算必须在安全硬件(HSM)内实现。\n"
-                "6. 车云通信物理隔离 (Private APN Isolation)：车云通信链路应通过私有 APN 专属蜂窝通道进行通信，天然实现与互联网公共链路的物理隔离。\n"
-                "7. 外部连接证书验证 (TLS Certificate Verification)：通过 4G/5G 与 OEM 自建服务器通信时，必须基于证书完成双向身份认证 (mTLS)；与第三方服务器通信时，应基于证书完成单向对服务器身份的验证。\n"
-                "8. 域间网络架构隔离 (Domain Network Isolation)：必须通过内部防火墙或网关防守边界，严格物理与逻辑隔离车外网络域（如 4G/5G, Wi-Fi）与车内关键控制网络域（如动力、底盘总线），禁止外部网络非授权直接访问内网总线。\n"
+                "\n【通信安全需求维度 (Communication Security Requirement Dimensions)】:\n"
+                "请结合威胁场景选择适用维度，只写“应具备什么能力/达到什么结果”，不要写具体协议版本、算法、端口或数值阈值：\n"
+                "1. 传输与应用层保护：通信应使用经行业认可的安全通道；敏感数据应具备端到端机密性和完整性保护。\n"
+                "2. 报文真实性与新鲜度：关键总线/服务报文应具备来源真实性、完整性和防重放能力。\n"
+                "3. 通信可用性：应具备异常流量检测、限流、丢弃/阻断和安全降级能力。\n"
+                "4. 诊断与服务访问：诊断/服务接口应实施强身份认证、角色授权和审计。\n"
+                "5. 网络隔离：应通过通信矩阵白名单、分区/隔离和访问控制限制非授权通信。\n"
+                "6. 身份与证书：通信对端应基于证书或等效凭证完成身份认证，并校验证书有效性。\n"
+                "写作约束：禁止写死协议名+版本、算法名、端口号、具体毫秒/速率阈值；这些留到设计阶段。\n"
             )
         elif asset_type_lower == "data":
             req_guideline = (
-                "\n【数据与密码安全需求制定指南 (Data & Cryptographic Security Requirements Guidelines)】:\n"
-                "由于当前资产为数据或涉及密码学计算，制定的安全控制措施与要求应重点覆盖以下数据与密钥安全核心维度（请结合威胁场景合理选择，描述必须100%可验证，不要指明具体芯片型号，写成机制）：\n"
-                "1. 强密码算法选型 (Strong Cryptographic Algorithms)：所有密码学操作必须使用行业批准的强健算法，禁用已破译的弱算法。应结合项目适用的合规体系（如国际密码体系或中国商用密码国密体系）选择经认证的强密码算法，技术描述保持机制中立。严格禁用 MD5, SHA1, DES 等已知不安全算法。\n"
-                "2. 密码学密钥安全存储 (Hardware Key Storage)：所有密码学密钥（根密钥、工作密钥、私钥）必须存储在 HSM、SHE 或 eFuse 等专用安全硬件中，严禁在软件代码或常规存储分区中明文存储，密钥对 CPU 必须是不可直接读取的。\n"
-                "3. 随机数发生器防泛洪 (TRNG & Flooding Defense)：生成密钥、IV或挑战值必须采用物理真随机数发生器(TRNG)，随机数品质应符合 FIPS 140-2 验证标准；且必须设计防泛洪攻击机制，在面临高频请求时通过速率限制或拒绝部分非必要请求，确保随机数发生器始终可靠返回真随机数，防止其耗尽熵源导致退化或系统挂起。\n"
-                "4. 密钥完整性与派生保护 (Key Integrity & Wrapping)：外发或存储非 HSM 固化工作密钥时，应使用符合标准的密钥派生函数(KDF, 如 HKDF/PBKDF2)或密钥包装技术(Key Wrapping, 如 AES-KeyWrap)进行加密与完整性保护。\n"
-                "5. 密钥轮换与生命周期管理 (Key Rotation & Lifecycle)：支持数字证书及密钥的全生命周期管理（生成、存储、分发、使用、更新、撤销和销毁）；工作密钥（如会话密钥、临时加密密钥）应支持基于新鲜度或周期性的动态轮换机制。\n"
-                "6. HSM 使用访问控制 (HSM Access Control Policies)：对安全硬件(HSM)中密钥的调用必须实施严格的授权访问控制策略，只有经签名授权的特定安全服务/主进程才能调用特定密钥 Handle 执行密码学操作。\n"
-                "7. 备份与恢复边界 (KMS Backup Boundaries)：主控/密钥管理系统(KMS)应支持对整车公共证书、签名根密钥的安全备份与恢复。注意：设备唯一私钥（如 PUF 派生或硬件生成的非对称私钥）应在单芯片内部生成且不可导出，防止备份环节泄漏。\n"
-                "8. 密码长度与强策略 (Strong Password Policies)：配置强密码策略，登录/管理密码长度不得低于12位，且包含大写、小写、数字和特殊字符的组合，或遵循 OEM 规定；密码在数据库中必须进行带盐哈希加密存储。\n"
-                "9. 敏感数据擦除与销毁 (Secure Erasure / Zeroization)：易失性敏感数据（如会话临时密钥、解密临时文件）在使用完毕或检测到物理防拆事件时，系统必须立即安全抹除/置零（Zeroization）。\n"
-                "10. 用户数据擦除与合规保留 (User Data Wiping & Retention)：应具备不可恢复的用户数据删除/销毁功能；触发删除时，需解绑 VIN 号等车辆标识与个人账号的关联；但属于法律法规或强制标准（如 GB/T 32960 国标新能源上报要求）规定的车辆运行数据必须保留，不予删除。\n"
-                "11. 数据清理与最小化 (Data Minimization & Cleanup Daemon)：应部署定期运行的数据清理守护进程，自动删除超过规定保存时限的非关键用户日志和临时文件，降低数据泄露风险。\n"
-                "12. 数据分类分级与合规影响评估 (Data Classification & DPIA)：在系统设计阶段执行数据保护影响评估（DPIA），对所有数据进行分类分级并定义统一保护策略。处理个人数据应遵循 GB/T 44464-2024 《汽车数据通用标准》附录 A 要求（最小化收集、目的明确、公开告知等）。\n"
-                "13. 个人隐私保护与实时脱敏 (Privacy Protection & Real-time Masking)：在数据采集后或显示前，对个人身份标识信息（如面部识别数据、账号信息、人脸、车牌）进行实时脱敏处理（如模糊化、匿名化）；所有存储的行车轨迹数据、用户隐私数据必须以加密形式存储，并且访问必须通过基于角色的访问控制（RBAC）模块检查。\n"
-                "14. 算法与机密文件加密存储 (Algorithm File Confidentiality)：应对评估组件处理器 (SoC/MCU) 上运行的软件应用所包含的机密算法文件/AI模型权重实施高强度静态加密存储，防止 IP 被逆向提取。\n"
-                "15. 软硬件身份及版本标识完整性 (Software/Hardware Identifier Integrity)：应防止软硬件版本号、VIN号、RxSWIN或软件识别码被恶意篡改，系统在启动和使用时必须校验其完整性（如通过签名或哈希链校验）。\n"
-                "16. 关键配置与物理安全参数保护 (Calibration & Safety Data Protection)：对于影响行车物理安全的关键参数（如制动标定、安全气囊展开阈值、动力电池安全阈值等配置），必须采用安全访问机制和基于标准非对称数字签名或 HSM/安全芯片的完整性保护防线，防止非授权删除与越权篡改；外部通道应使用加密或完整性校验（如 SecOC/TLS）进行保护，并关闭不必要的调试、诊断及网络服务端口。\n"
-                "17. 数据跨境传输限制 (Cross-border Data Restriction)：严格遵守国家汽车数据安全法规，评估组件禁止向任何未经合规审计的境外 IP 地址或境外服务器传输敏感车辆或个人数据，确保本地化存储与合规出境要求。\n"
+                "\n【数据与密码安全需求维度 (Data & Cryptographic Security Requirement Dimensions)】:\n"
+                "请结合威胁场景选择适用维度，只写“应具备什么能力/达到什么结果”，不要写具体算法、认证标准、法规编号或数值阈值：\n"
+                "1. 密码算法策略：应使用经行业认可/项目合规基线批准的高强度密码算法，禁用已知弱算法。\n"
+                "2. 密钥保护：密钥应存储在隔离安全硬件或受保护密码服务中，不得以明文暴露给普通软件。\n"
+                "3. 随机数：密钥/IV/挑战值应使用符合项目认可标准的随机数/熵源，并具备健康检测。\n"
+                "4. 密钥生命周期：应覆盖生成、注入、使用、更新、轮换、吊销、销毁和审计。\n"
+                "5. 访问控制：密钥和敏感数据应实施基于角色/授权的最小权限访问。\n"
+                "6. 安全擦除：易失性敏感材料在使用完毕或检测到防拆事件时应安全零化/销毁。\n"
+                "7. 数据最小化与分类分级：应遵循最小化、目的限制、分类分级和保留期限要求。\n"
+                "8. 隐私脱敏：个人数据在存储、导出、上传或显示前应实施去标识化/匿名化/脱敏。\n"
+                "9. 标识完整性：VIN、软件版本、RxSWIN 等标识应具备防篡改和完整性校验。\n"
+                "10. 关键配置保护：影响行车安全的标定/配置应具备授权访问和密码学完整性保护。\n"
+                "11. 跨境与上传：敏感数据上传/出境应符合项目适用的数据合规要求。\n"
+                "写作约束：禁止写死算法名+密钥长度、认证标准编号、法规编号、具体位数/次数/天数阈值；这些留到设计阶段。\n"
             )
 
         if stage == "stage1":
@@ -1337,27 +1377,23 @@ def tara_ai_analysis_call(db: Session, stage: str, asset: Asset, prev_stages: di
                     "决策与要求制定规则：\n"
                     "1. 针对每个威胁场景，做出风险处理决策 (Avoid, Reduce, Share, Retain)。根据决策提供相应理由/声明字段，所有文本必须是中英文对照（格式为“中文 / English”）：\n"
                     "   - Avoid: 额外在 item_change 中编写避免理由（移除危险源、更改设计等），其它字段为空字符串；\n"
-                    "   - Reduce: 额外在 cybersecurity_goal 中编写安全目标，且必须在该威胁场景 of requirements 列表中编写具体的网络安全控制措施与要求；\n"
-                    "   - Share/Retain: 额外在 cybersecurity_claim 中编写接受/转移风险的合理理由，其它字段为空字符串。\n"
+                    "   - Reduce: 额外在 cybersecurity_goal 中编写高层安全目标（保护对象 + 安全属性 + 期望结果 + 成功判据；技术中立，不写协议/算法/产品/阈值），并分别填写 security_property（七类安全属性之一）、goal_asset（保护对象）、success_criteria（可验证的高层判据）；且必须在该威胁场景的 requirements 列表中编写控制措施与要求；\n"
+                    "   - Share/Retain: 额外在 cybersecurity_claim 中编写正式风险声明（剩余风险是什么、为什么可接受/可转移、依据/适用条件/有效期/批准角色），并分别填写 residual_risk、claim_justification、claim_conditions、claim_validity、claim_owner；其它字段为空字符串；claim 不是威胁描述或控制措施。\n"
                     "2. 针对 Reduce 决策，编写的网络安全要求与控制措施 (Requirements) 必须满足：\n"
-                    "   - 包含 cybersecurity_control_id 并以 CSO-001, CSO-002 等顺序编号格式编写，与中英文对照的 cybersecurity_control (说明控制措施是技术性还是操作性，以及具体机制类如 SecOC/TLS 等，不要写死硬件型号)；\n"
+                    "   - 包含 cybersecurity_control_id 并以 CSO-001, CSO-002 等顺序编号格式编写，与中英文对照的 cybersecurity_control；并分别填写 control_type（预防/检测/纠正）、implementation_type（技术/操作）、control_objective（控制目标）、control_point（作用点：资产/接口/生命周期阶段）；不要写具体协议/算法/产品型号；\n"
                     "   - 包含 allocated_to_device（在此 TARA 分析中，针对资产所提出的开发、设计、测试、配置、物理布线及生产管理等所有网络安全要求，因最终均会影响或作用于当前评估对象产品，因此该字段必须统一填 'yes'，以确保全部安全需求均包含在产品安全目标和评审清单中，不予排除）；\n"
-                    "   - 包含 cybersecurity_requirement_id 并以 CSR-001, CSR-002 等顺序编号格式编写，与中英文对照的 cybersecurity_requirement (规定项目组件的网络安全/运行环境/更新能力/校验要求，100%可验证)。编写时遵循 ISO/SAE 21434 概念阶段规范：聚焦安全功能目标与防护机制能力（What & Why），保持技术中立，严禁过早写死具体算法型号或微观工程数值（例如：避免写死 AES-256-XTS、ECDSA P-256、15分钟超时、100条/秒等，应表述为'经行业认可的高强度对称加密算法'、'标准非对称数字签名'、'安全会话超时退出'、'报文速率限制'等），为后续软硬件架构设计和不同合规体系（如商密/国密体系）保留选型空间；\n"
+                    "   - 包含 cybersecurity_requirement_id 并以 CSR-001, CSR-002 等顺序编号格式编写，与中英文对照的 cybersecurity_requirement。每条要求必须包含：保护对象、安全属性/控制目标、应/不应行为、适用条件/边界、验证方法；并填写 verification_method、requirement_type、rationale；技术中立，即使输入包含具体协议/算法/端口/数值，输出也必须抽象为能力要求，不得原样保留；\n"
                     "3. 编制合并后安全需求 (summarized_requirements 归纳与合并规则)：\n"
-                    "   - 针对所有 allocated_to_device 为 'yes' 的原始网络安全要求进行系统性归纳与合并去重。合并原则：若多个原始安全要求（cybersecurity_requirement）涉及相同的安全防护对象 and 防御机制，应将其合并为一个高度提炼、职责单一的项目级原子安全需求（CSR）；\n"
+                    "   - 针对所有 allocated_to_device 为 'yes' 的原始网络安全要求进行系统性归纳与合并去重：\n"
+                    "     * 原子化边界：一条 CSR = 一个保护对象 + 一个控制目标 + 一个可验证结果；\n"
+                    "     * 只有同一资产类别、同一攻击面、同一控制目标、同一验证方法才合并；适用范围/资产/安全等级不同的必须拆成多条；\n"
+                    "     * 合并后必须保留所有来源的适用条件差异，不能用一个来源的阈值/例外代表全部；\n"
+                    "     * 每条 CSR 必须给出 verification_method 与 requirement_type；没有验证方法的条目不能作为最终 CSR；\n"
                     "   - 抽象规范：需求内容应保持技术中立与规范化表述，定义明确的安全能力边界与防护预期，不硬编码特定芯片型号或单一算法参数；\n"
-                    "   - 包含的字段包括：title, sub_title, security_domain, cybersecurity_requirement；\n"
+                    "   - 包含的字段包括：title, sub_title, security_domain, cybersecurity_requirement, verification_method, requirement_type, rationale；\n"
                     "   - 特别注意：在 summarized_requirements 的每一项中，其 title, sub_title, cybersecurity_requirement 字段内容都必须是中英文双语对照输出，格式为“中文描述 / English translation”。其中 sub_title 字段是具体的安全子分类（小类），由你根据需求内容动态精炼生成（例如：调试接口安全 / Debug Interface Security，物理防拆设计 / Physical Enclosure Tamper Protection，启动链安全 / Secure Boot Chain 等）；\n"
-                    "   - 必须精确对齐 security_domain 字段（大分类），其取值只能是以下 8 大标准分类域之一（中英文双语形式）：\n"
-                    "     * 硬件安全 / Hardware Security\n"
-                    "     * 系统安全 / System Security\n"
-                    "     * 密码安全与密钥管理 / Cryptography & Key Management\n"
-                    "     * 应用安全 / Application Security\n"
-                    "     * 数据安全与隐私保护 / Data Security & Privacy\n"
-                    "     * 安全监控与防护 / Security Monitoring & Defense\n"
-                    "     * 通信安全 / Communication Security\n"
-                    "     * 安全开发与运维 / Secure Development & Operations\n"
-                    "   - 必须在每一项 of source_requirement_ids 数组字段中，列出该项归纳合并后涵盖的原始网络安全要求编号（例如 ['CSR-001', 'CSR-002']），建立精确且可被追溯的映射关系。\n"
+                    f"   - 必须精确对齐 security_domain 字段（大分类），其取值只能是以下标准分类域之一（中英文双语形式）：\n{DOMAIN_PROMPT_LIST}\n"
+                    "   - 必须在每一项的 source_requirement_ids 数组字段中，列出该项归纳合并后涵盖的原始网络安全要求编号（例如 ['CSR-001', 'CSR-002']），建立精确且可被追溯的映射关系；禁止遗漏、禁止编造输入中不存在的 ID；遗漏或编造将由后端覆盖校验拒绝。\n"
                     f"{req_guideline}"
                 )
             ai_res = call_llm(msg, prompt, Stage45Output)
@@ -1384,13 +1420,29 @@ def tara_ai_analysis_call(db: Session, stage: str, asset: Asset, prev_stages: di
                     treatment = matched_dec.get("risk_treatment", "Reduce")
                     item_change = matched_dec.get("item_change", "")
                     cybersecurity_goal = matched_dec.get("cybersecurity_goal", "")
+                    security_property = matched_dec.get("security_property", "")
+                    goal_asset = matched_dec.get("goal_asset", "")
+                    success_criteria = matched_dec.get("success_criteria", "")
                     cybersecurity_claim = matched_dec.get("cybersecurity_claim", "")
+                    residual_risk = matched_dec.get("residual_risk", "")
+                    claim_justification = matched_dec.get("claim_justification", "")
+                    claim_conditions = matched_dec.get("claim_conditions", "")
+                    claim_validity = matched_dec.get("claim_validity", "")
+                    claim_owner = matched_dec.get("claim_owner", "")
                     raw_reqs = matched_dec.get("requirements", [])
                 else:
                     treatment = "Reduce"
                     item_change = ""
                     cybersecurity_goal = f"针对资产 {asset.name} 的安全属性 {ts.get('attribute')} 威胁，制定防护机制。 / Formulate protection mechanisms against threat to attribute {ts.get('attribute')} of {asset.name}."
+                    security_property = ts.get("attribute") or ""
+                    goal_asset = asset.name or ""
+                    success_criteria = ""
                     cybersecurity_claim = ""
+                    residual_risk = ""
+                    claim_justification = ""
+                    claim_conditions = ""
+                    claim_validity = ""
+                    claim_owner = ""
                     raw_reqs = []
                     
                 treatment_lower = treatment.lower().strip()
@@ -1411,14 +1463,30 @@ def tara_ai_analysis_call(db: Session, stage: str, asset: Asset, prev_stages: di
                 # Enforce field mutual exclusivity based on decision type
                 if decision_norm == "Avoid":
                     cybersecurity_goal = ""
+                    security_property = ""
+                    goal_asset = ""
+                    success_criteria = ""
                     cybersecurity_claim = ""
+                    residual_risk = ""
+                    claim_justification = ""
+                    claim_conditions = ""
+                    claim_validity = ""
+                    claim_owner = ""
                     raw_reqs = []
                 elif decision_norm == "Reduce":
                     item_change = ""
                     cybersecurity_claim = ""
+                    residual_risk = ""
+                    claim_justification = ""
+                    claim_conditions = ""
+                    claim_validity = ""
+                    claim_owner = ""
                 elif decision_norm in ("Share", "Retain"):
                     item_change = ""
                     cybersecurity_goal = ""
+                    security_property = ""
+                    goal_asset = ""
+                    success_criteria = ""
                     raw_reqs = []
                     
                 max_risk_val = max(max_risk_val, risk_val)
@@ -1435,8 +1503,16 @@ def tara_ai_analysis_call(db: Session, stage: str, asset: Asset, prev_stages: di
                     "item_change": item_change,
                     "cybersecurity_goal_id": generate_content_id("CSO_", cybersecurity_goal) if cybersecurity_goal else "",
                     "cybersecurity_goal": cybersecurity_goal,
+                    "security_property": security_property,
+                    "goal_asset": goal_asset,
+                    "success_criteria": success_criteria,
                     "cybersecurity_claim_id": generate_content_id("CLM_", cybersecurity_claim) if cybersecurity_claim else "",
                     "cybersecurity_claim": cybersecurity_claim,
+                    "residual_risk": residual_risk,
+                    "claim_justification": claim_justification,
+                    "claim_conditions": claim_conditions,
+                    "claim_validity": claim_validity,
+                    "claim_owner": claim_owner,
                     "_raw_requirements": raw_reqs
                 })
                 justifications.append(f"安全风险为 {risk_val} ({ts.get('attribute')}属性)，采取 {decision_norm} 决策。 / Cybersecurity risk is {risk_val} ({ts.get('attribute')} attribute), decision: {decision_norm} decision.")
@@ -1502,9 +1578,16 @@ def tara_ai_analysis_call(db: Session, stage: str, asset: Asset, prev_stages: di
                                 "threat_id": rd["threat_id"],
                                 "cybersecurity_control_id": generate_content_id("CSC_", ctrl_text) if ctrl_text else "",
                                 "cybersecurity_control": ctrl_text,
+                                "control_type": req.get("control_type", ""),
+                                "implementation_type": req.get("implementation_type", ""),
+                                "control_objective": req.get("control_objective", ""),
+                                "control_point": req.get("control_point", ""),
                                 "allocated_to_device": req.get("allocated_to_device", "yes"),
                                 "cybersecurity_requirement_id": generate_content_id("CSR_", req_text) if req_text else "",
-                                "cybersecurity_requirement": req_text
+                                "cybersecurity_requirement": req_text,
+                                "verification_method": req.get("verification_method", ""),
+                                "requirement_type": req.get("requirement_type", "product"),
+                                "rationale": req.get("rationale", "")
                             })
                 
                 device_reqs = [req for req in requirements if str(req.get("allocated_to_device", "")).lower().strip() == "yes"]
@@ -1521,6 +1604,9 @@ def tara_ai_analysis_call(db: Session, stage: str, asset: Asset, prev_stages: di
                         "sub_title": item.get("sub_title", ""),
                         "security_domain": item.get("security_domain", "通用安全 / General Security"),
                         "cybersecurity_requirement": item.get("cybersecurity_requirement", ""),
+                        "verification_method": item.get("verification_method", ""),
+                        "requirement_type": item.get("requirement_type", "product"),
+                        "rationale": item.get("rationale", ""),
                         "source_requirement_ids": item.get("source_requirement_ids", [])
                     })
             else:
@@ -1536,24 +1622,20 @@ def tara_ai_analysis_call(db: Session, stage: str, asset: Asset, prev_stages: di
                 prompt = (
                     "资产信息：针对上述 risk_treatment 为 Reduce 的威胁场景列表，编写相对应安全控制措施与网络安全要求。\n"
                     "1. 针对每个威胁场景，编写的安全控制措施 (Requirements) 必须满足：\n"
-                    "   - 包含 cybersecurity_control_id 并以 CSO-001, CSO-002 等顺序编号格式编写，与中英文对照的 cybersecurity_control (说明控制措施是技术性还是操作性，以及具体机制类如 SecOC/TLS 等，不要写死硬件型号)；\n"
+                    "   - 包含 cybersecurity_control_id 并以 CSO-001, CSO-002 等顺序编号格式编写，与中英文对照的 cybersecurity_control；并分别填写 control_type（预防/检测/纠正）、implementation_type（技术/操作）、control_objective（控制目标）、control_point（作用点：资产/接口/生命周期阶段）；不要写具体协议/算法/产品型号；\n"
                     "   - 包含 allocated_to_device（在此 TARA 分析中，针对资产所提出的开发、设计、测试、配置、物理布线及生产管理等所有网络安全要求，因最终均会影响或作用于当前评估对象产品，因此该字段必须统一填 'yes'，以确保全部安全需求均包含在产品安全目标和评审清单中，不予排除）；\n"
-                    "   - 包含 cybersecurity_requirement_id 并以 CSR-001, CSR-002 等顺序编号格式编写，与中英文对照的 cybersecurity_requirement (规定项目组件的网络安全/运行环境/更新能力/校验要求，100%可验证)。编写时遵循 ISO/SAE 21434 概念阶段规范：聚焦安全功能目标与防护机制能力（What & Why），保持技术中立，严禁过早写死具体算法型号或微观工程数值（例如：避免写死 AES-256-XTS、ECDSA P-256、15分钟超时、100条/秒等，应表述为'经行业认可的高强度对称加密算法'、'标准非对称数字签名'、'安全会话超时退出'、'报文速率限制'等），为后续软硬件架构设计和不同合规体系（如商密/国密体系）保留选型空间；\n"
+                    "   - 包含 cybersecurity_requirement_id 并以 CSR-001, CSR-002 等顺序编号格式编写，与中英文对照的 cybersecurity_requirement。每条要求必须包含：保护对象、安全属性/控制目标、应/不应行为、适用条件/边界、验证方法；并填写 verification_method、requirement_type、rationale；技术中立，即使输入包含具体协议/算法/端口/数值，输出也必须抽象为能力要求，不得原样保留；\n"
                     "2. 编制合并后安全需求 (summarized_requirements 归纳与合并规则)：\n"
-                    "   - 针对所有 allocated_to_device 为 'yes' 的原始网络安全要求进行系统性归纳与合并去重。合并原则：若多个原始安全要求（cybersecurity_requirement）涉及相同的安全防护对象和防御机制，应将其合并为一个高度提炼、职责单一的项目级原子安全需求（CSR）；\n"
+                    "   - 针对所有 allocated_to_device 为 'yes' 的原始网络安全要求进行系统性归纳与合并去重：\n"
+                    "     * 原子化边界：一条 CSR = 一个保护对象 + 一个控制目标 + 一个可验证结果；\n"
+                    "     * 只有同一资产类别、同一攻击面、同一控制目标、同一验证方法才合并；适用范围/资产/安全等级不同的必须拆成多条；\n"
+                    "     * 合并后必须保留所有来源的适用条件差异，不能用一个来源的阈值/例外代表全部；\n"
+                    "     * 每条 CSR 必须给出 verification_method 与 requirement_type；没有验证方法的条目不能作为最终 CSR；\n"
                     "   - 抽象规范：需求内容应保持技术中立与规范化表述，定义明确的安全能力边界与防护预期，不硬编码特定芯片型号或单一算法参数；\n"
-                    "   - 包含的字段包括：title, sub_title, security_domain, cybersecurity_requirement；\n"
+                    "   - 包含的字段包括：title, sub_title, security_domain, cybersecurity_requirement, verification_method, requirement_type, rationale；\n"
                     "   - 特别注意：在 summarized_requirements 的每一项中，其 title, sub_title, cybersecurity_requirement 字段内容都必须是中英文双语对照输出，格式为“中文描述 / English translation”。其中 sub_title 字段是具体的安全子分类（小类），由你根据需求内容动态精炼生成（例如：调试接口安全 / Debug Interface Security，物理防拆设计 / Physical Enclosure Tamper Protection，启动链安全 / Secure Boot Chain 等）；\n"
-                    "   - 必须精确对齐 security_domain 字段（大分类），其取值只能是以下 8 大标准分类域之一（中英文双语形式）：\n"
-                    "     * 硬件安全 / Hardware Security\n"
-                    "     * 系统安全 / System Security\n"
-                    "     * 密码安全与密钥管理 / Cryptography & Key Management\n"
-                    "     * 应用安全 / Application Security\n"
-                    "     * 数据安全与隐私保护 / Data Security & Privacy\n"
-                    "     * 安全监控与防护 / Security Monitoring & Defense\n"
-                    "     * 通信安全 / Communication Security\n"
-                    "     * 安全开发与运维 / Secure Development & Operations\n"
-                    "   - 必须在每一项 of source_requirement_ids 数组字段中，列出该项归纳合并后涵盖的原始网络安全要求编号（例如 ['CSR-001', 'CSR-002']），建立精确且可被追溯的映射关系。\n"
+                    f"   - 必须精确对齐 security_domain 字段（大分类），其取值只能是以下标准分类域之一（中英文双语形式）：\n{DOMAIN_PROMPT_LIST}\n"
+                    "   - 必须在每一项的 source_requirement_ids 数组字段中，列出该项归纳合并后涵盖的原始网络安全要求编号（例如 ['CSR-001', 'CSR-002']），建立精确且可被追溯的映射关系；禁止遗漏、禁止编造输入中不存在的 ID；遗漏或编造将由后端覆盖校验拒绝。\n"
                     f"{req_guideline}"
                 )
                 ai_res = call_llm(msg, prompt, StandaloneStage5Output)
@@ -1566,9 +1648,16 @@ def tara_ai_analysis_call(db: Session, stage: str, asset: Asset, prev_stages: di
                         "threat_id": req.get("threat_id", "TS_Integrity_1"),
                         "cybersecurity_control_id": generate_content_id("CSC_", ctrl_text) if ctrl_text else "",
                         "cybersecurity_control": ctrl_text,
+                        "control_type": req.get("control_type", ""),
+                        "implementation_type": req.get("implementation_type", ""),
+                        "control_objective": req.get("control_objective", ""),
+                        "control_point": req.get("control_point", ""),
                         "allocated_to_device": req.get("allocated_to_device", "yes"),
                         "cybersecurity_requirement_id": generate_content_id("CSR_", req_text) if req_text else "",
-                        "cybersecurity_requirement": req_text
+                        "cybersecurity_requirement": req_text,
+                        "verification_method": req.get("verification_method", ""),
+                        "requirement_type": req.get("requirement_type", "product"),
+                        "rationale": req.get("rationale", "")
                     })
                     
                 summarized_csrs = []
@@ -1584,6 +1673,9 @@ def tara_ai_analysis_call(db: Session, stage: str, asset: Asset, prev_stages: di
                         "sub_title": item.get("sub_title", ""),
                         "security_domain": item.get("security_domain", "通用安全 / General Security"),
                         "cybersecurity_requirement": item.get("cybersecurity_requirement", ""),
+                        "verification_method": item.get("verification_method", ""),
+                        "requirement_type": item.get("requirement_type", "product"),
+                        "rationale": item.get("rationale", ""),
                         "source_requirement_ids": item.get("source_requirement_ids", [])
                     })
                     
