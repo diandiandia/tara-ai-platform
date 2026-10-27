@@ -771,7 +771,7 @@ def synthesize_project_csrs(db: Session, all_csrs: list, global_tier2_to_tier1: 
                 resolved_tier1_ids.update(source_ids)
                 
             sorted_tier1_ids = sorted(list(resolved_tier1_ids))
-            source_ids_str = ", ".join(sorted_tier1_ids)
+            source_ids_str = "; ".join(sorted_tier1_ids)
             source_cnt = len(sorted_tier1_ids)
                 
             final_rows.append({
