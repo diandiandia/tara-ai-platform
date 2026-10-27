@@ -788,6 +788,11 @@ def synthesize_project_csrs(db: Session, all_csrs: list, global_tier2_to_tier1: 
                 "verification_method": c.get("verification_method") or "",
                 "requirement_type": c.get("requirement_type") or "product",
                 "rationale": c.get("rationale") or "",
+                # One column for the original TARA requirements. Multiple IDs are
+                # joined with "; " so both merge (many -> one) and split
+                # (one -> many) are representable without a separate link table.
+                "source_requirement_ids": sorted_tier1_ids,
+                "source_cybersecurity_requirement_ids": source_ids_str,
                 "source_tara_requirements": source_ids_str,
                 "source_count": source_cnt,
                 "_raw_source_ids": sorted_tier1_ids,
@@ -797,7 +802,28 @@ def synthesize_project_csrs(db: Session, all_csrs: list, global_tier2_to_tier1: 
                 "_degraded": bool(c.get("_degraded")),
                 "_degraded_reason": c.get("_degraded_reason") or "",
             })
-            
+
+    # Final hard check: every input raw_id must appear in at least one CSR's
+    # source_requirement_ids. This is the one-column traceability contract.
+    expected_tier2 = {
+        str(item.get("raw_id"))
+        for items in items_by_domain.values()
+        for item in items
+        if str(item.get("raw_id") or "").strip()
+    }
+    observed_tier2 = {
+        str(sid)
+        for row in final_rows
+        for sid in (row.get("_tier2_source_ids") or [])
+        if str(sid).strip()
+    }
+    missing_tier2 = sorted(expected_tier2 - observed_tier2)
+    if missing_tier2:
+        raise ValueError(
+            "CSR source traceability incomplete: "
+            f"missing={missing_tier2[:20]}"
+        )
+
     return final_rows
 
 def get_or_synthesize_global_csrs(db: Session, domain: Domain, steps: list, assets: list, hash_to_global_map: dict = None) -> list:

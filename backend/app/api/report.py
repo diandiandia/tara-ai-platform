@@ -797,7 +797,7 @@ def create_excel_report(domain: Domain, steps: List[TaraStep], assets: List[Asse
             "Atomic CSR ID", "Security Domain", "Control Category", "Requirement Title", "Cybersecurity Requirement (CN/EN)",
             "Verification Method / 验证方法", "Requirement Type / 需求类型", "Rationale / 需求依据",
             "Applicable Assets / 适用资产列表", "Assets Count / 覆盖资产数",
-            "Source TARA CSR IDs / 追溯原始TARA需求", "Source Count / 追溯条目数"
+            "Source Cybersecurity Requirement IDs / 来源TARA需求ID", "Source Count / 追溯条目数"
         ]
         for col_idx, h in enumerate(headers2, 1):
             cell = ws2.cell(row=1, column=col_idx, value=h)
@@ -809,11 +809,15 @@ def create_excel_report(domain: Domain, steps: List[TaraStep], assets: List[Asse
         ws2.row_dimensions[1].height = 30
         csr_rows = csr_rows_pre
         current_row = 2
-        csr_keys = ["csr_id", "security_domain", "sub_category", "title", "cybersecurity_requirement", "verification_method", "requirement_type", "rationale", "applicable_assets", "assets_count", "source_tara_requirements", "source_count"]
+        csr_keys = ["csr_id", "security_domain", "sub_category", "title", "cybersecurity_requirement", "verification_method", "requirement_type", "rationale", "applicable_assets", "assets_count", "source_cybersecurity_requirement_ids", "source_count"]
         
         for row_data in csr_rows:
             for col_idx, key in enumerate(csr_keys, 1):
                 val = row_data.get(key, "")
+                if key == "source_cybersecurity_requirement_ids" and not val:
+                    # Backward compatibility for cached rows created before
+                    # the explicit source column was added.
+                    val = row_data.get("source_tara_requirements", "")
                 cell = ws2.cell(row=current_row, column=col_idx, value=val)
                 cell.font = cell_font
                 cell.border = thin_border
@@ -1069,12 +1073,12 @@ def create_csv_report(domain: Domain, steps: List[TaraStep], assets: List[Asset]
             "Atomic CSR ID", "Security Domain", "Control Category", "Requirement Title",
             "Cybersecurity Requirement", "Verification Method", "Requirement Type", "Rationale",
             "Applicable Assets", "Assets Count",
-            "Source TARA CSR IDs", "Source Count"
+            "Source Cybersecurity Requirement IDs", "Source Count"
         ]
         keys = [
             "csr_id", "security_domain", "sub_category", "title",
             "cybersecurity_requirement", "verification_method", "requirement_type", "rationale", "applicable_assets", "assets_count",
-            "source_tara_requirements", "source_count"
+            "source_cybersecurity_requirement_ids", "source_count"
         ]
         rows = collect_csr_report_data(steps, assets)
     else:
@@ -1104,7 +1108,13 @@ def create_csv_report(domain: Domain, steps: List[TaraStep], assets: List[Asset]
         writer = csv.writer(f)
         writer.writerow(headers_r2)
         for row in rows:
-            writer.writerow([row.get(k, "") if row.get(k) is not None else "" for k in keys])
+            values = []
+            for k in keys:
+                val = row.get(k, "")
+                if k == "source_cybersecurity_requirement_ids" and not val:
+                    val = row.get("source_tara_requirements", "")
+                values.append("" if val is None else val)
+            writer.writerow(values)
             
     return file_path
 

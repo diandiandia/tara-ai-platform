@@ -14,6 +14,7 @@ from app.core.database import SessionLocal
 from app.models.domain import Domain
 from app.models.project import Project
 from app.models.asset import Asset
+from app.models.diagram import Diagram
 from app.models.tara_run import TaraRun
 from app.models.tara_step import TaraStep
 from app.models.system_settings import SystemSettings
@@ -637,18 +638,33 @@ class Stage23Output(BaseModel):
 
 class RequirementSchema(BaseModel):
     threat_id: Optional[str] = Field(default="", description="对应威胁场景的编号，例如 TS_Integrity_1")
+    goal_ids: List[str] = Field(default_factory=list, description="该要求对应的 Goal ID 列表")
     cybersecurity_control_id: str = Field(description="安全控制措施编号，格式以 CSO-001, CSO-002 等递增顺序编号编写，不使用 CSO-XXX 字面量")
+    control_ids: List[str] = Field(default_factory=list, description="该要求对应的 Control ID 列表")
+    claim_ids: List[str] = Field(default_factory=list, description="该要求支撑的 Claim ID 列表，可为空")
     cybersecurity_control: str = Field(description="中英文对照的安全控制措施目标，格式：中文 / English")
     control_type: str = Field(default="", description="控制类型：预防/检测/纠正 / Preventive/Detective/Corrective")
     implementation_type: str = Field(default="", description="实现类型：技术/操作 / Technical/Operational")
     control_objective: str = Field(default="", description="控制目标（中英文对照）")
     control_point: str = Field(default="", description="控制作用点，例如资产、接口或生命周期阶段（中英文对照）")
-    allocated_to_device: str = Field(description="是否分配给设备，可选值：yes, no")
+    dependent_functions: List[str] = Field(default_factory=list, description="该控制依赖的 item 功能")
+    dependent_controls: List[str] = Field(default_factory=list, description="该控制依赖的其他 Control ID")
+    interaction_description: str = Field(default="", description="控制之间、控制与 item 功能之间的交互/依赖描述（中英文对照）")
+    applicable_lifecycle: str = Field(default="", description="适用生命周期阶段（中英文对照）")
+    allocated_to_device: str = Field(description="是否分配给目标域控/设备，可选值：yes, no；只有目标域控或其 component 实现时为 yes")
+    requirement_scope: str = Field(default="item", description="需求范围：item / operational_environment / other_item")
+    owner: str = Field(default="", description="需求责任方：OEM / Tier1 / supplier / plant / service / backend")
+    allocated_to: str = Field(default="", description="分配到的 item/component ID；运行环境或其他 item 填 N/A")
+    allocation_type: str = Field(default="primary", description="分配类型：primary / secondary")
     cybersecurity_requirement_id: str = Field(description="网络安全要求编号，格式以 CSR-001, CSR-002 等递增顺序编号编写，不使用 CSR-XXX 字面量")
     cybersecurity_requirement: str = Field(description="中英文对照的具体网络安全要求，格式：中文 / English")
     verification_method: str = Field(default="", description="验证方法（测试/分析/检查/演示），中英文对照；没有验证方法的要求不能作为最终 CSR")
+    acceptance_criteria: str = Field(default="", description="可判定的通过/失败验收准则（中英文对照）")
+    source_ids: List[str] = Field(default_factory=list, description="来源 OEM/TARA ID，只能引用输入中存在的 ID")
+    dependencies: List[str] = Field(default_factory=list, description="依赖的其他 Requirement/Control/接口")
     requirement_type: str = Field(default="product", description="需求类型：product（产品）/ process（流程）/ supplier（供应商）")
     rationale: str = Field(default="", description="需求依据及对应的威胁/攻击路径（中英文对照）")
+    open_issue: str = Field(default="", description="信息不足或待确认事项（中英文对照）；不得用编造内容替代")
 
 class RiskDecisionSchema(BaseModel):
     threat_id: str = Field(description="对应威胁场景的编号，例如 TS_Integrity_1")
@@ -659,11 +675,15 @@ class RiskDecisionSchema(BaseModel):
     goal_asset: str = Field(default="", description="Goal 保护对象（中英文对照）")
     success_criteria: str = Field(default="", description="Goal 的可验证成功判据（中英文对照）")
     cybersecurity_claim: str = Field(description="如果选择 Share/Retain，提供 cybersecurity_claim 中英文声明，否则填空字符串")
+    claim_type: str = Field(default="", description="Claim 类型：residual_risk_accept / risk_transfer / dependency_assumption / goal_achievement")
     residual_risk: str = Field(default="", description="Claim 的剩余风险说明（中英文对照）")
     claim_justification: str = Field(default="", description="Claim 的可接受/可转移依据（中英文对照）")
     claim_conditions: str = Field(default="", description="Claim 的适用条件与依赖（中英文对照）")
     claim_validity: str = Field(default="", description="Claim 的有效期（中英文对照）")
     claim_owner: str = Field(default="", description="Claim 的批准角色/责任人（中英文对照）")
+    claim_evidence: str = Field(default="", description="Claim 的证据/参考文件（中英文对照）")
+    claim_status: str = Field(default="", description="Claim 状态：draft / approved / rejected")
+    open_issue: str = Field(default="", description="信息不足或待确认事项（中英文对照）；不得用编造内容替代")
     requirements: List[RequirementSchema] = Field(description="仅在 Reduce 时编写该威胁场景的安全要求列表，否则为空列表")
 
 class SummarizedRequirementSchema(BaseModel):
@@ -685,6 +705,193 @@ class Stage45Output(BaseModel):
 class StandaloneStage5Output(BaseModel):
     requirements: List[RequirementSchema] = Field(description="为所有 risk_treatment 为 Reduce 的威胁场景分别拟定的安全控制措施与网络安全要求。每个要求必须关联对应的 threat_id。")
     summarized_requirements: List[SummarizedRequirementSchema] = Field(description="对所有 allocated_to_device == 'yes' 的安全要求进行去重与归纳整理后的项目级网络安全需求列表")
+
+def _extract_dfd_context(snapshot_json: str) -> tuple:
+    """Extract component and interface hints from a stored React Flow DFD."""
+    try:
+        snapshot = json.loads(snapshot_json or "{}")
+    except Exception:
+        return [], []
+    if not isinstance(snapshot, dict):
+        return [], []
+
+    components = []
+    interfaces = []
+    for node in snapshot.get("nodes", []) or []:
+        if not isinstance(node, dict):
+            continue
+        data = node.get("data") if isinstance(node.get("data"), dict) else {}
+        name = str(data.get("name") or "").strip()
+        if not name:
+            continue
+        components.append({
+            "id": str(node.get("id") or name),
+            "name": name,
+            "type": str(node.get("type") or data.get("type") or ""),
+            "description": str(data.get("description") or data.get("remarks") or ""),
+            "protocol": str(data.get("protocol") or ""),
+            "source": "dfd",
+        })
+
+    for edge in snapshot.get("edges", []) or []:
+        if not isinstance(edge, dict):
+            continue
+        data = edge.get("data") if isinstance(edge.get("data"), dict) else {}
+        label = data.get("label") or data.get("name") or edge.get("label") or edge.get("id")
+        if label:
+            interfaces.append(str(label))
+
+    return components, interfaces
+
+
+def build_item_context(db: Session, asset: Asset) -> dict:
+    """Build the target-domain-controller / item context for the LLM.
+
+    The application models a "Domain" as a sub-domain controller. Its name is
+    therefore the target domain controller for the current TARA. Component and
+    interface details are only available if the user has drawn a DFD; when they
+    are absent we return an empty list instead of inventing components.
+    """
+    domain = None
+    project = None
+    diagrams = []
+    try:
+        domain = db.query(Domain).filter(Domain.id == asset.domain_id).first()
+        project = db.query(Project).filter(Project.id == domain.project_id).first() if domain else None
+        diagrams = db.query(Diagram).filter(Diagram.domain_id == asset.domain_id).all()
+    except Exception as context_err:
+        # Context enrichment must never block the TARA run. Missing DFD tables
+        # or an unavailable project record simply means less allocation context.
+        print(f"[TARA-AI] 目标域控/DFD 上下文读取失败，降级为最小上下文: {context_err}")
+
+    components = []
+    interfaces = []
+    for diagram in diagrams:
+        dfd_components, dfd_interfaces = _extract_dfd_context(diagram.snapshot_json)
+        components.extend(dfd_components)
+        interfaces.extend(dfd_interfaces)
+
+    # Deduplicate while preserving order. The current asset is always included
+    # so the model has at least one concrete component to allocate to.
+    unique_components = []
+    seen_component_keys = set()
+    seen_component_names = set()
+    for component in components:
+        key = (component.get("id"), component.get("name"))
+        name = str(component.get("name") or "").strip()
+        if key in seen_component_keys or (name and name in seen_component_names):
+            continue
+        seen_component_keys.add(key)
+        if name:
+            seen_component_names.add(name)
+        unique_components.append(component)
+
+    asset_key = (f"AST-{asset.id}", asset.name)
+    if asset_key not in seen_component_keys and asset.name not in seen_component_names:
+        unique_components.append({
+            "id": f"AST-{asset.id}",
+            "name": asset.name,
+            "type": asset.asset_type or "",
+            "description": asset.description or "",
+            "protocol": asset.protocol or "",
+            "source": "asset",
+        })
+
+    unique_interfaces = []
+    seen_interfaces = set()
+    for interface in interfaces:
+        if interface not in seen_interfaces:
+            seen_interfaces.add(interface)
+            unique_interfaces.append(interface)
+    if not unique_interfaces and asset.protocol and asset.protocol != "无":
+        unique_interfaces.append(asset.protocol)
+
+    domain_name = domain.name if domain else ""
+    project_name = project.name if project else ""
+    target_domain_controller = {
+        "id": f"DOMAIN-{asset.domain_id}",
+        "name": domain_name,
+        "project": project_name,
+        "description": project.description if project and project.description else "",
+    }
+    item = {
+        "name": domain_name or asset.name,
+        "boundary": f"当前分析的子域控/目标域控: {domain_name or asset.name}",
+        "functions": [
+            c["name"] for c in unique_components
+            if c.get("type") == "process" and c.get("name")
+        ],
+        "components": unique_components,
+        "interfaces": unique_interfaces,
+        "lifecycle": ["development", "production", "operation", "maintenance", "decommissioning"],
+    }
+    return {
+        "target_domain_controller": target_domain_controller,
+        "item": item,
+    }
+
+
+def validate_concept_objects(ai_res: dict, target_domain_controller: dict, components: list) -> list:
+    """Lightweight ISO 21434 content checks for the four TARA sheet objects.
+
+    This does not change which objects are generated for a treatment; it only
+    reports content that the model should fix before the TARA sheet is used.
+    """
+    warnings = []
+    component_names = {
+        str(c.get("name") or "").strip()
+        for c in (components or [])
+        if str(c.get("name") or "").strip()
+    }
+    component_ids = {
+        str(c.get("id") or "").strip()
+        for c in (components or [])
+        if str(c.get("id") or "").strip()
+    }
+    component_keys = component_names | component_ids
+    for idx, dec in enumerate(ai_res.get("risk_decisions", []) or []):
+        treatment = str(dec.get("risk_treatment") or "").lower()
+        prefix = f"risk_decisions[{idx}]"
+        if "avoid" in treatment:
+            if dec.get("cybersecurity_goal") or dec.get("cybersecurity_claim") or dec.get("requirements"):
+                warnings.append(f"{prefix}: Avoid 应只填 item_change，其它对象应为空")
+            continue
+
+        requirements = dec.get("requirements") or []
+        if "share" in treatment or "retain" in treatment or "accept" in treatment:
+            for field in (
+                "cybersecurity_claim", "claim_type", "residual_risk",
+                "claim_justification", "claim_conditions", "claim_validity", "claim_owner",
+            ):
+                if not str(dec.get(field) or "").strip():
+                    warnings.append(f"{prefix}: Claim 缺少 {field}")
+            if requirements:
+                warnings.append(f"{prefix}: Share/Retain 不应生成 item requirements")
+            continue
+
+        # Reduce
+        for field in ("cybersecurity_goal", "security_property", "success_criteria"):
+            if not str(dec.get(field) or "").strip():
+                warnings.append(f"{prefix}: Goal 缺少 {field}")
+        if not requirements:
+            warnings.append(f"{prefix}: Reduce 缺少 requirements")
+        for r_idx, req in enumerate(requirements):
+            rprefix = f"{prefix}.requirements[{r_idx}]"
+            for field in (
+                "cybersecurity_requirement", "verification_method",
+                "acceptance_criteria", "source_ids",
+            ):
+                if not req.get(field):
+                    warnings.append(f"{rprefix}: Requirement 缺少 {field}")
+            if str(req.get("allocated_to_device") or "").lower() == "yes":
+                if not target_domain_controller.get("name"):
+                    warnings.append(f"{rprefix}: allocated_to_device=yes 但缺少目标域控信息")
+                allocated_to = str(req.get("allocated_to") or "").strip()
+                if component_keys and allocated_to and allocated_to not in component_keys:
+                    if not any(key in allocated_to or allocated_to in key for key in component_keys):
+                        warnings.append(f"{rprefix}: allocated_to 未匹配 item.components: {allocated_to}")
+    return warnings
+
 
 def tara_ai_analysis_call(db: Session, stage: str, asset: Asset, prev_stages: dict) -> dict:
     """
@@ -709,10 +916,11 @@ def tara_ai_analysis_call(db: Session, stage: str, asset: Asset, prev_stages: di
         "【术语与写作边界】\n"
         "- Damage Scenario：资产/安全属性受损后对车辆、人员、业务或隐私造成的影响；不描述攻击手段。\n"
         "- Threat Scenario：威胁源或攻击接口 + 被破坏的安全属性 + 攻击行为；不写具体实现方案。\n"
-        "- Cybersecurity Goal：对资产/接口的安全属性与期望结果的高层声明；技术中立，不写协议、算法、产品、阈值。\n"
-        "- Cybersecurity Claim：Share/Retain 时对剩余风险可接受/已转移的正式声明；说明剩余风险、依据、适用条件、有效期与批准角色。\n"
-        "- Cybersecurity Control：控制类型（预防/检测/纠正；技术/操作）+ 控制目标 + 作用点；不写具体协议/算法/产品。\n"
-        "- Cybersecurity Requirement：保护对象 + 安全属性/控制目标 + 应/不应行为 + 适用条件 + 验证方法；技术中立。\n"
+        "- Cybersecurity Goal：仅用于风险处置包含 Reduce 的场景；是保护资产免受特定 Threat Scenario 影响的顶层要求。必须关联 threat_id/damage_scenario_id/asset，写单一主安全属性、goal_statement、success_criteria、适用生命周期；技术中立，不写协议、算法、产品、阈值、具体控制手段；不复述 Threat，不写实现方案。一个 Goal 可以对应多个 Control/Requirement。\n"
+        "- Cybersecurity Claim：用于 Share，或 Retain 基于 assumptions 的场景；是声明，不是 Control，不是 Requirement。必须写 claim_type、claim_statement、residual_risk、justification、conditions、validity、owner/approver、evidence；不得写“系统应……”，不得复制 Threat 或 Control；信息不足写 open_issue，不得编造。\n"
+        "- Cybersecurity Control：控制类型（预防/检测/纠正）、实现类型（技术/操作）、控制目标、作用点、依赖的 item 功能/其他 Control、交互描述、关联 Goal/Claim；必须描述控制之间、控制与 item 功能之间的交互/依赖；不写具体协议/算法/产品型号。\n"
+        "- Cybersecurity Requirement：保护对象 + 安全属性/控制目标 + 应/不应行为 + 适用条件 + 验证方法；必须写 requirement_scope（item / operational_environment / other_item）、owner、allocated_to、allocation_type、requirement_type（product/process/supplier）、verification_method、acceptance_criteria、source_ids；一条 Requirement 只能有一个保护对象、一个行为、一个可验证结果；多个独立“应/不应/不得”必须拆条；技术中立。\n"
+        "- Allocated to Device：只有 Requirement 由 target_domain_controller 或其 item.components 中的组件实现时填 'yes'；由运行环境、其他域控/ECU、其他 item、供应商、后台或流程实现时填 'no'；信息不足填 'no' 并在 open_issue 说明；禁止默认 yes。\n"
         "1. 所有描述性内容、场景描述、路径、理由、安全目标和安全控制/需求必须使用中英文双语对照输出，格式为“中文描述 / English translation” (例如：“由于系统受损，功能失效。 / Impaired functions due to system compromise.”)，保证翻译的专业性与准确性；\n"
         "2. 绝对不使用 Markdown 代码块；\n"
         "3. 绝对不包含任何思考过程、推理步骤或解释说明；\n"
@@ -856,6 +1064,7 @@ def tara_ai_analysis_call(db: Session, stage: str, asset: Asset, prev_stages: di
             "asset_type": asset.asset_type.capitalize() if asset.asset_type else "Hardware",
             "remarks": asset.description or "无"
         }
+        asset_info_dict.update(build_item_context(db, asset))
 
         asset_type_lower = asset.asset_type.lower() if asset.asset_type else "hardware"
 
@@ -1355,6 +1564,16 @@ def tara_ai_analysis_call(db: Session, stage: str, asset: Asset, prev_stages: di
             
             msg_dict = {
                 "asset_info": asset_info_dict,
+                "target_domain_controller": asset_info_dict.get("target_domain_controller", {}),
+                "item": asset_info_dict.get("item", {}),
+                "assumptions": prev_stages.get("stage3", {}).get("assumptions", []),
+                "existing_controls": prev_stages.get("stage3", {}).get("existing_controls", []),
+                "policy": {
+                    "verification_methods": ["测试", "分析", "检查", "演示"],
+                    "acceptance_criteria_rule": "必须是可判定的通过/失败条件，不能写“满足安全要求”",
+                    "cal_method": "如项目使用 CAL，按 Annex E 评估；否则留空",
+                    "language": "CN/EN",
+                },
                 "threat_scenarios": []
             }
             for ts in threat_scenarios:
@@ -1366,23 +1585,34 @@ def tara_ai_analysis_call(db: Session, stage: str, asset: Asset, prev_stages: di
                     "threat_scenario": ts.get("threat_scenario"),
                     "attribute": ts.get("attribute"),
                     "damage_scenario": ts.get("damage_scenario"),
+                    "damage_scenario_sn": ts.get("damage_scenario_sn", ""),
                     "final_feasibility": ts.get("final_feasibility"),
                     "overall_impact": ts.get("overall_impact"),
-                    "risk_value": risk_val
+                    "risk_value": risk_val,
+                    "source_ids": {
+                        "asset": f"ID{asset.id}",
+                        "domain": f"DOMAIN-{asset.domain_id}",
+                        "threat": ts.get("threat_id", ""),
+                        "damage": ts.get("damage_scenario_sn", ""),
+                    },
                 })
             
             msg = json.dumps(msg_dict, ensure_ascii=False)
             prompt = (
                     "请针对以上威胁场景进行风险处理决策 (Risk Treatment Decisions) 评估，并制定网络安全要求与控制措施。\n"
                     "决策与要求制定规则：\n"
+                    "输入中的 target_domain_controller 是当前目标域控；item.components 是该目标域控可用的组件清单。"
+                    "所有分配判断只能基于这些信息；不得编造目标域控或组件。\n"
                     "1. 针对每个威胁场景，做出风险处理决策 (Avoid, Reduce, Share, Retain)。根据决策提供相应理由/声明字段，所有文本必须是中英文对照（格式为“中文 / English”）：\n"
                     "   - Avoid: 额外在 item_change 中编写避免理由（移除危险源、更改设计等），其它字段为空字符串；\n"
                     "   - Reduce: 额外在 cybersecurity_goal 中编写高层安全目标（保护对象 + 安全属性 + 期望结果 + 成功判据；技术中立，不写协议/算法/产品/阈值），并分别填写 security_property（七类安全属性之一）、goal_asset（保护对象）、success_criteria（可验证的高层判据）；且必须在该威胁场景的 requirements 列表中编写控制措施与要求；\n"
                     "   - Share/Retain: 额外在 cybersecurity_claim 中编写正式风险声明（剩余风险是什么、为什么可接受/可转移、依据/适用条件/有效期/批准角色），并分别填写 residual_risk、claim_justification、claim_conditions、claim_validity、claim_owner；其它字段为空字符串；claim 不是威胁描述或控制措施。\n"
+                    "   - Claim 额外字段：claim_type（residual_risk_accept / risk_transfer / dependency_assumption / goal_achievement）、claim_evidence、claim_status；Claim 不得写成“系统应……”；如果输入 assumptions 为空，必须写 open_issue，不得编造假设。\n"
                     "2. 针对 Reduce 决策，编写的网络安全要求与控制措施 (Requirements) 必须满足：\n"
-                    "   - 包含 cybersecurity_control_id 并以 CSO-001, CSO-002 等顺序编号格式编写，与中英文对照的 cybersecurity_control；并分别填写 control_type（预防/检测/纠正）、implementation_type（技术/操作）、control_objective（控制目标）、control_point（作用点：资产/接口/生命周期阶段）；不要写具体协议/算法/产品型号；\n"
-                    "   - 包含 allocated_to_device（在此 TARA 分析中，针对资产所提出的开发、设计、测试、配置、物理布线及生产管理等所有网络安全要求，因最终均会影响或作用于当前评估对象产品，因此该字段必须统一填 'yes'，以确保全部安全需求均包含在产品安全目标和评审清单中，不予排除）；\n"
-                    "   - 包含 cybersecurity_requirement_id 并以 CSR-001, CSR-002 等顺序编号格式编写，与中英文对照的 cybersecurity_requirement。每条要求必须包含：保护对象、安全属性/控制目标、应/不应行为、适用条件/边界、验证方法；并填写 verification_method、requirement_type、rationale；技术中立，即使输入包含具体协议/算法/端口/数值，输出也必须抽象为能力要求，不得原样保留；\n"
+                    "   - Control：包含 cybersecurity_control_id 并以 CSO-001, CSO-002 等顺序编号格式编写，与中英文对照的 cybersecurity_control；并分别填写 control_type（预防/检测/纠正）、implementation_type（技术/操作）、control_objective（控制目标）、control_point（作用点：资产/接口/生命周期阶段）、dependent_functions、dependent_controls、interaction_description、applicable_lifecycle；不要写具体协议/算法/产品型号；\n"
+                    "   - Allocated to Device：只有 Requirement 由 target_domain_controller 或其 item.components 中的组件实现时填 'yes'；由运行环境、其他域控/ECU、其他 item、供应商、后台或流程实现时填 'no'；信息不足时填 'no' 并在 open_issue 说明，禁止默认 yes；\n"
+                    "   - Requirement：包含 cybersecurity_requirement_id 并以 CSR-001, CSR-002 等顺序编号格式编写，与中英文对照的 cybersecurity_requirement；并填写 requirement_scope（item / operational_environment / other_item）、owner、allocated_to、allocation_type、requirement_type（product/process/supplier）、verification_method、acceptance_criteria、source_ids、goal_ids、control_ids、rationale；每条 Requirement 只能有一个保护对象、一个行为、一个可验证结果，多个独立“应/不应/不得”必须拆成多条；技术中立，即使输入包含具体协议/算法/端口/数值，输出也必须抽象为能力要求，不得原样保留；\n"
+                    "   - TARA 表文本列格式：cybersecurity_claim 用【Claim 类型】【声明】【剩余风险】【依据】【适用条件】【有效期】【批准角色】【证据】【待确认】组织；cybersecurity_goal 用【保护对象】【安全属性】【目标】【成功判据】组织；cybersecurity_control 用【控制类型】【实现类型】【控制目标】【作用点】【依赖/交互】组织；cybersecurity_requirement 用【范围】【主体】【要求】【验证方法】【验收准则】【待确认】组织；结构化字段仍按上面字段填写；\n"
                     "3. 编制合并后安全需求 (summarized_requirements 归纳与合并规则)：\n"
                     "   - 针对所有 allocated_to_device 为 'yes' 的原始网络安全要求进行系统性归纳与合并去重：\n"
                     "     * 原子化边界：一条 CSR = 一个保护对象 + 一个控制目标 + 一个可验证结果；\n"
@@ -1397,7 +1627,16 @@ def tara_ai_analysis_call(db: Session, stage: str, asset: Asset, prev_stages: di
                     f"{req_guideline}"
                 )
             ai_res = call_llm(msg, prompt, Stage45Output)
-            
+            validation_warnings = validate_concept_objects(
+                ai_res,
+                asset_info_dict.get("target_domain_controller", {}),
+                asset_info_dict.get("item", {}).get("components", []),
+            )
+            if validation_warnings:
+                print(f"[TARA-AI] ISO 21434 对象校验警告 ({len(validation_warnings)}):")
+                for warning in validation_warnings[:12]:
+                    print(f"  - {warning}")
+
             risk_decisions = []
             max_risk_val = 1
             has_mitigate = False
@@ -1424,11 +1663,15 @@ def tara_ai_analysis_call(db: Session, stage: str, asset: Asset, prev_stages: di
                     goal_asset = matched_dec.get("goal_asset", "")
                     success_criteria = matched_dec.get("success_criteria", "")
                     cybersecurity_claim = matched_dec.get("cybersecurity_claim", "")
+                    claim_type = matched_dec.get("claim_type", "")
                     residual_risk = matched_dec.get("residual_risk", "")
                     claim_justification = matched_dec.get("claim_justification", "")
                     claim_conditions = matched_dec.get("claim_conditions", "")
                     claim_validity = matched_dec.get("claim_validity", "")
                     claim_owner = matched_dec.get("claim_owner", "")
+                    claim_evidence = matched_dec.get("claim_evidence", "")
+                    claim_status = matched_dec.get("claim_status", "")
+                    claim_open_issue = matched_dec.get("open_issue", "")
                     raw_reqs = matched_dec.get("requirements", [])
                 else:
                     treatment = "Reduce"
@@ -1438,13 +1681,17 @@ def tara_ai_analysis_call(db: Session, stage: str, asset: Asset, prev_stages: di
                     goal_asset = asset.name or ""
                     success_criteria = ""
                     cybersecurity_claim = ""
+                    claim_type = ""
                     residual_risk = ""
                     claim_justification = ""
                     claim_conditions = ""
                     claim_validity = ""
                     claim_owner = ""
+                    claim_evidence = ""
+                    claim_status = ""
+                    claim_open_issue = ""
                     raw_reqs = []
-                    
+
                 treatment_lower = treatment.lower().strip()
                 decision_norm = "Reduce"
                 if "avoid" in treatment_lower:
@@ -1467,20 +1714,28 @@ def tara_ai_analysis_call(db: Session, stage: str, asset: Asset, prev_stages: di
                     goal_asset = ""
                     success_criteria = ""
                     cybersecurity_claim = ""
+                    claim_type = ""
                     residual_risk = ""
                     claim_justification = ""
                     claim_conditions = ""
                     claim_validity = ""
                     claim_owner = ""
+                    claim_evidence = ""
+                    claim_status = ""
+                    claim_open_issue = ""
                     raw_reqs = []
                 elif decision_norm == "Reduce":
                     item_change = ""
                     cybersecurity_claim = ""
+                    claim_type = ""
                     residual_risk = ""
                     claim_justification = ""
                     claim_conditions = ""
                     claim_validity = ""
                     claim_owner = ""
+                    claim_evidence = ""
+                    claim_status = ""
+                    claim_open_issue = ""
                 elif decision_norm in ("Share", "Retain"):
                     item_change = ""
                     cybersecurity_goal = ""
@@ -1508,11 +1763,15 @@ def tara_ai_analysis_call(db: Session, stage: str, asset: Asset, prev_stages: di
                     "success_criteria": success_criteria,
                     "cybersecurity_claim_id": generate_content_id("CLM_", cybersecurity_claim) if cybersecurity_claim else "",
                     "cybersecurity_claim": cybersecurity_claim,
+                    "claim_type": claim_type,
                     "residual_risk": residual_risk,
                     "claim_justification": claim_justification,
                     "claim_conditions": claim_conditions,
                     "claim_validity": claim_validity,
                     "claim_owner": claim_owner,
+                    "claim_evidence": claim_evidence,
+                    "claim_status": claim_status,
+                    "open_issue": claim_open_issue,
                     "_raw_requirements": raw_reqs
                 })
                 justifications.append(f"安全风险为 {risk_val} ({ts.get('attribute')}属性)，采取 {decision_norm} 决策。 / Cybersecurity risk is {risk_val} ({ts.get('attribute')} attribute), decision: {decision_norm} decision.")
@@ -1531,7 +1790,8 @@ def tara_ai_analysis_call(db: Session, stage: str, asset: Asset, prev_stages: di
                 "risk_decisions": [{k: v for k, v in rd.items() if k != "_raw_requirements"} for rd in risk_decisions],
                 "risk_rating": max_risk_val,
                 "risk_decision": decision_raw,
-                "justification": "; ".join(justifications)
+                "justification": "; ".join(justifications),
+                "_validation_warnings": validation_warnings
             }
             
             stage4_final["_consolidated_stage5_data"] = {
@@ -1576,18 +1836,33 @@ def tara_ai_analysis_call(db: Session, stage: str, asset: Asset, prev_stages: di
                             req_text = req.get("cybersecurity_requirement", "")
                             requirements.append({
                                 "threat_id": rd["threat_id"],
+                                "goal_ids": req.get("goal_ids", []),
                                 "cybersecurity_control_id": generate_content_id("CSC_", ctrl_text) if ctrl_text else "",
+                                "control_ids": req.get("control_ids", []),
+                                "claim_ids": req.get("claim_ids", []),
                                 "cybersecurity_control": ctrl_text,
                                 "control_type": req.get("control_type", ""),
                                 "implementation_type": req.get("implementation_type", ""),
                                 "control_objective": req.get("control_objective", ""),
                                 "control_point": req.get("control_point", ""),
-                                "allocated_to_device": req.get("allocated_to_device", "yes"),
+                                "dependent_functions": req.get("dependent_functions", []),
+                                "dependent_controls": req.get("dependent_controls", []),
+                                "interaction_description": req.get("interaction_description", ""),
+                                "applicable_lifecycle": req.get("applicable_lifecycle", ""),
+                                "allocated_to_device": req.get("allocated_to_device", "no"),
+                                "requirement_scope": req.get("requirement_scope", "item"),
+                                "owner": req.get("owner", ""),
+                                "allocated_to": req.get("allocated_to", ""),
+                                "allocation_type": req.get("allocation_type", "primary"),
                                 "cybersecurity_requirement_id": generate_content_id("CSR_", req_text) if req_text else "",
                                 "cybersecurity_requirement": req_text,
                                 "verification_method": req.get("verification_method", ""),
+                                "acceptance_criteria": req.get("acceptance_criteria", ""),
+                                "source_ids": req.get("source_ids", []),
+                                "dependencies": req.get("dependencies", []),
                                 "requirement_type": req.get("requirement_type", "product"),
-                                "rationale": req.get("rationale", "")
+                                "rationale": req.get("rationale", ""),
+                                "open_issue": req.get("open_issue", "")
                             })
                 
                 device_reqs = [req for req in requirements if str(req.get("allocated_to_device", "")).lower().strip() == "yes"]
@@ -1613,18 +1888,29 @@ def tara_ai_analysis_call(db: Session, stage: str, asset: Asset, prev_stages: di
                 # Standalone Stage 5 Call
                 msg_dict = {
                     "asset_info": asset_info_dict,
+                    "target_domain_controller": asset_info_dict.get("target_domain_controller", {}),
+                    "item": asset_info_dict.get("item", {}),
+                    "assumptions": prev_stages.get("stage3", {}).get("assumptions", []),
+                    "existing_controls": prev_stages.get("stage3", {}).get("existing_controls", []),
+                    "policy": {
+                        "verification_methods": ["测试", "分析", "检查", "演示"],
+                        "acceptance_criteria_rule": "必须是可判定的通过/失败条件，不能写“满足安全要求”",
+                        "cal_method": "如项目使用 CAL，按 Annex E 评估；否则留空",
+                        "language": "CN/EN",
+                    },
                     "risk_decisions": [
-                        {k: v for k, v in rd.items() if k != "_raw_requirements"} 
+                        {k: v for k, v in rd.items() if k != "_raw_requirements"}
                         for rd in risk_decisions if rd.get("risk_treatment") == "Reduce"
                     ]
                 }
                 msg = json.dumps(msg_dict, ensure_ascii=False)
                 prompt = (
                     "资产信息：针对上述 risk_treatment 为 Reduce 的威胁场景列表，编写相对应安全控制措施与网络安全要求。\n"
+                    "输入中的 target_domain_controller 是当前目标域控；item.components 是该目标域控可用的组件清单。所有分配判断只能基于这些信息；不得编造目标域控或组件。\n"
                     "1. 针对每个威胁场景，编写的安全控制措施 (Requirements) 必须满足：\n"
-                    "   - 包含 cybersecurity_control_id 并以 CSO-001, CSO-002 等顺序编号格式编写，与中英文对照的 cybersecurity_control；并分别填写 control_type（预防/检测/纠正）、implementation_type（技术/操作）、control_objective（控制目标）、control_point（作用点：资产/接口/生命周期阶段）；不要写具体协议/算法/产品型号；\n"
-                    "   - 包含 allocated_to_device（在此 TARA 分析中，针对资产所提出的开发、设计、测试、配置、物理布线及生产管理等所有网络安全要求，因最终均会影响或作用于当前评估对象产品，因此该字段必须统一填 'yes'，以确保全部安全需求均包含在产品安全目标和评审清单中，不予排除）；\n"
-                    "   - 包含 cybersecurity_requirement_id 并以 CSR-001, CSR-002 等顺序编号格式编写，与中英文对照的 cybersecurity_requirement。每条要求必须包含：保护对象、安全属性/控制目标、应/不应行为、适用条件/边界、验证方法；并填写 verification_method、requirement_type、rationale；技术中立，即使输入包含具体协议/算法/端口/数值，输出也必须抽象为能力要求，不得原样保留；\n"
+                    "   - Control：包含 cybersecurity_control_id 并以 CSO-001, CSO-002 等顺序编号格式编写，与中英文对照的 cybersecurity_control；并分别填写 control_type（预防/检测/纠正）、implementation_type（技术/操作）、control_objective（控制目标）、control_point（作用点：资产/接口/生命周期阶段）、dependent_functions、dependent_controls、interaction_description、applicable_lifecycle；不要写具体协议/算法/产品型号；\n"
+                    "   - Allocated to Device：只有 Requirement 由 target_domain_controller 或其 item.components 中的组件实现时填 'yes'；由运行环境、其他域控/ECU、其他 item、供应商、后台或流程实现时填 'no'；信息不足时填 'no' 并在 open_issue 说明，禁止默认 yes；\n"
+                    "   - Requirement：包含 cybersecurity_requirement_id 并以 CSR-001, CSR-002 等顺序编号格式编写，与中英文对照的 cybersecurity_requirement；并填写 requirement_scope（item / operational_environment / other_item）、owner、allocated_to、allocation_type、requirement_type（product/process/supplier）、verification_method、acceptance_criteria、source_ids、goal_ids、control_ids、rationale；每条 Requirement 只能有一个保护对象、一个行为、一个可验证结果，多个独立“应/不应/不得”必须拆成多条；技术中立，即使输入包含具体协议/算法/端口/数值，输出也必须抽象为能力要求，不得原样保留；\n"
                     "2. 编制合并后安全需求 (summarized_requirements 归纳与合并规则)：\n"
                     "   - 针对所有 allocated_to_device 为 'yes' 的原始网络安全要求进行系统性归纳与合并去重：\n"
                     "     * 原子化边界：一条 CSR = 一个保护对象 + 一个控制目标 + 一个可验证结果；\n"
@@ -1646,18 +1932,33 @@ def tara_ai_analysis_call(db: Session, stage: str, asset: Asset, prev_stages: di
                     req_text = req.get("cybersecurity_requirement", "")
                     requirements.append({
                         "threat_id": req.get("threat_id", "TS_Integrity_1"),
+                        "goal_ids": req.get("goal_ids", []),
                         "cybersecurity_control_id": generate_content_id("CSC_", ctrl_text) if ctrl_text else "",
+                        "control_ids": req.get("control_ids", []),
+                        "claim_ids": req.get("claim_ids", []),
                         "cybersecurity_control": ctrl_text,
                         "control_type": req.get("control_type", ""),
                         "implementation_type": req.get("implementation_type", ""),
                         "control_objective": req.get("control_objective", ""),
                         "control_point": req.get("control_point", ""),
-                        "allocated_to_device": req.get("allocated_to_device", "yes"),
+                        "dependent_functions": req.get("dependent_functions", []),
+                        "dependent_controls": req.get("dependent_controls", []),
+                        "interaction_description": req.get("interaction_description", ""),
+                        "applicable_lifecycle": req.get("applicable_lifecycle", ""),
+                        "allocated_to_device": req.get("allocated_to_device", "no"),
+                        "requirement_scope": req.get("requirement_scope", "item"),
+                        "owner": req.get("owner", ""),
+                        "allocated_to": req.get("allocated_to", ""),
+                        "allocation_type": req.get("allocation_type", "primary"),
                         "cybersecurity_requirement_id": generate_content_id("CSR_", req_text) if req_text else "",
                         "cybersecurity_requirement": req_text,
                         "verification_method": req.get("verification_method", ""),
+                        "acceptance_criteria": req.get("acceptance_criteria", ""),
+                        "source_ids": req.get("source_ids", []),
+                        "dependencies": req.get("dependencies", []),
                         "requirement_type": req.get("requirement_type", "product"),
-                        "rationale": req.get("rationale", "")
+                        "rationale": req.get("rationale", ""),
+                        "open_issue": req.get("open_issue", "")
                     })
                     
                 summarized_csrs = []
@@ -1713,7 +2014,8 @@ def process_single_asset(asset_id: int, domain_id: int, run_record_id: int, forc
             "asset_type": asset.asset_type.capitalize() if asset.asset_type else "Hardware",
             "remarks": asset.description or "无"
         }
-        
+        asset_info_dict.update(build_item_context(thread_db, asset))
+
         prev_stage_outputs = {} # 暂存当前资产的前置步骤最终结论
         
         for stage in stages:

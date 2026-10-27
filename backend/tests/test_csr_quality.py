@@ -66,6 +66,28 @@ class CoverageContractTests(unittest.TestCase):
         self.assertEqual(report["duplicate_raw_ids"], {"CSR_1": 2})
         self.assertTrue(report["all_covered"])
 
+    def test_merge_and_split_are_both_allowed(self):
+        items = [_item("CSR_1"), _item("CSR_2"), _item("CSR_3"), _item("CSR_4")]
+        cons = [
+            # merge: CSR_1 + CSR_2 -> one CSR
+            {"source_requirement_ids": ["CSR_1", "CSR_2"], "cybersecurity_requirement": "Merged"},
+            # split: CSR_3 -> two CSRs
+            {"source_requirement_ids": ["CSR_3"], "cybersecurity_requirement": "Split A"},
+            {"source_requirement_ids": ["CSR_3"], "cybersecurity_requirement": "Split B"},
+            {"source_requirement_ids": ["CSR_4"], "cybersecurity_requirement": "Direct"},
+        ]
+        out, report = enforce_csr_coverage(items, cons)
+        self.assertTrue(report["all_covered"])
+        self.assertEqual(report["duplicate_raw_ids"], {"CSR_3": 2})
+        raw_to_csrs = {}
+        for item in out:
+            for sid in item["source_requirement_ids"]:
+                raw_to_csrs.setdefault(sid, []).append(item["cybersecurity_requirement"])
+        self.assertEqual(len(raw_to_csrs["CSR_1"]), 1)
+        self.assertEqual(len(raw_to_csrs["CSR_2"]), 1)
+        self.assertEqual(sorted(raw_to_csrs["CSR_3"]), ["Split A", "Split B"])
+        self.assertEqual(raw_to_csrs["CSR_4"], ["Direct"])
+
     def test_missing_verification_is_filled_and_reported(self):
         items = [_item("CSR_1")]
         cons = [{"source_requirement_ids": ["CSR_1"], "cybersecurity_requirement": "A"}]
