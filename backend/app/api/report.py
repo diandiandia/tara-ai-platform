@@ -540,6 +540,16 @@ from app.services.csr_synthesis import (
     get_or_synthesize_global_csrs
 )
 
+def _apply_security_domain_correction(rows: list) -> list:
+    """按控制机制纠正安全域（例如调试口身份认证应归系统安全，而不是硬件安全）。"""
+    from app.core.taxonomy import correct_security_domain
+
+    for r in rows:
+        dom = clean_major_category(r.get("security_domain"))
+        r["security_domain"] = correct_security_domain(dom, r.get("cybersecurity_requirement") or "")
+    return rows
+
+
 def collect_csr_report_data(steps, assets, hash_to_global_map: dict = None, db: Session = None, domain: Domain = None):
     """
     收集并进行全局去重、合并与两级安全分类整理项目级网络安全需求（CSR）数据。
@@ -549,11 +559,13 @@ def collect_csr_report_data(steps, assets, hash_to_global_map: dict = None, db: 
         from app.core.database import SessionLocal
         local_db = SessionLocal()
         try:
-            return get_or_synthesize_global_csrs(local_db, domain, steps, assets, hash_to_global_map)
+            rows = get_or_synthesize_global_csrs(local_db, domain, steps, assets, hash_to_global_map)
         finally:
             local_db.close()
+        return _apply_security_domain_correction(rows)
     else:
-        return get_or_synthesize_global_csrs(db, domain, steps, assets, hash_to_global_map)
+        rows = get_or_synthesize_global_csrs(db, domain, steps, assets, hash_to_global_map)
+        return _apply_security_domain_correction(rows)
 
 
 def build_csr_coverage_rows(csr_rows: list) -> list:
