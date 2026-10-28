@@ -22,6 +22,13 @@ from app.core.taxonomy import (
     CANONICAL_DOMAINS,
     clean_major_category,
     correct_security_domain,
+    FUNCTIONAL_CATEGORY_NAMES,
+    FUNCTIONAL_PREFIX_MAP,
+    FUNCTIONAL_PROMPT_LIST,
+    FUNCTIONAL_KEYWORDS_PROMPT,
+    FUNCTIONAL_CONFUSION_RULES,
+    classify_functional_category,
+    correct_functional_category,
 )
 from app.services.csr_synthesis import clean_and_parse_json, post_llm_request_with_retry, extract_subject
 
@@ -171,7 +178,7 @@ def _build_merge_items(customer_reqs: List[dict], tara_csrs: List[dict]) -> List
             "source_type": "tara",
             "source_id": tc["csr_id"],
             "text": tc["requirement"],
-            "category": tc.get("security_domain") or "",
+            "category": tc.get("functional_category") or tc.get("security_domain") or "",
         })
     return items
 
@@ -230,20 +237,27 @@ def enforce_merge_coverage(items: List[dict], merged: List[dict]) -> Tuple[List[
 
 
 def _assign_final_ids(merged: List[dict]) -> List[dict]:
-    """按安全域排序并分配 FCSR-{DOMAIN}-{NNN} 编号。"""
-    # 规范化安全域，并按控制机制纠正（调试口认证应归系统安全）
+    """按 17 类功能分类排序并分配 FCSR-{CATEGORY}-{NNN} 编号。"""
+    # 规范化到 17 类功能分类，并用规则校验 LLM 结果
     for m in merged:
-        dom = clean_major_category(m.get("security_domain"))
         text = m.get("requirement_text") or m.get("requirement_title") or ""
-        m["security_domain"] = correct_security_domain(dom, text)
+        cat, source, needs_review = correct_functional_category(
+            m.get("functional_category") or m.get("security_domain"), text
+        )
+        m["functional_category"] = cat
+        m["security_domain"] = cat
+        m["category_source"] = source
+        m["needs_review"] = bool(needs_review)
+
+    order = {c: i for i, c in enumerate(FUNCTIONAL_CATEGORY_NAMES)}
     merged.sort(key=lambda m: (
-        MAJOR_ORDER.get(m["security_domain"], 99),
+        order.get(m["functional_category"], 99),
         str(m.get("control_category") or ""),
     ))
     counters = {}
     for m in merged:
-        domain = m["security_domain"]
-        prefix = DOMAIN_PREFIX_MAP.get(domain, "CSR-GEN").replace("CSR-", "FCSR-")
+        cat = m["functional_category"]
+        prefix = FUNCTIONAL_PREFIX_MAP.get(cat, "CSR-GEN").replace("CSR-", "FCSR-")
         counters[prefix] = counters.get(prefix, 0) + 1
         m["final_id"] = f"{prefix}-{counters[prefix]:03d}"
     return merged
@@ -253,8 +267,7 @@ MERGE_PROMPT = """你是一名资深汽车网络安全需求管理专家（精�
 请把「客户（OEM）整车信息安全需求」与「我方 TARA 分析产出的原子安全需求」进行语义合并，产出统一的最终信息安全需求（FCSR）。
 
 【输入】
-customer_requirements: [{{customer_id, text, category}}]
-tara_csrs: [{{csr_id, text, security_domain, control_category, title}}]
+统一数组，每个元素含：source_type（customer=客户需求 / tara=我方 TARA 需求）、source_id、text、category。
 
 【合并规则】
 1. 语义等价（同一保护对象 + 同一控制目标 + 同一可验证结果）→ 合并为一条，source_refs 同时列出 customer_id 与 csr_id。
@@ -262,29 +275,24 @@ tara_csrs: [{{csr_id, text, security_domain, control_category, title}}]
 3. 冲突（互相矛盾）→ 合并为一条但 conflict=true，conflict_note 说明冲突点，resolution 默认 customer_wins（客户合规优先）。
 4. 客户独有（我方无对应）→ 保留，source_refs 只含 customer_id。
 5. 我方独有（客户无对应）→ 保留，source_refs 只含 csr_id。
-6. 每一条最终需求必须给出：security_domain（必须严格取下列标准域之一）、control_category、requirement_title、requirement_text（中英双语，格式“中文 / English”）、verification_method、subject（责任主体）。
+6. 每一条最终需求必须给出：functional_category（必须严格取下列 17 个功能分类之一）、control_category、requirement_title、requirement_text（中英双语，格式“中文 / English”）、verification_method、subject（责任主体）。
 7. 覆盖率契约：输入中的每一个 customer_id 和 csr_id 都必须出现在至少一条最终需求的 source_refs 中；禁止遗漏、禁止编造输入中不存在的 ID。
 8. 责任主体明确（强制）：requirement_text 必须以负责实施的组件/系统/模块作主语，写清「谁（组件/系统/模块）对什么对象实施什么控制」；禁止用事件、现象、数据或抽象名词作句子主语；例如「完整性校验失败事件应记录至本地审计存储」必须写成「ADCU 审计模块应将完整性校验失败事件记录至本地审计存储」；subject 字段单列该责任主体。
 
-【标准安全域】
-{domains}
+【功能分类枚举（只能原样输出编号+名称，输出其它值视为不合格）】
+{functional_categories}
 
-【安全域分类规则·按控制机制而非资产类型】
-- 身份认证/访问控制/最小权限/会话管理/授权 → 系统安全（即使作用在调试口、USB、通信接口等硬件接口上）
-- 物理防拆/外壳/封装/调试口物理禁用(OTP/eFuse)/PCB保护/侧信道 → 硬件安全
-- 报文真实性/新鲜度/网络分区/通道安全 → 通信安全
-- 加密/密钥/证书/签名 → 密码安全
-- 应用/服务鉴权/输入校验 → 应用安全
-- 日志/监控/审计/告警/响应 → 安全监控与响应
-- 数据分类/脱敏/隐私 → 数据安全
-- 开发/供应链/产线/运维 → 安全开发、供应链与运维
-- 特别注意：调试接口的“身份认证/会话控制”属于系统安全；调试接口的“物理禁用/防拆”才属于硬件安全。
+【关键字锚定（命中这些词时优先归入对应分类）】
+{functional_keywords}
+
+【易混类别（必须分清）】
+{functional_confusion}
 
 【输出 JSON 格式】
 {{
   "merged_requirements": [
     {{
-      "security_domain": "硬件安全 / Hardware Security",
+      "functional_category": "4.1 硬件安全",
       "control_category": "控制分类",
       "requirement_title": "需求标题",
       "subject": "责任主体（组件/系统/模块）/ Responsible subject",
@@ -317,8 +325,11 @@ def merge_requirements_with_llm(
     if not settings or not settings.api_key or settings.api_key in ["mock_test_key", ""]:
         raise RuntimeError("未配置大模型 API Key，无法执行需求合并")
 
-    domains = "\n".join(f"     * {d}" for d in CANONICAL_DOMAINS)
-    prompt = MERGE_PROMPT.format(domains=domains)
+    prompt = MERGE_PROMPT.format(
+        functional_categories=FUNCTIONAL_PROMPT_LIST,
+        functional_keywords=FUNCTIONAL_KEYWORDS_PROMPT,
+        functional_confusion=FUNCTIONAL_CONFUSION_RULES,
+    )
 
     url = f"{settings.api_base_url.rstrip('/')}/chat/completions"
     headers = {
