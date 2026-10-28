@@ -22,6 +22,7 @@ from app.core.taxonomy import (
     MAJOR_ORDER,
     CANONICAL_DOMAINS,
     clean_major_category,
+    correct_security_domain,
 )
 
 
@@ -697,6 +698,8 @@ def synthesize_project_csrs(db: Session, all_csrs: list, global_tier2_to_tier1: 
             
         raw_dom = str(csr.get("security_domain") or "").strip()
         major_cat = clean_major_category(raw_dom)
+        # 按控制机制纠正（例如调试口身份认证应归系统安全，而不是硬件安全）
+        major_cat = correct_security_domain(major_cat, raw_text)
         if major_cat not in items_by_domain:
             major_cat = "通用安全与其它 / General & Other Security"
             

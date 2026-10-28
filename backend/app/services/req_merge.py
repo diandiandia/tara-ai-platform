@@ -21,6 +21,7 @@ from app.core.taxonomy import (
     MAJOR_ORDER,
     CANONICAL_DOMAINS,
     clean_major_category,
+    correct_security_domain,
 )
 from app.services.csr_synthesis import clean_and_parse_json, post_llm_request_with_retry, extract_subject
 
@@ -230,9 +231,11 @@ def enforce_merge_coverage(items: List[dict], merged: List[dict]) -> Tuple[List[
 
 def _assign_final_ids(merged: List[dict]) -> List[dict]:
     """按安全域排序并分配 FCSR-{DOMAIN}-{NNN} 编号。"""
-    # 规范化安全域
+    # 规范化安全域，并按控制机制纠正（调试口认证应归系统安全）
     for m in merged:
-        m["security_domain"] = clean_major_category(m.get("security_domain"))
+        dom = clean_major_category(m.get("security_domain"))
+        text = m.get("requirement_text") or m.get("requirement_title") or ""
+        m["security_domain"] = correct_security_domain(dom, text)
     merged.sort(key=lambda m: (
         MAJOR_ORDER.get(m["security_domain"], 99),
         str(m.get("control_category") or ""),
@@ -265,6 +268,17 @@ tara_csrs: [{{csr_id, text, security_domain, control_category, title}}]
 
 【标准安全域】
 {domains}
+
+【安全域分类规则·按控制机制而非资产类型】
+- 身份认证/访问控制/最小权限/会话管理/授权 → 系统安全（即使作用在调试口、USB、通信接口等硬件接口上）
+- 物理防拆/外壳/封装/调试口物理禁用(OTP/eFuse)/PCB保护/侧信道 → 硬件安全
+- 报文真实性/新鲜度/网络分区/通道安全 → 通信安全
+- 加密/密钥/证书/签名 → 密码安全
+- 应用/服务鉴权/输入校验 → 应用安全
+- 日志/监控/审计/告警/响应 → 安全监控与响应
+- 数据分类/脱敏/隐私 → 数据安全
+- 开发/供应链/产线/运维 → 安全开发、供应链与运维
+- 特别注意：调试接口的“身份认证/会话控制”属于系统安全；调试接口的“物理禁用/防拆”才属于硬件安全。
 
 【输出 JSON 格式】
 {{

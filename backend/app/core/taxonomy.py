@@ -62,3 +62,33 @@ def clean_major_category(domain_str: str) -> str:
     if "dev" in s or "ops" in s or "开发" in s or "运维" in s or "生产" in s or "supply" in s or "chain" in s or "供应链" in s:
         return "安全开发、供应链与运维 / Secure Development, Supply Chain & Operations"
     return "通用安全与其它 / General & Other Security"
+
+
+# 逻辑访问控制类关键词（认证/授权/最小权限/会话）——应归「系统安全」，而不是「硬件安全」
+_ACCESS_CONTROL_KEYWORDS = [
+    "身份认证", "认证", "授权", "访问控制", "最小权限", "会话", "权限",
+    "authentication", "authorization", "access control", "least privilege", "session",
+]
+
+# 物理/硬件类关键词——这些才应该留在「硬件安全」
+_PHYSICAL_KEYWORDS = [
+    "物理防拆", "外壳", "封装", "侧信道", "故障注入", "探针", "pcb",
+    "tamper", "side-channel", "side channel", "fault injection", "bga", "efuse", "otp",
+]
+
+
+def correct_security_domain(domain: str, text: str) -> str:
+    """按「控制机制」而非「资产类型」纠正安全域。
+
+    典型场景：调试接口的身份认证/会话准入/最小权限，虽然作用在硬件调试口上，
+    但控制手段是逻辑访问控制，应归「系统安全」，而不是「硬件安全」。
+    只在「当前被判为硬件安全、且正文是逻辑访问控制、且不涉及物理防护」时才纠正。
+    """
+    if domain != "硬件安全 / Hardware Security":
+        return domain
+    t = str(text or "").lower()
+    has_access = any(k in t for k in _ACCESS_CONTROL_KEYWORDS)
+    has_physical = any(k in t for k in _PHYSICAL_KEYWORDS)
+    if has_access and not has_physical:
+        return "系统安全 / System Security"
+    return domain

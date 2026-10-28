@@ -1706,6 +1706,7 @@ def tara_ai_analysis_call(db: Session, stage: str, asset: Asset, prev_stages: di
                     "   - 包含的字段包括：title, sub_title, security_domain, cybersecurity_requirement, verification_method, requirement_type, rationale；\n"
                     "   - 特别注意：在 summarized_requirements 的每一项中，其 title, sub_title, cybersecurity_requirement 字段内容都必须是中英文双语对照输出，格式为“中文描述 / English translation”。其中 sub_title 字段是具体的安全子分类（小类），由你根据需求内容动态精炼生成（例如：调试接口安全 / Debug Interface Security，物理防拆设计 / Physical Enclosure Tamper Protection，启动链安全 / Secure Boot Chain 等）；\n"
                     f"   - 必须精确对齐 security_domain 字段（大分类），其取值只能是以下标准分类域之一（中英文双语形式）：\n{DOMAIN_PROMPT_LIST}\n"
+                    "   - 【分类规则·按控制机制而非资产类型】身份认证/访问控制/最小权限/会话管理/授权 → 系统安全（即使作用在调试口、USB、通信接口等硬件接口上）；物理防拆/外壳/封装/调试口物理禁用(OTP/eFuse)/PCB保护/侧信道 → 硬件安全；报文真实性/新鲜度/网络分区/通道安全 → 通信安全；加密/密钥/证书/签名 → 密码安全；应用/服务鉴权/输入校验 → 应用安全；日志/监控/审计/告警/响应 → 安全监控与响应；数据分类/脱敏/隐私 → 数据安全；开发/供应链/产线/运维 → 安全开发、供应链与运维。特别注意：调试接口的“身份认证/会话控制”属于系统安全；调试接口的“物理禁用/防拆”才属于硬件安全。\n"
                     "   - 必须在每一项的 source_requirement_ids 数组字段中，列出该项归纳合并后涵盖的原始网络安全要求编号（例如 ['CSR-001', 'CSR-002']），建立精确且可被追溯的映射关系；禁止遗漏、禁止编造输入中不存在的 ID；遗漏或编造将由后端覆盖校验拒绝。\n"
                     f"{req_guideline}"
                 )
@@ -2012,6 +2013,7 @@ def tara_ai_analysis_call(db: Session, stage: str, asset: Asset, prev_stages: di
                     "   - 包含的字段包括：title, sub_title, security_domain, cybersecurity_requirement, verification_method, requirement_type, rationale；\n"
                     "   - 特别注意：在 summarized_requirements 的每一项中，其 title, sub_title, cybersecurity_requirement 字段内容都必须是中英文双语对照输出，格式为“中文描述 / English translation”。其中 sub_title 字段是具体的安全子分类（小类），由你根据需求内容动态精炼生成（例如：调试接口安全 / Debug Interface Security，物理防拆设计 / Physical Enclosure Tamper Protection，启动链安全 / Secure Boot Chain 等）；\n"
                     f"   - 必须精确对齐 security_domain 字段（大分类），其取值只能是以下标准分类域之一（中英文双语形式）：\n{DOMAIN_PROMPT_LIST}\n"
+                    "   - 【分类规则·按控制机制而非资产类型】身份认证/访问控制/最小权限/会话管理/授权 → 系统安全（即使作用在调试口、USB、通信接口等硬件接口上）；物理防拆/外壳/封装/调试口物理禁用(OTP/eFuse)/PCB保护/侧信道 → 硬件安全；报文真实性/新鲜度/网络分区/通道安全 → 通信安全；加密/密钥/证书/签名 → 密码安全；应用/服务鉴权/输入校验 → 应用安全；日志/监控/审计/告警/响应 → 安全监控与响应；数据分类/脱敏/隐私 → 数据安全；开发/供应链/产线/运维 → 安全开发、供应链与运维。特别注意：调试接口的“身份认证/会话控制”属于系统安全；调试接口的“物理禁用/防拆”才属于硬件安全。\n"
                     "   - 必须在每一项的 source_requirement_ids 数组字段中，列出该项归纳合并后涵盖的原始网络安全要求编号（例如 ['CSR-001', 'CSR-002']），建立精确且可被追溯的映射关系；禁止遗漏、禁止编造输入中不存在的 ID；遗漏或编造将由后端覆盖校验拒绝。\n"
                     f"{req_guideline}"
                 )
