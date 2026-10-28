@@ -10,6 +10,7 @@ import {
 } from 'lucide-react';
 import {
   importCustomerRequirements,
+  previewCustomerRequirements,
   synthesizeMergedRequirements,
   exportMergedRequirements,
   fetchCustomerRequirements,
@@ -88,6 +89,9 @@ export default function Workbench({ setPage, setDomainId, setDiagramId, projectI
   const [mergeMsg, setMergeMsg] = useState(null); // { type: 'success' | 'error', text: string }
   const [customerReqCount, setCustomerReqCount] = useState(0);
   const [mergedCount, setMergedCount] = useState(0);
+  const [oemPreviewFile, setOemPreviewFile] = useState(null);
+  const [oemPreview, setOemPreview] = useState(null); // { sheets, sheet, headers, preview, row_count }
+  const [oemMapping, setOemMapping] = useState({ id_column: null, text_column: null, section_column: null, category_column: null });
   const oemFileRef = useRef(null);
 
   const progressIntervalRef = useRef(null);
@@ -122,16 +126,67 @@ export default function Workbench({ setPage, setDomainId, setDiagramId, projectI
     }
   }, []);
 
+  const guessColumn = (headers, keywords) => {
+    const idx = headers.findIndex((h) =>
+      keywords.some((k) => String(h).toLowerCase().includes(String(k).toLowerCase()))
+    );
+    return idx >= 0 ? idx + 1 : null;
+  };
+
   const handleOemFileChange = async (e) => {
     const file = e.target.files?.[0];
     e.target.value = '';
     if (!file) return;
+    setMergeMsg(null);
+    setOemPreviewFile(file);
+    try {
+      const data = await previewCustomerRequirements(projectId, file);
+      setOemPreview(data);
+      setOemMapping({
+        id_column: guessColumn(data.headers, ['编号', 'ID', 'requirement id']),
+        text_column: guessColumn(data.headers, ['描述', '要求', 'requirement', 'description']),
+        section_column: guessColumn(data.headers, ['章节', 'section']),
+        category_column: guessColumn(data.headers, ['分类', '领域', 'category']),
+      });
+    } catch (err) {
+      setOemPreviewFile(null);
+      setMergeMsg({ type: 'error', text: err?.response?.data?.detail || t("客户需求预览失败") });
+    }
+  };
+
+  const handleOemSheetChange = async (sheetName) => {
+    if (!oemPreviewFile) return;
+    try {
+      const data = await previewCustomerRequirements(projectId, oemPreviewFile, sheetName);
+      setOemPreview(data);
+      setOemMapping({
+        id_column: guessColumn(data.headers, ['编号', 'ID', 'requirement id']),
+        text_column: guessColumn(data.headers, ['描述', '要求', 'requirement', 'description']),
+        section_column: guessColumn(data.headers, ['章节', 'section']),
+        category_column: guessColumn(data.headers, ['分类', '领域', 'category']),
+      });
+    } catch (err) {
+      setMergeMsg({ type: 'error', text: err?.response?.data?.detail || t("客户需求预览失败") });
+    }
+  };
+
+  const handleConfirmOemImport = async () => {
+    if (!oemPreviewFile) return;
+    if (!oemMapping.id_column || !oemMapping.text_column) {
+      setMergeMsg({ type: 'error', text: t("请指定「需求编号列」和「需求描述列」") });
+      return;
+    }
     setOemImporting(true);
     setMergeMsg(null);
     try {
-      const res = await importCustomerRequirements(projectId, file);
+      const res = await importCustomerRequirements(projectId, oemPreviewFile, {
+        sheet_name: oemPreview?.sheet,
+        ...oemMapping,
+      });
       await refreshCustomerReqCount();
       setMergeMsg({ type: 'success', text: `${t("已导入")} ${res.imported} ${t("条客户需求")}` });
+      setOemPreview(null);
+      setOemPreviewFile(null);
     } catch (err) {
       setMergeMsg({ type: 'error', text: err?.response?.data?.detail || t("客户需求导入失败") });
     } finally {
@@ -1113,6 +1168,90 @@ export default function Workbench({ setPage, setDomainId, setDiagramId, projectI
           </div>
         )}
       </div>
+
+      {/* OEM 需求列映射 Modal */}
+      {oemPreview && (
+        <div className="modal-overlay" onClick={() => { setOemPreview(null); setOemPreviewFile(null); }}>
+          <div className="modal-content glass" style={{ maxWidth: '920px', width: '90%' }} onClick={(e) => e.stopPropagation()}>
+            <h3 style={{ fontSize: '18px', fontWeight: '600', marginBottom: '12px', color: 'var(--text-primary)' }}>
+              {t("导入 OEM 需求：指定列映射")}
+            </h3>
+            <p style={{ fontSize: '13px', color: 'var(--text-secondary)', marginBottom: '16px' }}>
+              {t("请选择 sheet 并指定「需求编号列」和「需求描述列」，不要求 Excel 固定表头格式。")}
+            </p>
+
+            <div style={{ display: 'flex', gap: '16px', marginBottom: '16px', flexWrap: 'wrap' }}>
+              <label style={{ fontSize: '13px', display: 'flex', flexDirection: 'column', gap: '6px', minWidth: '200px' }}>
+                {t("Sheet")}
+                <select
+                  className="input-field"
+                  value={oemPreview.sheet}
+                  onChange={(e) => handleOemSheetChange(e.target.value)}
+                >
+                  {oemPreview.sheets.map((s) => <option key={s} value={s}>{s}</option>)}
+                </select>
+              </label>
+              <label style={{ fontSize: '13px', display: 'flex', flexDirection: 'column', gap: '6px', minWidth: '200px' }}>
+                {t("需求编号列")}
+                <select
+                  className="input-field"
+                  value={oemMapping.id_column || ''}
+                  onChange={(e) => setOemMapping({ ...oemMapping, id_column: Number(e.target.value) || null })}
+                >
+                  <option value="">{t("请选择")}</option>
+                  {oemPreview.headers.map((h, i) => <option key={i} value={i + 1}>{i + 1}. {h || `列${i + 1}`}</option>)}
+                </select>
+              </label>
+              <label style={{ fontSize: '13px', display: 'flex', flexDirection: 'column', gap: '6px', minWidth: '200px' }}>
+                {t("需求描述列")}
+                <select
+                  className="input-field"
+                  value={oemMapping.text_column || ''}
+                  onChange={(e) => setOemMapping({ ...oemMapping, text_column: Number(e.target.value) || null })}
+                >
+                  <option value="">{t("请选择")}</option>
+                  {oemPreview.headers.map((h, i) => <option key={i} value={i + 1}>{i + 1}. {h || `列${i + 1}`}</option>)}
+                </select>
+              </label>
+            </div>
+
+            <div style={{ maxHeight: '300px', overflow: 'auto', border: '1px solid var(--border-color)', borderRadius: '6px' }}>
+              <table className="custom-table" style={{ fontSize: '12px' }}>
+                <thead>
+                  <tr>
+                    {oemPreview.headers.map((h, i) => <th key={i}>{i + 1}. {h || ''}</th>)}
+                  </tr>
+                </thead>
+                <tbody>
+                  {oemPreview.preview.map((row, ri) => (
+                    <tr key={ri}>
+                      {row.map((cellText, ci) => (
+                        <td key={ci} style={{ maxWidth: '220px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{cellText}</td>
+                      ))}
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+
+            <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '12px', marginTop: '20px' }}>
+              <button
+                className="btn btn-secondary"
+                onClick={() => { setOemPreview(null); setOemPreviewFile(null); }}
+              >
+                {t("取消")}
+              </button>
+              <button
+                className="btn btn-primary"
+                onClick={handleConfirmOemImport}
+                disabled={oemImporting || !oemMapping.id_column || !oemMapping.text_column}
+              >
+                {oemImporting ? t("导入中...") : `${t("确认导入")}（${oemPreview.row_count} ${t("行")}）`}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* Create Domain Modal (BR-4.2.2) */}
       {showDomainModal && (

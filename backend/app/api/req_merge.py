@@ -1,4 +1,4 @@
-from fastapi import APIRouter, Depends, HTTPException, UploadFile, File, Query
+from fastapi import APIRouter, Depends, HTTPException, UploadFile, File, Query, Form
 from sqlalchemy.orm import Session
 from typing import List, Optional
 import os
@@ -15,6 +15,7 @@ from app.models.tara_step import TaraStep
 from app.models.req_merge import CustomerRequirement, MergedRequirement, MergedRequirementSource
 from app.services.req_merge import (
     parse_customer_requirements_excel,
+    preview_customer_excel,
     parse_tara_csr_excel,
     merge_requirements_with_llm,
     persist_merged_requirements,
@@ -70,20 +71,49 @@ def _collect_tara_csrs_from_domain(db: Session, domain: Domain) -> List[dict]:
 # 客户（OEM）需求：项目级（整车需求，一份，供各域控复用）
 # ---------------------------------------------------------------------------
 
+@router.post("/projects/{project_id}/customer-requirements/preview")
+def preview_customer_requirements(
+    project_id: int,
+    file: UploadFile = File(...),
+    sheet_name: str = Form(None),
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """预览上传的 OEM Excel（sheet 列表 / 表头 / 前几行），供前端做列映射。"""
+    check_project_active(project_id, db)
+    path = _save_upload(file)
+    try:
+        data = preview_customer_excel(path, sheet_name=sheet_name)
+    finally:
+        os.unlink(path)
+    return data
+
+
 @router.post("/projects/{project_id}/customer-requirements/import")
 def import_customer_requirements(
     project_id: int,
     file: UploadFile = File(...),
-    sheet_name: str = Query("OEM CSR"),
-    replace: bool = Query(True),
+    sheet_name: str = Form("OEM CSR"),
+    replace: bool = Form(True),
+    id_column: int = Form(None),
+    text_column: int = Form(None),
+    section_column: int = Form(None),
+    category_column: int = Form(None),
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
-    """导入客户（OEM）整车信息安全需求（Excel / CSV 中的 OEM CSR sheet）。"""
+    """导入客户（OEM）整车信息安全需求；支持显式指定列映射，不依赖 Excel 固定格式。"""
     check_project_active(project_id, db)
     path = _save_upload(file)
     try:
-        parsed = parse_customer_requirements_excel(path, sheet_name=sheet_name)
+        parsed = parse_customer_requirements_excel(
+            path,
+            sheet_name=sheet_name,
+            id_col=id_column,
+            text_col=text_column,
+            section_col=section_column,
+            category_col=category_column,
+        )
     finally:
         os.unlink(path)
 

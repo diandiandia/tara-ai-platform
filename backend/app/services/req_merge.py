@@ -28,10 +28,20 @@ from app.services.csr_synthesis import clean_and_parse_json, post_llm_request_wi
 # Excel 解析
 # ---------------------------------------------------------------------------
 
-def parse_customer_requirements_excel(file_path: str, sheet_name: str = "OEM CSR") -> List[dict]:
+def parse_customer_requirements_excel(
+    file_path: str,
+    sheet_name: str = "OEM CSR",
+    id_col: int = None,
+    text_col: int = None,
+    section_col: int = None,
+    category_col: int = None,
+) -> List[dict]:
     """解析 OEM CSR sheet。
 
     表头：序号 | 所属章节 | 需求分类 | 需求编号 | 整车网络安全需求描述 | Mapped Final CSR IDs
+
+    列映射：优先使用前端显式指定的 1-based 列号（id_col/text_col/section_col/category_col）；
+    未指定时按表头关键字自动匹配，兼容不同 Excel 格式。
     """
     wb = openpyxl.load_workbook(file_path, data_only=True)
     if sheet_name not in wb.sheetnames:
@@ -45,10 +55,13 @@ def parse_customer_requirements_excel(file_path: str, sheet_name: str = "OEM CSR
 
     ws = wb[sheet_name]
     headers = [str(c.value or "").strip() for c in ws[1]]
-    idx = _header_index(headers, ["需求编号", "Requirement ID", "外部编号"])
-    text_idx = _header_index(headers, ["整车网络安全需求描述", "网络安全与测试需求描述", "需求描述", "Requirement"])
-    section_idx = _header_index(headers, ["所属章节", "章节", "Section"])
-    category_idx = _header_index(headers, ["分类领域", "需求分类", "分类", "Category"])
+    idx = id_col or _header_index(headers, ["需求编号", "Requirement ID", "外部编号"])
+    text_idx = text_col or _header_index(headers, ["整车网络安全需求描述", "网络安全与测试需求描述", "需求描述", "Requirement"])
+    section_idx = section_col or _header_index(headers, ["所属章节", "章节", "Section"])
+    category_idx = category_col or _header_index(headers, ["分类领域", "需求分类", "分类", "Category"])
+
+    if not idx or not text_idx:
+        raise ValueError("无法确定「需求编号列」或「需求描述列」，请在前端指定列映射")
 
     rows = []
     for r in range(2, ws.max_row + 1):
@@ -63,6 +76,29 @@ def parse_customer_requirements_excel(file_path: str, sheet_name: str = "OEM CSR
             "text": text,
         })
     return rows
+
+
+def preview_customer_excel(file_path: str, sheet_name: str = None) -> dict:
+    """读取 Excel 的 sheet 列表、当前 sheet 表头与前 8 行样例，供前端做列映射。"""
+    wb = openpyxl.load_workbook(file_path, data_only=True)
+    sheets = wb.sheetnames
+    if not sheet_name or sheet_name not in sheets:
+        sheet_name = sheets[0]
+    ws = wb[sheet_name]
+    headers = [str(c.value or "").strip() for c in ws[1]]
+    preview = []
+    for r in range(2, min(ws.max_row, 9) + 1):
+        preview.append([
+            str(ws.cell(r, c).value or "").strip() if ws.cell(r, c).value is not None else ""
+            for c in range(1, len(headers) + 1)
+        ])
+    return {
+        "sheets": sheets,
+        "sheet": sheet_name,
+        "headers": headers,
+        "preview": preview,
+        "row_count": max(ws.max_row - 1, 0),
+    }
 
 
 def parse_tara_csr_excel(file_path: str, sheet_name: str = "TARA CSR") -> List[dict]:

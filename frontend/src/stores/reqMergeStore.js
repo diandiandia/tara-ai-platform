@@ -8,10 +8,28 @@ const getHeaders = () => {
   return token ? { Authorization: `Bearer ${token}` } : {};
 };
 
-/** 上传客户（OEM）需求 Excel / CSV */
-export async function importCustomerRequirements(projectId, file) {
+/** 预览客户（OEM）需求 Excel：返回 sheet 列表、表头、前几行样例 */
+export async function previewCustomerRequirements(projectId, file, sheetName) {
   const form = new FormData();
   form.append('file', file);
+  if (sheetName) form.append('sheet_name', sheetName);
+  const res = await axios.post(
+    `${API_BASE}/projects/${projectId}/customer-requirements/preview`,
+    form,
+    { headers: getHeaders() }
+  );
+  return res.data;
+}
+
+/** 导入客户（OEM）需求；mapping 可显式指定列号，不依赖 Excel 固定格式 */
+export async function importCustomerRequirements(projectId, file, mapping = {}) {
+  const form = new FormData();
+  form.append('file', file);
+  if (mapping.sheet_name) form.append('sheet_name', mapping.sheet_name);
+  if (mapping.id_column) form.append('id_column', mapping.id_column);
+  if (mapping.text_column) form.append('text_column', mapping.text_column);
+  if (mapping.section_column) form.append('section_column', mapping.section_column);
+  if (mapping.category_column) form.append('category_column', mapping.category_column);
   const res = await axios.post(
     `${API_BASE}/projects/${projectId}/customer-requirements/import`,
     form,
