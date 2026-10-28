@@ -119,6 +119,8 @@ def collect_report_data(steps: List[TaraStep], assets: List[Asset], desensitize:
             
             matching_ds = [ds for ds in damage_scenarios if ds.get("attribute") == attr]
             if not matching_ds:
+                if damage_scenarios:
+                    continue
                 matching_ds = [{
                     "attribute": attr,
                     "damage_scenario_sn": "DS_N/A",
@@ -141,7 +143,9 @@ def collect_report_data(steps: List[TaraStep], assets: List[Asset], desensitize:
                             "final_feasibility": stage3_out.get("final_feasibility", "Medium")
                         }]
                 
-                matching_ts = [ts for ts in threat_scenarios if ts.get("attribute") == attr and ts.get("damage_scenario_sn") == ds.get("damage_scenario_sn")]
+                matching_ts = [ts for ts in threat_scenarios if ts.get("damage_scenario_sn") == ds.get("damage_scenario_sn")]
+                if not matching_ts:
+                    matching_ts = [ts for ts in threat_scenarios if ts.get("attribute") == attr]
                 if not matching_ts:
                     matching_ts = [{
                         "attribute": attr,
@@ -479,7 +483,7 @@ def collect_report_data(steps: List[TaraStep], assets: List[Asset], desensitize:
                     continue
                 line_global_ids = set()
                 # 1. 优先通过原始需求哈希 ID 映射
-                raw_tid = req_map.get(cleaned)
+                raw_tid = req_map.get(cleaned) or req_map.get(line) or req_map.get(req_val)
                 if raw_tid and hash_to_global_map and raw_tid in hash_to_global_map:
                     val = hash_to_global_map[raw_tid]
                     if isinstance(val, (set, list)):
@@ -559,7 +563,7 @@ def _apply_security_domain_correction(rows: list) -> list:
     return rows
 
 
-def collect_csr_report_data(steps, assets, hash_to_global_map: dict = None, db: Session = None, domain: Domain = None):
+def collect_csr_report_data(steps, assets, hash_to_global_map: dict = None, db: Session = None, domain: Domain = None, force_recompute: bool = False):
     """
     收集并进行全局去重、合并与两级安全分类整理项目级网络安全需求（CSR）数据。
     基于 UNECE R155 Annex 5 规范指引与大模型全局综合提炼，支持自动持久化与语义兜底。
@@ -568,12 +572,12 @@ def collect_csr_report_data(steps, assets, hash_to_global_map: dict = None, db: 
         from app.core.database import SessionLocal
         local_db = SessionLocal()
         try:
-            rows = get_or_synthesize_global_csrs(local_db, domain, steps, assets, hash_to_global_map)
+            rows = get_or_synthesize_global_csrs(local_db, domain, steps, assets, hash_to_global_map, force_recompute=force_recompute)
         finally:
             local_db.close()
         return _apply_security_domain_correction(rows)
     else:
-        rows = get_or_synthesize_global_csrs(db, domain, steps, assets, hash_to_global_map)
+        rows = get_or_synthesize_global_csrs(db, domain, steps, assets, hash_to_global_map, force_recompute=force_recompute)
         return _apply_security_domain_correction(rows)
 
 
@@ -714,7 +718,7 @@ def collect_merged_requirement_rows(db: Session, domain_id: int) -> List[dict]:
     return result
 
 
-def create_excel_report(domain: Domain, steps: List[TaraStep], assets: List[Asset], desensitize: bool, export_type: str = "all", db: Session = None) -> str:
+def create_excel_report(domain: Domain, steps: List[TaraStep], assets: List[Asset], desensitize: bool, export_type: str = "all", db: Session = None, force_recompute: bool = False) -> str:
     """
     生成高度美观的 ISO 21434 TARA XLSX 格式报表，支持脱敏过滤，并支持导出安全需求 (CSR_Requirements) 的混合模型 sheet 页
     """
@@ -740,7 +744,7 @@ def create_excel_report(domain: Domain, steps: List[TaraStep], assets: List[Asse
     
     # 提前收集合并后安全需求的映射字典
     hash_to_global_map = {}
-    csr_rows_pre = collect_csr_report_data(steps, assets, hash_to_global_map, db=db, domain=domain)
+    csr_rows_pre = collect_csr_report_data(steps, assets, hash_to_global_map, db=db, domain=domain, force_recompute=force_recompute)
     
     # 导出 TARA Sheet
     if has_tara:
@@ -1235,6 +1239,7 @@ def export_report(
     format: str = "xlsx", # xlsx 或 csv
     desensitize: bool = False, # 是否脱敏导出 (BR-57, BR-77)
     export_type: str = "all", # all (导出全部Sheets，仅对xlsx有效), tara (只导出威胁分析), csr (只导出安全需求汇总)
+    force_recompute: bool = False, # 是否强制重新计算全局 CSR 需求
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user)
 ):
@@ -1266,7 +1271,7 @@ def export_report(
         raise HTTPException(status_code=400, detail="不支持的导出类型，可选值: all, tara, csr, merged。")
     
     if format.lower() == "xlsx":
-        file_path = create_excel_report(domain, steps, assets, desensitize, export_type_lower, db=db)
+        file_path = create_excel_report(domain, steps, assets, desensitize, export_type_lower, db=db, force_recompute=force_recompute)
         media_type = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
         filename = f"TARA_Report_{domain.name}_{export_type_lower}_{'desensitized' if desensitize else 'full'}.xlsx"
     elif format.lower() == "csv":

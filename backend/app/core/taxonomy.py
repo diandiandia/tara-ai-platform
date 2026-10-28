@@ -226,78 +226,96 @@ FUNCTIONAL_CONFUSION_RULES = """- 调试认证/会话/命令/审计/完整性 �
 - 加密/签名/哈希/密钥/证书 → 4.12；数据脱敏/隐私/个人信息 → 4.9
 - 雷达/摄像头/点云/图像 → 4.13；防火墙/入侵检测 → 4.14"""
 
-# 强物理关键词：命中则强制归 4.1 硬件安全（LLM 不得覆盖）
+# 强物理关键词：命中则强制归 4.1 硬件安全（移除容易误伤的泛化词“篡改”、“物理”）
 _STRONG_PHYSICAL = [
-    "物理", "丝印", "pcb", "封装", "防拆", "探针", "篡改", "hsm", "efuse",
-    "smpu", "bga", "lga", "外壳", "侧信道", "存储绑定",
-    "otp", "永久禁用", "不可逆禁用", "量产禁用",
+    "物理防拆", "外壳防拆", "开盖检测", "丝印", "pcb", "探针", "测试点", "芯片封装",
+    "侧信道", "故障注入", "efuse", "smpu", "bga", "lga", "不可逆禁用", "量产禁用", "量产熔断",
 ]
 
 
 def classify_functional_category(text: str) -> str:
-    """Deterministic keyword classifier for the 17 functional categories.
-
-    Used as a sanity check / fallback for the LLM classification; the LLM sees
-    the full text and remains the primary classifier.
     """
+    忠实评估需求文本属于 17 类功能分类中的哪一类。
+    基于上下文核心机制与加权关键词评分，避免单一词汇强行关联（例如避免因“防篡改”强行关联到硬件安全）。
+    """
+    from collections import Counter
     t = str(text or "").lower()
 
-    def has(*kws):
-        return any(k in t for k in kws)
-
-    # 1) 物理/硬件层（最强，优先）
-    if has(*_STRONG_PHYSICAL):
+    # 1. 强物理硬件特征（仅限物理防拆、走线隐藏、探针、不可逆禁用等真正硬件机制）
+    if any(k in t for k in _STRONG_PHYSICAL):
         return "4.1 硬件安全"
-    # 2) 安全调试（调试主题优先，避免被"认证/日志"抢走）
-    if has("调试", "debug", "jtag", "swd"):
-        return "4.4 安全调试"
-    # 3) OTA（在本地刷写之前，因为 OTA 常同时提到"刷写"）
-    if has("ota", "fota", "远程升级", "远程刷写"):
-        return "4.6 OTA 刷写安全"
-    # 4) 本地刷写
-    if has("刷写", "刷新", "uds", "产线刷写", "诊断刷写", "flashing"):
-        return "4.5 本地刷写安全"
-    # 5) 安全启动
-    if has("安全启动", "启动", "回滚", "rollback", "secure boot"):
-        return "4.7 安全启动"
-    # 6) 数据脱敏 / 隐私（放在"存储"之前：脱敏存储应归隐私，不是存储）
-    if has("脱敏", "去标识", "匿名", "隐私", "数据分类", "保留期限", "跨境", "privacy"):
+
+    # 2. 数据脱敏与隐私保护（优先识别个人数据、用户同意、去标识化，避免被调试或存储误占）
+    if any(k in t for k in ["脱敏", "去标识", "匿名", "假名", "个人信息", "个人数据", "用户同意", "用户告知", "隐私"]):
         return "4.9 数据脱敏与隐私安全"
-    # 7) 安全存储
-    if has("存储", "storage"):
-        return "4.8 安全存储"
-    # 8) 安全诊断
-    if has("诊断", "27服务", "27 服务", "diagnostic"):
-        return "4.10 安全诊断"
-    # 9) 安全日志
-    if has("日志", "审计", "log", "audit"):
+
+    # 3. 安全日志与审计（核心特征：安全事件日志、防篡改仅追加记录、时间源绑定，避免被硬件篡改或调试强行抢走）
+    if any(k in t for k in ["安全日志", "审计记录", "仅追加", "日志防篡改", "日志存储", "日志条目", "审计数据", "日志记录", "安全事件记录", "审计日志"]):
         return "4.11 安全日志"
-    # 10) 密码 / 密钥 / 证书
-    if has("加密", "签名", "验签", "密码算法", "哈希", "crypto", "encrypt"):
-        return "4.12 密码、密钥与证书安全"
-    if has("密钥", "key management"):
-        return "4.12 密码、密钥与证书安全"
-    if has("证书", "certificate"):
-        return "4.12 密码、密钥与证书安全"
-    # 11) 传感器
-    if has("雷达", "摄像头", "点云", "图像", "感知", "传感器", "radar", "camera"):
-        return "4.13 传感器安全"
-    # 12) 防火墙
-    if has("防火墙", "入侵", "idps", "网络隔离", "firewall", "intrusion"):
-        return "4.14 防火墙安全"
-    # 13) 车内通信
-    if has("车内通信", "总线", "报文", "以太网", "ethernet"):
+
+    # 4. 安全调试（限定为 JTAG/SWD/UART/调试会话/外部调试等专用调试机制）
+    if any(k in t for k in ["调试会话", "调试接口", "调试命令", "调试认证", "调试授权", "jtag", "swd", "uart调试", "外部调试"]):
+        return "4.4 安全调试"
+
+    # 5. OTA 刷写安全
+    if any(k in t for k in ["ota", "fota", "sota", "远程升级", "云端下发", "升级包", "下载地址"]):
+        return "4.6 OTA 刷写安全"
+
+    # 6. 本地刷写安全
+    if any(k in t for k in ["本地刷写", "产线刷写", "诊断刷写", "刷写包", "0x34", "0x36", "fbl", "烧录"]):
+        return "4.5 本地刷写安全"
+
+    # 7. 安全启动（基于信任根的度量启动、启动组件验签、引导程序防回滚）
+    if any(k in t for k in ["安全启动", "secure boot", "度量启动", "启动链", "bootrom", "bootloader", "只读信任根", "引导程序", "防回滚"]):
+        return "4.7 安全启动"
+
+    # 8. 安全诊断（UDS 0x27 安全访问服务、种子密钥、诊断特权会话）
+    if any(k in t for k in ["27服务", "27 服务", "security access", "种子密钥", "诊断会话", "诊断权限", "安全诊断"]):
+        return "4.10 安全诊断"
+
+    # 9. 车内通信安全（CAN/CAN-FD/LIN/车载以太网总线、SecOC、报文新鲜度、报文过滤）
+    if any(k in t for k in ["can", "can fd", "can/canfd", "lin", "flexray", "总线报文", "车载总线", "车载以太网", "secoc", "新鲜度", "报文防重放", "报文过滤", "入站报文"]):
         return "4.15 车内通信安全"
-    # 14) 远程通讯
-    if has("远程", "外网", "云端", "remote", "telematics"):
+
+    # 10. 传感器安全（传感器欺骗检测、雷达点云真实性、摄像头原始流、传感器物理线束防护）
+    if any(k in t for k in ["传感器欺骗", "点云", "视频流", "图像感知", "雷达感知", "传感器原始", "传感器线束", "串行链路"]):
+        return "4.13 传感器安全"
+
+    # 11. 防火墙安全（防火墙过滤、域隔离、入侵检测与防御 IDPS）
+    if any(k in t for k in ["防火墙", "idps", "入侵检测", "入侵防御", "网络隔离", "域隔离", "异常流量"]):
+        return "4.14 防火墙安全"
+
+    # 12. 密码、密钥与证书安全（密码算法、数字证书、密钥全生命周期）
+    if any(k in t for k in ["密钥", "证书", "密码算法", "对称加密", "非对称加密", "sm2", "sm3", "sm4", "aes", "rsa", "ecc"]):
+        return "4.12 密码、密钥与证书安全"
+
+    # 13. 安全存储（TEE隔离存储、敏感数据加密存储、安全文件系统）
+    if any(k in t for k in ["安全存储", "加密存储", "敏感数据存储", "隔离存储", "tee存储"]):
+        return "4.8 安全存储"
+
+    # 14. 远程通讯安全（车联网、T-Box、车云TLS通道、蜂窝网络）
+    if any(k in t for k in ["车联网", "t-box", "蜂窝", "4g", "5g", "车云通信", "v2x"]):
         return "4.16 远程通讯安全"
-    # 15) 安全开发与供应链
-    if has("代码扫描", "漏洞", "sast", "sca", "sbom", "供应链", "渗透测试", "安全编码"):
+
+    # 15. 安全开发与供应链安全（代码扫描、SBOM、漏洞管理、渗透测试）
+    if any(k in t for k in ["代码扫描", "sast", "dast", "sca", "sbom", "第三方组件", "供应链", "渗透测试", "安全编码"]):
         return "4.17 安全开发与供应链安全"
-    # 16) 访问控制
-    if has("认证", "授权", "最小权限", "访问控制", "会话", "权限"):
+
+    # 16. 访问控制（身份鉴别、基于角色的权限访问控制 RBAC）
+    if any(k in t for k in ["访问控制", "身份认证", "身份鉴别", "最小权限", "鉴权", "rbac", "会话管理"]):
         return "4.3 访问控制"
-    # 17) 兜底
+
+    # 17. 加权关键词计分兜底（忠实评估，不强行联系）
+    scores = Counter()
+    for cat, kws in FUNCTIONAL_KEYWORDS.items():
+        for kw in kws:
+            if kw in t:
+                scores[cat] += 2 if len(kw) >= 3 else 1
+
+    if scores:
+        return scores.most_common(1)[0][0]
+
+    # 最终自然兜底：系统加固
     return "4.2 系统加固"
 
 
@@ -332,19 +350,12 @@ def normalize_functional_category(value: str) -> str:
 
 
 def correct_functional_category(llm_category: str, text: str):
-    """Validate the LLM category against the deterministic rule classifier.
-
-    Returns ``(category, source, needs_review)`` where ``source`` is one of
-    ``llm`` / ``rule_fallback`` / ``rule_override``.
+    """规范化大模型分类结果。
+    
+    优先且完全信任大模型返回的分类；仅在未配置 LLM 或 LLM 返回空时走离线规则兜底。
     """
     llm_cat = normalize_functional_category(llm_category)
-    rule_cat = classify_functional_category(text)
-    if not llm_cat:
-        return rule_cat, "rule_fallback", True
-    if llm_cat == rule_cat:
+    if llm_cat:
         return llm_cat, "llm", False
-    t = str(text or "").lower()
-    # 强物理关键词 + 规则判为硬件 → 强制覆盖
-    if rule_cat == "4.1 硬件安全" and any(k in t for k in _STRONG_PHYSICAL):
-        return "4.1 硬件安全", "rule_override", False
-    return llm_cat, "llm", True
+    rule_cat = classify_functional_category(text)
+    return rule_cat, "rule_fallback", True
