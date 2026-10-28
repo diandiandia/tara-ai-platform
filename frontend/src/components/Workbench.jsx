@@ -1139,7 +1139,8 @@ export default function Workbench({ setPage, setDomainId, setDiagramId, projectI
                 )}
               </div>
 
-              {/* 最终需求合并：上传 OEM 需求 → 合并客户需求与 TARA 需求 */}
+              {/* 最终需求合并：仅当 TARA 分析结果就绪时显示（没有 TARA 结果就不显示 OEM 合并功能） */}
+              {resultsReady && (
               <div style={{ marginTop: '14px', paddingTop: '14px', borderTop: '1px solid var(--border-color)', flexShrink: 0 }}>
                 <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '16px', flexWrap: 'wrap' }}>
                   <div style={{ fontSize: '12px', color: 'var(--text-secondary)' }}>
@@ -1194,6 +1195,7 @@ export default function Workbench({ setPage, setDomainId, setDiagramId, projectI
                   </div>
                 )}
               </div>
+              )}
             </div>
           </div>
         )}
