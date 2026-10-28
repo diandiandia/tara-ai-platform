@@ -250,8 +250,8 @@ MERGE_PROMPT = """你是一名资深汽车网络安全需求管理专家（精�
 请把「客户（OEM）整车信息安全需求」与「我方 TARA 分析产出的原子安全需求」进行语义合并，产出统一的最终信息安全需求（FCSR）。
 
 【输入】
-customer_requirements: [{customer_id, text, category}]
-tara_csrs: [{csr_id, text, security_domain, control_category, title}]
+customer_requirements: [{{customer_id, text, category}}]
+tara_csrs: [{{csr_id, text, security_domain, control_category, title}}]
 
 【合并规则】
 1. 语义等价（同一保护对象 + 同一控制目标 + 同一可验证结果）→ 合并为一条，source_refs 同时列出 customer_id 与 csr_id。
