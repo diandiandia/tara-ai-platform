@@ -39,7 +39,9 @@ export default function Workbench({ setPage, setDomainId, setDiagramId, projectI
 
   const { 
     assets, 
+    taraResults,
     fetchAssets, 
+    fetchTaraResults,
     confirmAsset, 
     extractAssets, 
     clearAssets,
@@ -47,6 +49,7 @@ export default function Workbench({ setPage, setDomainId, setDiagramId, projectI
     startTaraAnalysis,
     cancelTaraAnalysis,
     fetchTaraProgress,
+    exportReport,
     createManualAsset,
     deleteAsset,
     error: taraError,
@@ -91,6 +94,20 @@ export default function Workbench({ setPage, setDomainId, setDiagramId, projectI
   const [oemPreview, setOemPreview] = useState(null); // { sheets, sheet, headers, preview, row_count }
   const [oemMapping, setOemMapping] = useState({ id_column: null, text_column: null, section_column: null, category_column: null });
   const oemFileRef = useRef(null);
+  const [exportingTara, setExportingTara] = useState(false);
+
+  // TARA 结果是否已加载完成（用于「查看/导出 TARA 结果」按钮的可用状态）
+  const resultsReady = Array.isArray(taraResults) && taraResults.length > 0;
+
+  const handleExportTara = async () => {
+    if (!activeDomain) return;
+    setExportingTara(true);
+    try {
+      await exportReport(activeDomain.id, 'xlsx', false);
+    } finally {
+      setExportingTara(false);
+    }
+  };
 
   const progressIntervalRef = useRef(null);
 
@@ -259,6 +276,7 @@ export default function Workbench({ setPage, setDomainId, setDiagramId, projectI
       fetchDiagrams(activeDomain.id);
       fetchAssets(activeDomain.id);
       fetchTaraProgress(activeDomain.id);
+      fetchTaraResults(activeDomain.id);
       refreshMergedCount(activeDomain.id);
       
       // If domain is running, start polling progress
@@ -271,7 +289,7 @@ export default function Workbench({ setPage, setDomainId, setDiagramId, projectI
       setMergedCount(0);
       stopProgressPolling();
     }
-  }, [activeDomain, fetchAssets, fetchDiagrams, fetchTaraProgress, startProgressPolling, refreshMergedCount]);
+  }, [activeDomain, fetchAssets, fetchDiagrams, fetchTaraProgress, fetchTaraResults, startProgressPolling, refreshMergedCount]);
 
   const handleCreateDomainSubmit = async (e) => {
     e.preventDefault();
@@ -1095,14 +1113,29 @@ export default function Workbench({ setPage, setDomainId, setDiagramId, projectI
                 </button>
 
                 {(activeDomain.status === 'completed' || activeDomain.status === 'failed') && (
-                  <button
-                    onClick={() => { setDomainId(activeDomain.id); setPage('tara-results'); }}
-                    className="btn btn-secondary"
-                    style={{ border: '1px solid var(--primary)', color: 'var(--primary)', padding: '10px 20px' }}
-                  >
-                    <Eye size={16} />
-                    <span>{t("查看 TARA 结果")}</span>
-                  </button>
+                  <>
+                    <button
+                      onClick={() => { setDomainId(activeDomain.id); setPage('tara-results'); }}
+                      className="btn btn-secondary"
+                      disabled={!resultsReady}
+                      title={resultsReady ? t("查看 TARA 结果") : t("正在加载 TARA 分析结果，请稍候...")}
+                      style={{ border: '1px solid var(--primary)', color: 'var(--primary)', padding: '10px 20px', opacity: resultsReady ? 1 : 0.5, cursor: resultsReady ? 'pointer' : 'not-allowed' }}
+                    >
+                      <Eye size={16} />
+                      <span>{resultsReady ? t("查看 TARA 结果") : t("加载中...")}</span>
+                    </button>
+
+                    <button
+                      onClick={handleExportTara}
+                      className="btn btn-secondary"
+                      disabled={!resultsReady || exportingTara}
+                      title={resultsReady ? t("导出 TARA 分析结果") : t("正在加载 TARA 分析结果，请稍候...")}
+                      style={{ padding: '10px 20px', opacity: (!resultsReady || exportingTara) ? 0.5 : 1, cursor: (!resultsReady || exportingTara) ? 'not-allowed' : 'pointer' }}
+                    >
+                      <Download size={16} />
+                      <span>{exportingTara ? t("导出中...") : t("导出 TARA 分析结果")}</span>
+                    </button>
+                  </>
                 )}
               </div>
 
