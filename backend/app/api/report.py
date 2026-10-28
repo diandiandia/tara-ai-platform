@@ -178,33 +178,16 @@ def collect_report_data(steps: List[TaraStep], assets: List[Asset], desensitize:
                     requirements = stage5_out.get("requirements", [])
                     matching_reqs = [r for r in requirements if r.get("threat_id") == ts.get("threat_id")]
                     if not matching_reqs:
-                        # 兜底：如果为空，但顶级存在 cso 或是 csr，代表这可能是手工录入/人工修改的结构
-                        cso_val = stage5_out.get("cso") or "N/A"
-                        csr_list = stage5_out.get("csr") or []
-                        if cso_val != "N/A" or csr_list:
-                            if isinstance(csr_list, list) and csr_list:
-                                matching_reqs = []
-                                for idx, csr_text in enumerate(csr_list):
-                                    matching_reqs.append({
-                                        "cybersecurity_control": cso_val if idx == 0 else "N/A",
-                                        "allocated_to_device": "yes",
-                                        "cybersecurity_requirement": csr_text
-                                    })
-                            else:
-                                csr_val = str(csr_list) if csr_list else "N/A"
-                                matching_reqs = [{
-                                    "cybersecurity_control": cso_val,
-                                    "allocated_to_device": "yes",
-                                    "cybersecurity_requirement": csr_val
-                                }]
-                        else:
-                            matching_reqs = [{
-                                "cybersecurity_control_id": "N/A",
-                                "cybersecurity_control": "N/A",
-                                "allocated_to_device": "No",
-                                "cybersecurity_requirement_id": "N/A",
-                                "cybersecurity_requirement": "N/A"
-                            }]
+                        # 匹配不到需求时不再用顶层 csr（Tier-2 汇总文本）兜底：
+                        # 否则会把 Tier-2 内容哈希混入 TARA 的 Cybersecurity Requirement ID 列，
+                        # 与 CSR_Requirements 来源列的 Tier-1 哈希不在同一 ID 空间，破坏追溯。
+                        matching_reqs = [{
+                            "cybersecurity_control_id": "N/A",
+                            "cybersecurity_control": "N/A",
+                            "allocated_to_device": "No",
+                            "cybersecurity_requirement_id": "N/A",
+                            "cybersecurity_requirement": "N/A"
+                        }]
                         
                     # 攻击路径
                     attack_paths = ts.get("attack_paths", [])
@@ -922,7 +905,7 @@ def create_excel_report(domain: Domain, steps: List[TaraStep], assets: List[Asse
             merged_val = str(tara_r.get("merged_csr_id") or "").strip()
             fallback_aids = [a.strip() for a in merged_val.split(",") if a.strip() and a.strip() != "N/A"]
             if not fallback_aids:
-                fallback_aids = ["CSR-GEN-001"]
+                fallback_aids = ["未映射 / Unmapped"]
                 
             part_to_global = tara_r.get("part_to_global_map", {})
                 

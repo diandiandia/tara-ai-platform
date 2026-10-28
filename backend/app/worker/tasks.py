@@ -42,6 +42,87 @@ def generate_content_id(prefix: str, content: str) -> str:
     sha256_hash = hashlib.sha256(content.strip().encode('utf-8')).hexdigest()
     return f"{prefix}{sha256_hash[:8].upper()}"
 
+def clean_requirement_text(text: str) -> str:
+    """
+    清理网络安全需求文本中不需要的字段标签，仅保留【主体】/【要求】（及英文 [Subject]/[Requirement]）。
+    移除：【范围】【验证方法】【验收准则】【待确认】 与 [Scope]/[Verification method]/[Acceptance criteria]/[Open issue]。
+    这些信息已单独保存在结构化字段 requirement_scope / verification_method / acceptance_criteria / open_issue 中，此处从正文移除。
+    """
+    if not text or not isinstance(text, str):
+        return text
+    import re
+
+    # 中文标签（全角【】）：移除范围/验证方法/验收准则/待确认。
+    # 值遇到下一个【/[ 或 “/ ”+括号（整体中英文分界）时停止，避免吃掉中英文分隔符 “ / ”。
+    cn_remove_tags = ["范围", "验证方法", "验收准则", "待确认"]
+    for tag in cn_remove_tags:
+        text = re.sub(r'【' + re.escape(tag) + r'】[^【\[]*?(?=\s*/\s*[\[【]|[\[【]|$)', '', text)
+
+    # 英文标签（半角 [] 或全角【】均兼容）：移除 Scope/Verification method/Acceptance criteria/Open issue。
+    en_remove_tags = ["Scope", "Verification method", "Acceptance criteria", "Open issue"]
+    for tag in en_remove_tags:
+        text = re.sub(r'[\[【]' + re.escape(tag) + r'[\]】][^\[【]*', '', text, flags=re.IGNORECASE)
+
+    # 清理残留分隔符与空白
+    text = re.sub(r'[ \t]{2,}', ' ', text)
+    text = re.sub(r'\s*;+\s*;', ';', text)
+    text = re.sub(r'^\s*[/;]\s*|\s*[/;]\s*$', '', text)
+    text = text.strip()
+    return text
+
+def enforce_stage5_source_coverage(requirements: list, summarized_csrs: list, asset: Asset) -> list:
+    """
+    确保每个 allocated_to_device=yes 的原始需求都被至少一条汇总 CSR 的 source_requirement_ids 引用。
+    LLM 生成的 source_requirement_ids 可能遗漏；这里做代码级兜底，为遗漏的需求补一条原始需求保留型汇总 CSR，
+    避免 Tier1 -> Tier2 追溯断链。
+    引用方式兼容 CSR-001 / CSR-1 / CSR_001 / 1 / 原始 cybersecurity_requirement_id。
+    """
+    alias_to_idx = {}
+    for idx, req in enumerate(requirements, 1):
+        if str(req.get("allocated_to_device", "no")).lower().strip() != "yes":
+            continue
+        aliases = [f"csr-{idx:03d}", f"csr-{idx}", f"csr_{idx:03d}", f"csr_{idx}", str(idx)]
+        rid = str(req.get("cybersecurity_requirement_id") or "").strip()
+        if rid:
+            aliases.append(rid)
+        for a in aliases:
+            alias_to_idx[a.lower()] = idx
+
+    referenced = set()
+    for csr in summarized_csrs:
+        for sid in (csr.get("source_requirement_ids") or []):
+            key = str(sid).strip().lower()
+            if key in alias_to_idx:
+                referenced.add(alias_to_idx[key])
+
+    added = 0
+    for idx, req in enumerate(requirements, 1):
+        if str(req.get("allocated_to_device", "no")).lower().strip() != "yes":
+            continue
+        if idx in referenced:
+            continue
+        req_text = req.get("cybersecurity_requirement") or ""
+        summarized_csrs.append({
+            "asset_id": f"ID{asset.id}",
+            "asset_name": asset.name or "",
+            "cybersecurity_requirement_id": req.get("cybersecurity_requirement_id") or "",
+            "csr_id": req.get("cybersecurity_requirement_id") or "",
+            "title": "安全需求 / Security Requirement",
+            "sub_title": "安全防护 / Cybersecurity Protection",
+            "security_domain": "通用安全 / General Security",
+            "cybersecurity_requirement": req_text,
+            "verification_method": req.get("verification_method") or "检查/测试（覆盖兜底，需人工复核） / Inspection/Test (coverage fallback, manual review required)",
+            "requirement_type": req.get("requirement_type") or "product",
+            "rationale": req.get("rationale") or "原始需求兜底保留，需人工复核 / Original requirement preserved as coverage fallback, manual review required",
+            "source_requirement_ids": [f"CSR-{idx:03d}"],
+            "_coverage_status": "fallback_original",
+        })
+        added += 1
+
+    if added:
+        print(f"[TARA-AI] stage5 来源覆盖兜底：补充 {added} 条未被汇总 CSR 引用的原始需求")
+    return summarized_csrs
+
 def calculate_md5(*args) -> str:
     """
     计算字符串列表的 MD5 哈希值
@@ -1603,7 +1684,7 @@ def tara_ai_analysis_call(db: Session, stage: str, asset: Asset, prev_stages: di
                     "决策与要求制定规则：\n"
                     "输入中的 target_domain_controller 是当前目标域控；item.components 是该目标域控可用的组件清单。"
                     "所有分配判断只能基于这些信息；不得编造目标域控或组件。\n"
-                    "1. 针对每个威胁场景，做出风险处理决策 (Avoid, Reduce, Share, Retain)。根据决策提供相应理由/声明字段，所有文本必须是中英文对照（格式为“中文 / English”）：\n"
+                    "1. 针对每个威胁场景，做出风险处理决策 (Avoid, Reduce, Share, Retain)。threat_id 必须严格使用输入 threat_scenarios 中对应条目的 threat_id，禁止重新编号或编造；requirements 的 threat_id 也必须与对应威胁场景一致。根据决策提供相应理由/声明字段，所有文本必须是中英文对照（格式为“中文 / English”）：\n"
                     "   - Avoid: 额外在 item_change 中编写避免理由（移除危险源、更改设计等），其它字段为空字符串；\n"
                     "   - Reduce: 额外在 cybersecurity_goal 中编写高层安全目标（保护对象 + 安全属性 + 期望结果 + 成功判据；技术中立，不写协议/算法/产品/阈值），并分别填写 security_property（七类安全属性之一）、goal_asset（保护对象）、success_criteria（可验证的高层判据）；且必须在该威胁场景的 requirements 列表中编写控制措施与要求；\n"
                     "   - Share/Retain: 额外在 cybersecurity_claim 中编写正式风险声明（剩余风险是什么、为什么可接受/可转移、依据/适用条件/有效期/批准角色），并分别填写 residual_risk、claim_justification、claim_conditions、claim_validity、claim_owner；其它字段为空字符串；claim 不是威胁描述或控制措施。\n"
@@ -1612,7 +1693,7 @@ def tara_ai_analysis_call(db: Session, stage: str, asset: Asset, prev_stages: di
                     "   - Control：包含 cybersecurity_control_id 并以 CSO-001, CSO-002 等顺序编号格式编写，与中英文对照的 cybersecurity_control；并分别填写 control_type（预防/检测/纠正）、implementation_type（技术/操作）、control_objective（控制目标）、control_point（作用点：资产/接口/生命周期阶段）、dependent_functions、dependent_controls、interaction_description、applicable_lifecycle；不要写具体协议/算法/产品型号；\n"
                     "   - Allocated to Device：只有 Requirement 由 target_domain_controller 或其 item.components 中的组件实现时填 'yes'；由运行环境、其他域控/ECU、其他 item、供应商、后台或流程实现时填 'no'；信息不足时填 'no' 并在 open_issue 说明，禁止默认 yes；\n"
                     "   - Requirement：包含 cybersecurity_requirement_id 并以 CSR-001, CSR-002 等顺序编号格式编写，与中英文对照的 cybersecurity_requirement；并填写 requirement_scope（item / operational_environment / other_item）、owner、allocated_to、allocation_type、requirement_type（product/process/supplier）、verification_method、acceptance_criteria、source_ids、goal_ids、control_ids、rationale；每条 Requirement 只能有一个保护对象、一个行为、一个可验证结果，多个独立“应/不应/不得”必须拆成多条；技术中立，即使输入包含具体协议/算法/端口/数值，输出也必须抽象为能力要求，不得原样保留；\n"
-                    "   - TARA 表文本列格式：cybersecurity_claim 用【Claim 类型】【声明】【剩余风险】【依据】【适用条件】【有效期】【批准角色】【证据】【待确认】组织；cybersecurity_goal 用【保护对象】【安全属性】【目标】【成功判据】组织；cybersecurity_control 用【控制类型】【实现类型】【控制目标】【作用点】【依赖/交互】组织；cybersecurity_requirement 用【范围】【主体】【要求】【验证方法】【验收准则】【待确认】组织；结构化字段仍按上面字段填写；\n"
+                    "   - TARA 表文本列格式：cybersecurity_claim 用【Claim 类型】【声明】【剩余风险】【依据】【适用条件】【有效期】【批准角色】【证据】【待确认】组织；cybersecurity_goal 用【保护对象】【安全属性】【目标】【成功判据】组织；cybersecurity_control 用【控制类型】【实现类型】【控制目标】【作用点】【依赖/交互】组织；cybersecurity_requirement 用【主体】【要求】组织；结构化字段仍按上面字段填写；\n"
                     "3. 编制合并后安全需求 (summarized_requirements 归纳与合并规则)：\n"
                     "   - 针对所有 allocated_to_device 为 'yes' 的原始网络安全要求进行系统性归纳与合并去重：\n"
                     "     * 原子化边界：一条 CSR = 一个保护对象 + 一个控制目标 + 一个可验证结果；\n"
@@ -1644,16 +1725,21 @@ def tara_ai_analysis_call(db: Session, stage: str, asset: Asset, prev_stages: di
             has_transfer = False
             justifications = []
             
-            for ts in threat_scenarios:
+            llm_decisions = ai_res.get("risk_decisions", [])
+            for idx, ts in enumerate(threat_scenarios):
                 impact_val = ts.get("overall_impact", 1)
                 feasibility_key = str(ts.get("final_feasibility", "Medium")).lower().replace(" ", "")
                 risk_val = risk_matrix.get(feasibility_key, [1, 2, 3, 4])[min(max(impact_val, 0), 3)]
                 
                 matched_dec = None
-                for dec in ai_res.get("risk_decisions", []):
+                for dec in llm_decisions:
                     if dec.get("threat_id") == ts.get("threat_id"):
                         matched_dec = dec
                         break
+                # LLM 可能重新编号 threat_id；精确匹配失败时按顺序兜底匹配，
+                # 避免 requirements 丢失导致 TARA 需求无法追溯。
+                if matched_dec is None and idx < len(llm_decisions):
+                    matched_dec = llm_decisions[idx]
                 
                 if matched_dec:
                     treatment = matched_dec.get("risk_treatment", "Reduce")
@@ -1833,7 +1919,7 @@ def tara_ai_analysis_call(db: Session, stage: str, asset: Asset, prev_stages: di
                         raw_reqs = rd.get("_raw_requirements", [])
                         for req in raw_reqs:
                             ctrl_text = req.get("cybersecurity_control", "")
-                            req_text = req.get("cybersecurity_requirement", "")
+                            req_text = clean_requirement_text(req.get("cybersecurity_requirement", ""))
                             requirements.append({
                                 "threat_id": rd["threat_id"],
                                 "goal_ids": req.get("goal_ids", []),
@@ -1929,7 +2015,7 @@ def tara_ai_analysis_call(db: Session, stage: str, asset: Asset, prev_stages: di
                 requirements = []
                 for req in ai_res.get("requirements", []):
                     ctrl_text = req.get("cybersecurity_control", "")
-                    req_text = req.get("cybersecurity_requirement", "")
+                    req_text = clean_requirement_text(req.get("cybersecurity_requirement", ""))
                     requirements.append({
                         "threat_id": req.get("threat_id", "TS_Integrity_1"),
                         "goal_ids": req.get("goal_ids", []),
@@ -1980,6 +2066,9 @@ def tara_ai_analysis_call(db: Session, stage: str, asset: Asset, prev_stages: di
                         "source_requirement_ids": item.get("source_requirement_ids", [])
                     })
                     
+            # 代码级兜底：确保每个 allocated_to_device=yes 的需求都被至少一条汇总 CSR 引用（Tier1 -> Tier2 覆盖）
+            summarized_csrs = enforce_stage5_source_coverage(requirements, summarized_csrs, asset)
+
             all_csr_texts = [r["cybersecurity_requirement"] for r in summarized_csrs]
             all_cso_texts = [r["cybersecurity_control"] for r in requirements]
             

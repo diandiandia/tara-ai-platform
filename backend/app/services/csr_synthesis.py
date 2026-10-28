@@ -760,15 +760,21 @@ def synthesize_project_csrs(db: Session, all_csrs: list, global_tier2_to_tier1: 
 
             # 将 Tier 2 的资产级汇总 CSR ID 穿透解析为 Tier 1 的 TARA 原始需求 ID (CSR_XXXXXXXX)
             resolved_tier1_ids = set()
+            unresolved_ids = []
             if global_tier2_to_tier1:
                 for sid in source_ids:
                     t1_list = global_tier2_to_tier1.get(sid)
                     if t1_list:
                         resolved_tier1_ids.update(t1_list)
                     else:
-                        resolved_tier1_ids.add(sid)
+                        # 解析不到 Tier-1 时不再把 Tier-2 ID 原样塞进来源列表，
+                        # 避免 Tier-2 / 幻觉 ID 污染追溯来源，破坏与 TARA 表的对账。
+                        unresolved_ids.append(sid)
             else:
                 resolved_tier1_ids.update(source_ids)
+
+            if unresolved_ids:
+                print(f"[TARA-AI] 追溯警告: {dyn_csr_id} 有 {len(unresolved_ids)} 个来源 ID 无法解析到 Tier-1，已剔除: {', '.join(unresolved_ids[:8])}")
                 
             sorted_tier1_ids = sorted(list(resolved_tier1_ids))
             source_ids_str = "; ".join(sorted_tier1_ids)
@@ -865,8 +871,7 @@ def get_or_synthesize_global_csrs(db: Session, domain: Domain, steps: list, asse
                         t1_list = global_tier2_to_tier1.get(sid)
                         if t1_list:
                             resolved_t1.update(t1_list)
-                        else:
-                            resolved_t1.add(sid)
+                        # 解析不到 Tier-1 时不再保留 Tier-2 ID，避免污染来源列表
                     if resolved_t1:
                         sorted_t1 = sorted(list(resolved_t1))
                         r["source_tara_requirements"] = ", ".join(sorted_t1)
