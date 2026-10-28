@@ -434,6 +434,154 @@ def semantic_fallback_clustering(domain_name: str, items: list) -> list:
         
     return consolidated
 
+
+# -------------------------------------------------------------------------
+# 语义相似预去重 + 内容覆盖校验
+# -------------------------------------------------------------------------
+_STOP_TOKENS = {
+    "security", "protection", "requirements", "requirement", "system", "safe",
+    "安全", "要求", "保护", "防护", "控制", "管理", "设计", "机制", "实施", "进行",
+    "应", "应能", "应可", "必须", "以及", "包括", "相关", "对于",
+}
+
+# 语义去重阈值（可调）：
+# - 预去重：0.80 能把"请求实体 / 请求调试的实体"这类轻微改写的近似重复合并，
+#   同时避免把同一主题但不同控制目标的条目误合；
+# - 跨分类：0.90 更保守，只合并几乎同义、却被分到不同分类的条目；
+# - 内容覆盖：来源关键词在合并正文中的最低重合率，低于此值标记内容缺口。
+PRE_DEDUP_THRESHOLD = 0.80
+CROSS_CATEGORY_DEDUP_THRESHOLD = 0.90
+CONTENT_COVERAGE_MIN_RATIO = 0.30
+
+
+def semantic_tokens(text: str) -> Set[str]:
+    """Extract normalized Chinese/English tokens for similarity comparison.
+
+    Chinese is split into 2-grams (not whole runs) so that near-identical
+    sentences share tokens instead of becoming one giant unmatched token.
+    """
+    t = str(text or "").lower()
+    # 去掉【主体】/【要求】/[Subject]/[Requirement] 等标签
+    t = re.sub(r"【[^】]*】|\[[^\]]*\]", " ", t)
+    tokens = set()
+    for run in re.findall(r"[\u4e00-\u9fa5]+", t):
+        if len(run) == 1:
+            tokens.add(run)
+        else:
+            for i in range(len(run) - 1):
+                tokens.add(run[i:i + 2])
+    for w in re.findall(r"[a-zA-Z]{3,}", t):
+        tokens.add(w)
+    return set(w for w in tokens if w not in _STOP_TOKENS)
+
+
+def _jaccard(a: Set[str], b: Set[str]) -> float:
+    if not a or not b:
+        return 0.0
+    union = a | b
+    return len(a & b) / len(union) if union else 0.0
+
+
+def dedup_items_by_similarity(items: list, threshold: float = 0.85) -> list:
+    """在交给 LLM 合并前，先做一次确定性的语义相似预去重。
+
+    只合并相似度 >= threshold 的近似重复项（阈值默认 0.85，偏保守，避免误合）；
+    真正的语义合并仍由 LLM 完成。被合并的项，其 raw_id 会汇总到
+    ``source_requirement_ids``，供 ``enforce_csr_coverage`` 追溯。
+    """
+    if not items:
+        return items
+
+    clusters = []  # [{"tokens": set, "items": [item]}]
+    for it in items:
+        text = f"{it.get('sub_title', '')} {it.get('title', '')} {it.get('req', '')}"
+        toks = semantic_tokens(text)
+        best_c, best_sim = None, 0.0
+        for c in clusters:
+            sim = _jaccard(toks, c["tokens"])
+            if sim > best_sim:
+                best_c, best_sim = c, sim
+        if best_c is not None and best_sim >= threshold:
+            best_c["items"].append(it)
+            best_c["tokens"] |= toks
+        else:
+            clusters.append({"tokens": toks, "items": [it]})
+
+    merged = []
+    for c in clusters:
+        group = c["items"]
+        if len(group) == 1:
+            merged.append(group[0])
+            continue
+        # 以文本最详尽者作代表，合并来源 raw_id 与适用资产
+        rep = max(group, key=lambda x: len(str(x.get("req") or "")))
+        sources, assets = [], []
+        for it in group:
+            rid = it.get("raw_id")
+            if rid and rid not in sources:
+                sources.append(rid)
+            an = it.get("asset_name")
+            if an and an not in assets:
+                assets.append(an)
+        new_item = dict(rep)
+        new_item["source_requirement_ids"] = sources
+        new_item["applicable_assets"] = assets
+        new_item["_pre_dedup_count"] = len(group)
+        new_item["_pre_dedup_sources"] = sources
+        merged.append(new_item)
+    return merged
+
+
+def _item_all_ids(it: dict) -> list:
+    """Return every raw_id an input item stands for (pre-dedup may merge several)."""
+    ids = []
+    if it.get("raw_id"):
+        ids.append(str(it["raw_id"]).strip())
+    for sid in (it.get("source_requirement_ids") or []):
+        sid = str(sid).strip()
+        if sid:
+            ids.append(sid)
+    for sid in (it.get("_pre_dedup_sources") or []):
+        sid = str(sid).strip()
+        if sid:
+            ids.append(sid)
+    return [i for i in ids if i]
+
+
+def verify_merged_content_coverage(items: list, cons: list, min_ratio: float = 0.30) -> list:
+    """内容覆盖校验：检查每条合并 CSR 是否真的覆盖了其来源需求的关键内容。
+
+    覆盖契约（enforce_csr_coverage）只保证 source_requirement_ids 齐全，
+    但合并后的正文可能丢掉来源里的关键条件。这里用关键词重合率做二次校验：
+    若某来源需求的关键词在合并后正文中的重合率低于 min_ratio，则记录到
+    ``_content_gaps``，供人工复核。
+    """
+    item_by_id = {}
+    for it in items:
+        for rid in _item_all_ids(it):
+            item_by_id.setdefault(rid, it)
+
+    for c in cons:
+        req_text = str(c.get("cybersecurity_requirement") or "")
+        req_tokens = semantic_tokens(req_text)
+        gaps = []
+        for sid in c.get("source_requirement_ids") or []:
+            src = item_by_id.get(str(sid).strip())
+            if not src:
+                continue
+            src_tokens = semantic_tokens(
+                f"{src.get('title', '')} {src.get('req', '')}"
+            )
+            if not src_tokens:
+                continue
+            overlap = len(src_tokens & req_tokens) / len(src_tokens)
+            if overlap < min_ratio:
+                gaps.append({"source_id": str(sid), "overlap": round(overlap, 2)})
+        c["_content_gaps"] = gaps
+        c["_content_coverage_ok"] = not gaps
+    return cons
+
+
 # -------------------------------------------------------------------------
 # LLM-Powered UNECE R155 Annex 5 Guided Synthesis
 # -------------------------------------------------------------------------
@@ -448,9 +596,9 @@ def enforce_csr_coverage(items: list, cons: list) -> tuple:
     """
     input_ids = []
     for it in items:
-        rid = str(it.get("raw_id") or "").strip()
-        if rid and rid not in input_ids:
-            input_ids.append(rid)
+        for rid in _item_all_ids(it):
+            if rid and rid not in input_ids:
+                input_ids.append(rid)
     input_set = set(input_ids)
 
     seen = set()
@@ -475,7 +623,7 @@ def enforce_csr_coverage(items: list, cons: list) -> tuple:
 
     missing = [rid for rid in input_ids if rid not in seen]
     for rid in missing:
-        item = next((x for x in items if str(x.get("raw_id")) == rid), None)
+        item = next((x for x in items if rid in _item_all_ids(x)), None)
         if not item:
             continue
         cons.append({
@@ -541,6 +689,12 @@ def synthesize_domain_csrs_with_llm(db: Session, domain_name: str, items: list) 
     """
     if not items:
         return [], {"input_count": 0, "complete": True}
+
+    # 语义相似预去重：相似度 >= PRE_DEDUP_THRESHOLD 的近似重复先合并，降低 LLM 漏合概率
+    original_count = len(items)
+    items = dedup_items_by_similarity(items, threshold=PRE_DEDUP_THRESHOLD)
+    if len(items) != original_count:
+        print(f"[TARA-AI] 【{domain_name}】语义预去重: {original_count} -> {len(items)} 项")
 
     settings = db.query(SystemSettings).first()
     if not settings or not settings.api_key or settings.api_key in ["mock_test_key", ""]:
@@ -669,9 +823,12 @@ def synthesize_domain_csrs_with_llm(db: Session, domain_name: str, items: list) 
                     f"({retry_err})，保留首次结果并用兜底条目补齐。"
                 )
 
+        # 内容覆盖校验：合并后正文是否真的覆盖了每个来源的关键内容
+        verify_merged_content_coverage(items, cons, min_ratio=CONTENT_COVERAGE_MIN_RATIO)
+        gaps_count = sum(1 for c in cons if c.get("_content_gaps"))
         print(
             f"[TARA-AI] 【{domain_name}】提炼成功: {len(items)} 项原始需求 -> {len(cons)} 项 CSR；"
-            f"覆盖完整={report.get('complete')}"
+            f"覆盖完整={report.get('complete')}；内容缺口条目={gaps_count}"
         )
         return cons, report
     except Exception as e:
@@ -680,6 +837,59 @@ def synthesize_domain_csrs_with_llm(db: Session, domain_name: str, items: list) 
         cons, report = enforce_csr_coverage(items, cons)
         report["mode"] = "semantic_fallback_after_error"
         return cons, report
+
+
+def dedup_cross_category(rows: list, threshold: float = 0.90) -> list:
+    """跨分类语义去重：合并不同功能分类下高度相似的 CSR。
+
+    阈值默认 0.90（偏保守）：只合并几乎同义、但被分到不同分类的条目。
+    合并后保留先出现的分类，来源 ID 取并集，并标记 ``_cross_category_merged``。
+    """
+    if len(rows) < 2:
+        return rows
+
+    kept = []
+    used = set()
+    token_cache = {}
+
+    for i, r in enumerate(rows):
+        if i in used:
+            continue
+        text = f"{r.get('title', '')} {r.get('cybersecurity_requirement', '')}"
+        toks = semantic_tokens(text)
+        token_cache[i] = toks
+        sources = [str(x) for x in (r.get("source_requirement_ids") or []) if str(x).strip()]
+        assets = [a for a in str(r.get("applicable_assets") or "").split("\n") if a]
+        merged_from = []
+
+        for j in range(i + 1, len(rows)):
+            if j in used:
+                continue
+            r2 = rows[j]
+            if j not in token_cache:
+                token_cache[j] = semantic_tokens(
+                    f"{r2.get('title', '')} {r2.get('cybersecurity_requirement', '')}"
+                )
+            if _jaccard(toks, token_cache[j]) >= threshold:
+                used.add(j)
+                merged_from.append(str(r2.get("csr_id") or ""))
+                for sid in (r2.get("source_requirement_ids") or []):
+                    if str(sid) not in sources:
+                        sources.append(str(sid))
+                for an in str(r2.get("applicable_assets") or "").split("\n"):
+                    if an and an not in assets:
+                        assets.append(an)
+
+        if merged_from:
+            r["_cross_category_merged"] = True
+            r["_cross_category_sources"] = merged_from
+            r["source_requirement_ids"] = sources
+            r["source_cybersecurity_requirement_ids"] = "; ".join(sources)
+            r["source_count"] = len(sources)
+            r["applicable_assets"] = "\n".join(assets)
+            r["assets_count"] = len(assets)
+        kept.append(r)
+    return kept
 
 
 def classify_csr_functional_categories(db: Session, rows: list) -> list:
@@ -824,6 +1034,9 @@ c) 本地刷写与 OTA 刷写是否区分正确？
         r["category_reason"] = str(c.get("category_reason") or "")[:200]
         r["needs_review"] = bool(needs_review)
 
+    # 跨分类语义去重：不同分类下高度相似的需求合并（保留首个分类，合并来源）
+    rows = dedup_cross_category(rows, threshold=CROSS_CATEGORY_DEDUP_THRESHOLD)
+
     # 按 17 功能分类重新编号并排序（CSR-HW / CSR-DBG / CSR-FLASH / CSR-OTA ...）
     from app.core.taxonomy import FUNCTIONAL_PREFIX_MAP, FUNCTIONAL_CATEGORY_NAMES
     grouped = {}
@@ -847,7 +1060,13 @@ def synthesize_project_csrs(db: Session, all_csrs: list, global_tier2_to_tier1: 
     对跨资产收集到的所有底层安全需求按标准安全分类域进行并发大模型全局提炼与编号，
     并将 Tier 2 资产级汇总 CSR ID 自动穿透解析为 Tier 1 TARA 原始需求 ID (CSR_XXXXXXXX)。
     """
-    items_by_domain = {d: [] for d in MAJOR_ORDER.keys()}
+    from app.core.taxonomy import (
+        FUNCTIONAL_CATEGORY_NAMES,
+        FUNCTIONAL_PREFIX_MAP,
+        classify_functional_category,
+    )
+
+    items_by_domain = {d: [] for d in FUNCTIONAL_CATEGORY_NAMES}
     
     for item in all_csrs:
         asset = item["asset"]
@@ -856,12 +1075,12 @@ def synthesize_project_csrs(db: Session, all_csrs: list, global_tier2_to_tier1: 
         if not raw_text or raw_text == "N/A":
             continue
             
-        raw_dom = str(csr.get("security_domain") or "").strip()
-        major_cat = clean_major_category(raw_dom)
-        # 按控制机制纠正（例如调试口身份认证应归系统安全，而不是硬件安全）
-        major_cat = correct_security_domain(major_cat, raw_text)
+        # 按 17 类功能分类做合并分组（规则预判；最终分类在原子化后由 LLM 复核）
+        major_cat = classify_functional_category(
+            f"{csr.get('title', '')} {raw_text} {csr.get('subject', '')}"
+        )
         if major_cat not in items_by_domain:
-            major_cat = "通用安全与其它 / General & Other Security"
+            major_cat = "4.2 系统加固"
             
         raw_id = csr.get("csr_id") or csr.get("cybersecurity_requirement_id") or f"CSR_{len(items_by_domain[major_cat])}"
         sn = get_asset_sn(asset)
@@ -904,7 +1123,8 @@ def synthesize_project_csrs(db: Session, all_csrs: list, global_tier2_to_tier1: 
                 domain_results[d] = (cons, report)
 
     # 按照标准分类域排序，生成全局顺序编号与扁平化行数据
-    sorted_domains = sorted(active_domains, key=lambda d: MAJOR_ORDER.get(d, 99))
+    func_order = {c: i for i, c in enumerate(FUNCTIONAL_CATEGORY_NAMES)}
+    sorted_domains = sorted(active_domains, key=lambda d: func_order.get(d, 99))
     
     final_rows = []
     for d in sorted_domains:
@@ -918,7 +1138,7 @@ def synthesize_project_csrs(db: Session, all_csrs: list, global_tier2_to_tier1: 
                 f"CSR coverage incomplete for domain {d}: "
                 f"missing={coverage_report.get('missing_raw_ids')}"
             )
-        pfx = DOMAIN_PREFIX_MAP.get(d, "CSR-GEN")
+        pfx = FUNCTIONAL_PREFIX_MAP.get(d, "CSR-GEN")
         
         for idx, c in enumerate(cons_list, 1):
             dyn_csr_id = f"{pfx}-{idx:03d}"
