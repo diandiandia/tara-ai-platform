@@ -692,6 +692,8 @@ def classify_csr_functional_categories(db: Session, rows: list) -> list:
     """
     from app.core.taxonomy import (
         FUNCTIONAL_PROMPT_LIST,
+        FUNCTIONAL_KEYWORDS_PROMPT,
+        FUNCTIONAL_CONFUSION_RULES,
         classify_functional_category,
         correct_functional_category,
     )
@@ -734,6 +736,12 @@ def classify_csr_functional_categories(db: Session, rows: list) -> list:
 
 【分类枚举（只能原样输出编号+名称，输出其它值一律视为不合格）】
 {FUNCTIONAL_PROMPT_LIST}
+
+【关键字锚定（命中这些词时优先归入对应分类）】
+{FUNCTIONAL_KEYWORDS_PROMPT}
+
+【易混类别（必须分清）】
+{FUNCTIONAL_CONFUSION_RULES}
 
 【判定优先级（从上到下，命中即停）】
 1) 物理/PCB/丝印/封装/防拆/探针/HSM/eFUSE/SMPU/存储绑定/不可逆禁用 → 4.1 硬件安全
