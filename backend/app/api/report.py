@@ -649,6 +649,49 @@ def build_csr_coverage_rows(csr_rows: list) -> list:
     return result
 
 
+CUSTOMER_ONLY_NA = "N/A (TARA Threat Analysis Enhanced)"
+TARA_ONLY_NA = "N/A (Customer Specific)"
+
+
+def collect_merged_requirement_rows(db: Session, domain_id: int) -> List[dict]:
+    """收集某个域控的最终合并需求（OEM 客户需求 + 本域控 TARA 需求），用于导出 Merged_Requirements sheet。"""
+    from app.models.req_merge import MergedRequirement, MergedRequirementSource
+
+    if not domain_id:
+        return []
+    rows = (
+        db.query(MergedRequirement)
+        .filter(MergedRequirement.domain_id == domain_id)
+        .order_by(MergedRequirement.id)
+        .all()
+    )
+    result = []
+    for r in rows:
+        refs = (
+            db.query(MergedRequirementSource)
+            .filter(MergedRequirementSource.merged_id == r.id)
+            .all()
+        )
+        customer = [x.source_id for x in refs if x.source_type == "customer"]
+        tara = [x.source_id for x in refs if x.source_type == "tara"]
+        result.append({
+            "final_id": r.final_id,
+            "customer_ids": ", ".join(customer) if customer else CUSTOMER_ONLY_NA,
+            "tara_ids": ", ".join(tara) if tara else TARA_ONLY_NA,
+            "source_tara_raw_ids": r.source_tara_raw_ids or "",
+            "security_domain": r.security_domain or "",
+            "control_category": r.control_category or "",
+            "requirement_title": r.requirement_title or "",
+            "requirement_text": r.requirement_text or "",
+            "additional_info": r.additional_info or "",
+            "status": r.status or "",
+            "allocated_module": r.allocated_module or "",
+            "responsible_org": r.responsible_org or "",
+            "remarks": r.remarks or "",
+        })
+    return result
+
+
 def create_excel_report(domain: Domain, steps: List[TaraStep], assets: List[Asset], desensitize: bool, export_type: str = "all", db: Session = None) -> str:
     """
     生成高度美观的 ISO 21434 TARA XLSX 格式报表，支持脱敏过滤，并支持导出安全需求 (CSR_Requirements) 的混合模型 sheet 页
@@ -1038,6 +1081,61 @@ def create_excel_report(domain: Domain, steps: List[TaraStep], assets: List[Asse
             col_letter = openpyxl.utils.get_column_letter(col[0].column)
             ws3.column_dimensions[col_letter].width = min(max(max_len + 3, 12), 40)
 
+    # 导出 Merged_Requirements Sheet（客户需求 + TARA 需求合并后的最终信息安全需求）
+    if export_type in ("all", "merged") and db is not None:
+        merged_rows = collect_merged_requirement_rows(db, domain.id)
+        if merged_rows:
+            if export_type == "merged":
+                ws_merged = default_ws
+                ws_merged.title = "Merged_Requirements"
+            else:
+                ws_merged = wb.create_sheet(title="Merged_Requirements")
+            ws_merged.views.sheetView[0].showGridLines = True
+            merged_headers = [
+                "Final CSR ID\n最终需求编号",
+                "Mapped Customer Req IDs\n映射客户需求编号",
+                "Mapped TARA CSR IDs\n映射TARA需求编号",
+                "Source TARA Raw IDs / 追溯原始TARA需求\n(底层威胁分析条目ID)",
+                "Security Domain\n安全域",
+                "Control Category\n控制分类",
+                "Requirement Title\n需求标题",
+                "Unified Cybersecurity Requirement (CN/EN)\n整合网络安全需求描述 (中英双语)",
+                "Additional Info",
+                "Status",
+                "Allocated Module\n分配架构模块",
+                "Responsible Org\n责任组织",
+                "Remarks",
+            ]
+            for col_idx, h in enumerate(merged_headers, 1):
+                cell = ws_merged.cell(row=1, column=col_idx, value=h)
+                cell.fill = header_fill_r1
+                cell.font = header_font
+                cell.alignment = Alignment(horizontal="center", vertical="center", wrap_text=True)
+                cell.border = thin_border
+            ws_merged.row_dimensions[1].height = 30
+
+            for row_idx, row_data in enumerate(merged_rows, 2):
+                values = [
+                    row_data["final_id"], row_data["customer_ids"], row_data["tara_ids"],
+                    row_data["source_tara_raw_ids"], row_data["security_domain"], row_data["control_category"],
+                    row_data["requirement_title"], row_data["requirement_text"],
+                    row_data["additional_info"], row_data["status"],
+                    row_data["allocated_module"], row_data["responsible_org"], row_data["remarks"],
+                ]
+                for col_idx, val in enumerate(values, 1):
+                    cell = ws_merged.cell(row=row_idx, column=col_idx, value=val)
+                    cell.font = cell_font
+                    cell.border = thin_border
+                    if col_idx in (1, 2, 3, 4, 10):
+                        cell.alignment = Alignment(horizontal="center", vertical="center", wrap_text=True)
+                    else:
+                        cell.alignment = Alignment(horizontal="left", vertical="center", wrap_text=True)
+                ws_merged.row_dimensions[row_idx].height = 70
+
+            col_w_merged = {1: 16, 2: 30, 3: 24, 4: 45, 5: 24, 6: 30, 7: 45, 8: 75, 9: 20, 10: 12, 11: 22, 12: 22, 13: 26}
+            for c_idx, width in col_w_merged.items():
+                ws_merged.column_dimensions[openpyxl.utils.get_column_letter(c_idx)].width = width
+
     filename_suffix = f"{export_type}_{'desensitized' if desensitize else 'full'}"
     file_path = os.path.join(EXPORTS_DIR, f"TARA_Report_{domain.id}_{filename_suffix}.xlsx")
     wb.save(file_path)
@@ -1136,8 +1234,8 @@ def export_report(
         # CSV不支持多sheet，默认设置为 tara 导出
         export_type_lower = "tara"
         
-    if export_type_lower not in ["all", "tara", "csr"]:
-        raise HTTPException(status_code=400, detail="不支持的导出类型，可选值: all, tara, csr。")
+    if export_type_lower not in ["all", "tara", "csr", "merged"]:
+        raise HTTPException(status_code=400, detail="不支持的导出类型，可选值: all, tara, csr, merged。")
     
     if format.lower() == "xlsx":
         file_path = create_excel_report(domain, steps, assets, desensitize, export_type_lower, db=db)

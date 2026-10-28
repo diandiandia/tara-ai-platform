@@ -7,6 +7,7 @@ from app.models.asset import Asset
 from app.models.tara_run import TaraRun
 from app.models.tara_step import TaraStep
 from app.models.system_settings import SystemSettings
+from app.models.req_merge import CustomerRequirement, MergedRequirement, MergedRequirementSource
 
 __all__ = [
     "Base",
@@ -18,4 +19,7 @@ __all__ = [
     "TaraRun",
     "TaraStep",
     "SystemSettings",
+    "CustomerRequirement",
+    "MergedRequirement",
+    "MergedRequirementSource",
 ]

@@ -6,8 +6,15 @@ import { useTaraStore } from '../stores/taraStore';
 import { 
   FolderPlus, GitFork, Table, Play, XCircle, 
   Trash2, AlertTriangle, ArrowLeft,
-  Sparkles, CheckCircle2, Eye, Download
+  Sparkles, CheckCircle2, Eye, Download, Upload, Merge, FileDown
 } from 'lucide-react';
+import {
+  importCustomerRequirements,
+  synthesizeMergedRequirements,
+  exportMergedRequirements,
+  fetchCustomerRequirements,
+  fetchMergedRequirements,
+} from '../stores/reqMergeStore';
 
 export default function Workbench({ setPage, setDomainId, setDiagramId, projectId }) {
   const { t } = useI18n();
@@ -75,12 +82,93 @@ export default function Workbench({ setPage, setDomainId, setDiagramId, projectI
   const [compactMode, setCompactMode] = useState(true);
   const [expandedAssetIds, setExpandedAssetIds] = useState(new Set());
 
+  // OEM 客户需求导入 & 最终需求合并
+  const [oemImporting, setOemImporting] = useState(false);
+  const [merging, setMerging] = useState(false);
+  const [mergeMsg, setMergeMsg] = useState(null); // { type: 'success' | 'error', text: string }
+  const [customerReqCount, setCustomerReqCount] = useState(0);
+  const [mergedCount, setMergedCount] = useState(0);
+  const oemFileRef = useRef(null);
+
   const progressIntervalRef = useRef(null);
 
   const stopProgressPolling = () => {
     if (progressIntervalRef.current) {
       clearInterval(progressIntervalRef.current);
       progressIntervalRef.current = null;
+    }
+  };
+
+  const refreshCustomerReqCount = useCallback(async () => {
+    if (!projectId) return;
+    try {
+      const rows = await fetchCustomerRequirements(projectId);
+      setCustomerReqCount(Array.isArray(rows) ? rows.length : 0);
+    } catch {
+      setCustomerReqCount(0);
+    }
+  }, [projectId]);
+
+  const refreshMergedCount = useCallback(async (domainId) => {
+    if (!domainId) {
+      setMergedCount(0);
+      return;
+    }
+    try {
+      const merged = await fetchMergedRequirements(domainId);
+      setMergedCount(Array.isArray(merged) ? merged.length : 0);
+    } catch {
+      setMergedCount(0);
+    }
+  }, []);
+
+  const handleOemFileChange = async (e) => {
+    const file = e.target.files?.[0];
+    e.target.value = '';
+    if (!file) return;
+    setOemImporting(true);
+    setMergeMsg(null);
+    try {
+      const res = await importCustomerRequirements(projectId, file);
+      await refreshCustomerReqCount();
+      setMergeMsg({ type: 'success', text: `${t("已导入")} ${res.imported} ${t("条客户需求")}` });
+    } catch (err) {
+      setMergeMsg({ type: 'error', text: err?.response?.data?.detail || t("客户需求导入失败") });
+    } finally {
+      setOemImporting(false);
+    }
+  };
+
+  const handleMergeRequirements = async () => {
+    if (!activeDomain) return;
+    setMerging(true);
+    setMergeMsg(null);
+    try {
+      const res = await synthesizeMergedRequirements(activeDomain.id);
+      setMergedCount(res.merged_count || 0);
+      setMergeMsg({
+        type: 'success',
+        text: `${t("合并完成")}：${res.merged_count || 0} ${t("条最终需求")}`,
+      });
+    } catch (err) {
+      setMergeMsg({ type: 'error', text: err?.response?.data?.detail || t("需求合并失败") });
+    } finally {
+      setMerging(false);
+    }
+  };
+
+  const handleDownloadMerged = async () => {
+    if (!activeDomain) return;
+    try {
+      const blob = await exportMergedRequirements(activeDomain.id);
+      const url = window.URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `Merged_Requirements_${activeDomain.name}.xlsx`;
+      a.click();
+      window.URL.revokeObjectURL(url);
+    } catch (err) {
+      setMergeMsg({ type: 'error', text: err?.response?.data?.detail || t("导出最终需求失败") });
     }
   };
 
@@ -105,11 +193,12 @@ export default function Workbench({ setPage, setDomainId, setDiagramId, projectI
     if (projectId) {
       fetchProjectDetails(projectId);
       fetchDomains(projectId);
+      refreshCustomerReqCount();
     }
     return () => {
       stopProgressPolling();
     };
-  }, [projectId, fetchDomains, fetchProjectDetails]);
+  }, [projectId, fetchDomains, fetchProjectDetails, refreshCustomerReqCount]);
 
   // Fetch Domain Details when Active Domain changes
   useEffect(() => {
@@ -118,6 +207,7 @@ export default function Workbench({ setPage, setDomainId, setDiagramId, projectI
       fetchAssets(activeDomain.id);
       fetchTaraProgress(activeDomain.id);
       fetchTaraResults(activeDomain.id);
+      refreshMergedCount(activeDomain.id);
       
       // If domain is running, start polling progress
       if (activeDomain.status === 'running') {
@@ -126,9 +216,10 @@ export default function Workbench({ setPage, setDomainId, setDiagramId, projectI
         stopProgressPolling();
       }
     } else {
+      setMergedCount(0);
       stopProgressPolling();
     }
-  }, [activeDomain, fetchAssets, fetchDiagrams, fetchTaraProgress, fetchTaraResults, startProgressPolling]);
+  }, [activeDomain, fetchAssets, fetchDiagrams, fetchTaraProgress, fetchTaraResults, startProgressPolling, refreshMergedCount]);
 
   const handleCreateDomainSubmit = async (e) => {
     e.preventDefault();
@@ -960,6 +1051,62 @@ export default function Workbench({ setPage, setDomainId, setDiagramId, projectI
                     <Eye size={16} />
                     <span>{t("查看 TARA 结果")}</span>
                   </button>
+                )}
+              </div>
+
+              {/* 最终需求合并：上传 OEM 需求 → 合并客户需求与 TARA 需求 */}
+              <div style={{ marginTop: '14px', paddingTop: '14px', borderTop: '1px solid var(--border-color)', flexShrink: 0 }}>
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '16px', flexWrap: 'wrap' }}>
+                  <div style={{ fontSize: '12px', color: 'var(--text-secondary)' }}>
+                    {t("客户需求")}: <b>{customerReqCount}</b>
+                    {mergedCount > 0 && <> · {t("最终需求")}: <b>{mergedCount}</b></>}
+                  </div>
+                  <div style={{ display: 'flex', gap: '12px', alignItems: 'center' }}>
+                    <input
+                      ref={oemFileRef}
+                      type="file"
+                      accept=".xlsx,.xls,.csv"
+                      style={{ display: 'none' }}
+                      onChange={handleOemFileChange}
+                    />
+                    <button
+                      onClick={() => oemFileRef.current?.click()}
+                      className="btn btn-secondary"
+                      disabled={oemImporting || isProjectCompleted || activeDomain.status === 'running'}
+                      style={{ padding: '10px 20px' }}
+                    >
+                      <Upload size={16} />
+                      <span>{oemImporting ? t("导入中...") : t("上传 OEM 需求")}</span>
+                    </button>
+                    <button
+                      onClick={handleMergeRequirements}
+                      className="btn btn-primary"
+                      disabled={merging || isProjectCompleted || activeDomain.status === 'running' || customerReqCount === 0}
+                      style={{ padding: '10px 20px' }}
+                    >
+                      <Merge size={16} />
+                      <span>{merging ? t("合并中...") : t("合并需求")}</span>
+                    </button>
+                    <button
+                      onClick={handleDownloadMerged}
+                      className="btn btn-secondary"
+                      disabled={mergedCount === 0}
+                      style={{ padding: '10px 20px' }}
+                    >
+                      <FileDown size={16} />
+                      <span>{t("导出最终需求")}</span>
+                    </button>
+                  </div>
+                </div>
+                {mergeMsg && (
+                  <div style={{
+                    marginTop: '8px',
+                    fontSize: '13px',
+                    color: mergeMsg.type === 'error' ? '#e11d48' : 'var(--success)',
+                    textAlign: 'right',
+                  }}>
+                    {mergeMsg.text}
+                  </div>
                 )}
               </div>
             </div>
