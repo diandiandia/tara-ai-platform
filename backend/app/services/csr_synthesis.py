@@ -839,6 +839,78 @@ def synthesize_domain_csrs_with_llm(db: Session, domain_name: str, items: list) 
         return cons, report
 
 
+def dedup_stage5_summarized(summarized: list, requirements: list = None, threshold: float = PRE_DEDUP_THRESHOLD) -> list:
+    """同资产后去重：合并 Stage5 LLM 漏合的近似重复 summarized_requirements。
+
+    与跨资产阶段使用同一套语义近似判定（中文 2-gram + Jaccard）。
+    合并后统一 source_requirement_ids / applicable_assets，并做内容覆盖校验，
+    结果写入 ``_content_gaps``。
+    """
+    if not summarized:
+        return summarized
+
+    req_by_id = {}
+    for r in requirements or []:
+        rid = r.get("cybersecurity_requirement_id") or r.get("csr_id")
+        if rid:
+            req_by_id[str(rid)] = r
+
+    clusters = []
+    for s in summarized:
+        text = f"{s.get('title', '')} {s.get('cybersecurity_requirement', '')}"
+        toks = semantic_tokens(text)
+        best, best_sim = None, 0.0
+        for c in clusters:
+            sim = _jaccard(toks, c["tokens"])
+            if sim > best_sim:
+                best, best_sim = c, sim
+        if best is not None and best_sim >= threshold:
+            best["items"].append(s)
+            best["tokens"] |= toks
+        else:
+            clusters.append({"tokens": toks, "items": [s]})
+
+    merged = []
+    for c in clusters:
+        group = c["items"]
+        if len(group) == 1:
+            merged.append(group[0])
+            continue
+        rep = max(group, key=lambda x: len(str(x.get("cybersecurity_requirement") or "")))
+        sources, assets = [], []
+        for s in group:
+            for sid in (s.get("source_requirement_ids") or []):
+                if str(sid) not in sources:
+                    sources.append(str(sid))
+            for an in (s.get("applicable_assets") or []):
+                if an not in assets:
+                    assets.append(an)
+        new_s = dict(rep)
+        new_s["source_requirement_ids"] = sources
+        new_s["applicable_assets"] = assets
+        new_s["_stage5_dedup_count"] = len(group)
+        merged.append(new_s)
+
+    # 内容覆盖校验（来源关键词是否真的落到合并正文里）
+    for s in merged:
+        toks = semantic_tokens(f"{s.get('title', '')} {s.get('cybersecurity_requirement', '')}")
+        gaps = []
+        for sid in (s.get("source_requirement_ids") or []):
+            src = req_by_id.get(str(sid).strip())
+            if not src:
+                continue
+            src_toks = semantic_tokens(
+                f"{src.get('title', '')} {src.get('cybersecurity_requirement', '')}"
+            )
+            if not src_toks:
+                continue
+            overlap = len(src_toks & toks) / len(src_toks)
+            if overlap < CONTENT_COVERAGE_MIN_RATIO:
+                gaps.append({"source_id": str(sid), "overlap": round(overlap, 2)})
+        s["_content_gaps"] = gaps
+    return merged
+
+
 def dedup_cross_category(rows: list, threshold: float = 0.90) -> list:
     """跨分类语义去重：合并不同功能分类下高度相似的 CSR。
 

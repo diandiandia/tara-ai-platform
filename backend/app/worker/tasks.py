@@ -1883,9 +1883,16 @@ def tara_ai_analysis_call(db: Session, stage: str, asset: Asset, prev_stages: di
                 "_validation_warnings": validation_warnings
             }
             
+            _summarized = ai_res.get("summarized_requirements", [])
+            try:
+                from app.services.csr_synthesis import dedup_stage5_summarized
+                _summarized = dedup_stage5_summarized(_summarized, ai_res.get("requirements", []))
+            except Exception as _dedup_err:
+                print(f"[TARA-AI] stage45 同资产去重跳过: {_dedup_err}")
+
             stage4_final["_consolidated_stage5_data"] = {
                 "risk_decisions": risk_decisions,
-                "summarized_requirements": ai_res.get("summarized_requirements", [])
+                "summarized_requirements": _summarized
             }
             return stage4_final
 
@@ -2073,6 +2080,16 @@ def tara_ai_analysis_call(db: Session, stage: str, asset: Asset, prev_stages: di
                         "source_requirement_ids": item.get("source_requirement_ids", [])
                     })
                     
+            # 同资产语义后去重：合并 LLM 漏合的近似重复汇总需求（与跨资产阶段同一套相似度判定）
+            try:
+                from app.services.csr_synthesis import dedup_stage5_summarized
+                before = len(summarized_csrs)
+                summarized_csrs = dedup_stage5_summarized(summarized_csrs, requirements)
+                if len(summarized_csrs) != before:
+                    print(f"[TARA-AI] stage5 同资产去重: {before} -> {len(summarized_csrs)} 项")
+            except Exception as _dedup_err:
+                print(f"[TARA-AI] stage5 同资产去重跳过: {_dedup_err}")
+
             # 代码级兜底：确保每个 allocated_to_device=yes 的需求都被至少一条汇总 CSR 引用（Tier1 -> Tier2 覆盖）
             summarized_csrs = enforce_stage5_source_coverage(requirements, summarized_csrs, asset)
 
