@@ -682,6 +682,7 @@ def collect_merged_requirement_rows(db: Session, domain_id: int) -> List[dict]:
             "security_domain": r.security_domain or "",
             "control_category": r.control_category or "",
             "requirement_title": r.requirement_title or "",
+            "subject": r.subject or "",
             "requirement_text": r.requirement_text or "",
             "additional_info": r.additional_info or "",
             "status": r.status or "",
@@ -820,7 +821,7 @@ def create_excel_report(domain: Domain, steps: List[TaraStep], assets: List[Asse
         ws2.views.sheetView[0].showGridLines = True
         
         headers2 = [
-            "Atomic CSR ID", "Security Domain", "Control Category", "Requirement Title", "Cybersecurity Requirement (CN/EN)",
+            "Atomic CSR ID", "Security Domain", "Control Category", "Requirement Title", "Subject / 责任主体", "Cybersecurity Requirement (CN/EN)",
             "Verification Method / 验证方法", "Requirement Type / 需求类型", "Rationale / 需求依据",
             "Applicable Assets / 适用资产列表", "Assets Count / 覆盖资产数",
             "Source Cybersecurity Requirement IDs / 来源TARA需求ID", "Source Count / 追溯条目数"
@@ -835,7 +836,7 @@ def create_excel_report(domain: Domain, steps: List[TaraStep], assets: List[Asse
         ws2.row_dimensions[1].height = 30
         csr_rows = csr_rows_pre
         current_row = 2
-        csr_keys = ["csr_id", "security_domain", "sub_category", "title", "cybersecurity_requirement", "verification_method", "requirement_type", "rationale", "applicable_assets", "assets_count", "source_cybersecurity_requirement_ids", "source_count"]
+        csr_keys = ["csr_id", "security_domain", "sub_category", "title", "subject", "cybersecurity_requirement", "verification_method", "requirement_type", "rationale", "applicable_assets", "assets_count", "source_cybersecurity_requirement_ids", "source_count"]
         
         for row_data in csr_rows:
             for col_idx, key in enumerate(csr_keys, 1):
@@ -1099,6 +1100,7 @@ def create_excel_report(domain: Domain, steps: List[TaraStep], assets: List[Asse
                 "Security Domain\n安全域",
                 "Control Category\n控制分类",
                 "Requirement Title\n需求标题",
+                "Subject / 责任主体",
                 "Unified Cybersecurity Requirement (CN/EN)\n整合网络安全需求描述 (中英双语)",
                 "Additional Info",
                 "Status",
@@ -1118,7 +1120,7 @@ def create_excel_report(domain: Domain, steps: List[TaraStep], assets: List[Asse
                 values = [
                     row_data["final_id"], row_data["customer_ids"], row_data["tara_ids"],
                     row_data["source_tara_raw_ids"], row_data["security_domain"], row_data["control_category"],
-                    row_data["requirement_title"], row_data["requirement_text"],
+                    row_data["requirement_title"], row_data["subject"], row_data["requirement_text"],
                     row_data["additional_info"], row_data["status"],
                     row_data["allocated_module"], row_data["responsible_org"], row_data["remarks"],
                 ]
@@ -1126,13 +1128,13 @@ def create_excel_report(domain: Domain, steps: List[TaraStep], assets: List[Asse
                     cell = ws_merged.cell(row=row_idx, column=col_idx, value=val)
                     cell.font = cell_font
                     cell.border = thin_border
-                    if col_idx in (1, 2, 3, 4, 10):
+                    if col_idx in (1, 2, 3, 4, 11):
                         cell.alignment = Alignment(horizontal="center", vertical="center", wrap_text=True)
                     else:
                         cell.alignment = Alignment(horizontal="left", vertical="center", wrap_text=True)
                 ws_merged.row_dimensions[row_idx].height = 70
 
-            col_w_merged = {1: 16, 2: 30, 3: 24, 4: 45, 5: 24, 6: 30, 7: 45, 8: 75, 9: 20, 10: 12, 11: 22, 12: 22, 13: 26}
+            col_w_merged = {1: 16, 2: 30, 3: 24, 4: 45, 5: 24, 6: 30, 7: 45, 8: 24, 9: 75, 10: 20, 11: 12, 12: 22, 13: 22, 14: 26}
             for c_idx, width in col_w_merged.items():
                 ws_merged.column_dimensions[openpyxl.utils.get_column_letter(c_idx)].width = width
 
@@ -1151,13 +1153,13 @@ def create_csv_report(domain: Domain, steps: List[TaraStep], assets: List[Asset]
     
     if export_type == "csr":
         headers_r2 = [
-            "Atomic CSR ID", "Security Domain", "Control Category", "Requirement Title",
+            "Atomic CSR ID", "Security Domain", "Control Category", "Requirement Title", "Subject",
             "Cybersecurity Requirement", "Verification Method", "Requirement Type", "Rationale",
             "Applicable Assets", "Assets Count",
             "Source Cybersecurity Requirement IDs", "Source Count"
         ]
         keys = [
-            "csr_id", "security_domain", "sub_category", "title",
+            "csr_id", "security_domain", "sub_category", "title", "subject",
             "cybersecurity_requirement", "verification_method", "requirement_type", "rationale", "applicable_assets", "assets_count",
             "source_cybersecurity_requirement_ids", "source_count"
         ]

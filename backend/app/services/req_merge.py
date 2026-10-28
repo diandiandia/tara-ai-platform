@@ -22,7 +22,7 @@ from app.core.taxonomy import (
     CANONICAL_DOMAINS,
     clean_major_category,
 )
-from app.services.csr_synthesis import clean_and_parse_json, post_llm_request_with_retry
+from app.services.csr_synthesis import clean_and_parse_json, post_llm_request_with_retry, extract_subject
 
 # ---------------------------------------------------------------------------
 # Excel 解析
@@ -223,8 +223,9 @@ tara_csrs: [{csr_id, text, security_domain, control_category, title}]
 3. 冲突（互相矛盾）→ 合并为一条但 conflict=true，conflict_note 说明冲突点，resolution 默认 customer_wins（客户合规优先）。
 4. 客户独有（我方无对应）→ 保留，source_refs 只含 customer_id。
 5. 我方独有（客户无对应）→ 保留，source_refs 只含 csr_id。
-6. 每一条最终需求必须给出：security_domain（必须严格取下列标准域之一）、control_category、requirement_title、requirement_text（中英双语，格式“中文 / English”）、verification_method。
+6. 每一条最终需求必须给出：security_domain（必须严格取下列标准域之一）、control_category、requirement_title、requirement_text（中英双语，格式“中文 / English”）、verification_method、subject（责任主体）。
 7. 覆盖率契约：输入中的每一个 customer_id 和 csr_id 都必须出现在至少一条最终需求的 source_refs 中；禁止遗漏、禁止编造输入中不存在的 ID。
+8. 责任主体明确（强制）：requirement_text 必须以负责实施的组件/系统/模块作主语，写清「谁（组件/系统/模块）对什么对象实施什么控制」；禁止用事件、现象、数据或抽象名词作句子主语；例如「完整性校验失败事件应记录至本地审计存储」必须写成「ADCU 审计模块应将完整性校验失败事件记录至本地审计存储」；subject 字段单列该责任主体。
 
 【标准安全域】
 {domains}
@@ -236,6 +237,7 @@ tara_csrs: [{csr_id, text, security_domain, control_category, title}]
       "security_domain": "硬件安全 / Hardware Security",
       "control_category": "控制分类",
       "requirement_title": "需求标题",
+      "subject": "责任主体（组件/系统/模块）/ Responsible subject",
       "requirement_text": "中文需求 / English requirement",
       "verification_method": "测试 / Test",
       "conflict": false,
@@ -341,6 +343,7 @@ def persist_merged_requirements(db, project_id: int, domain_id: int, merged_rows
             security_domain=m.get("security_domain") or "",
             control_category=m.get("control_category") or "",
             requirement_title=m.get("requirement_title") or "",
+            subject=m.get("subject") or extract_subject(m.get("requirement_text") or ""),
             requirement_text=m.get("requirement_text") or "",
             source_tara_raw_ids=tara_raw_ids,
             status="Draft",

@@ -32,6 +32,7 @@ class MergedRequirement(Base):
     security_domain = Column(String(100), nullable=True)    # 安全域
     control_category = Column(String(200), nullable=True)   # 控制分类
     requirement_title = Column(String(300), nullable=True)  # 需求标题
+    subject = Column(String(300), nullable=True)            # 责任主体（组件/系统/模块）
     requirement_text = Column(Text, nullable=True)          # 统一需求（中英双语）
     source_tara_raw_ids = Column(Text, nullable=True)       # 追溯的 TARA 原始 ID（冗余，便于导出）
     additional_info = Column(Text, nullable=True)

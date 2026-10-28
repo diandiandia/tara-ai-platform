@@ -24,6 +24,19 @@ from app.core.taxonomy import (
     clean_major_category,
 )
 
+
+def extract_subject(text: str) -> str:
+    """从需求文本中提取【主体】/ [Subject] 段，作为「责任主体」的确定性兜底。"""
+    if not text:
+        return ""
+    m = re.search(r'【主体】([^【】]*)', str(text))
+    if m and m.group(1).strip():
+        return m.group(1).strip()
+    m = re.search(r'\[Subject\]\s*([^\[]*)', str(text), re.IGNORECASE)
+    if m and m.group(1).strip():
+        return m.group(1).strip().rstrip(";").strip()
+    return ""
+
 # R155 Annex 5 is used here as a mitigation-dimension checklist, not as a
 # technology selection list. Do not add concrete protocol names, algorithm
 # names, port numbers, or numeric thresholds to these strings: the synthesis
@@ -550,12 +563,12 @@ def synthesize_domain_csrs_with_llm(db: Session, domain_name: str, items: list) 
 - Cybersecurity Goal：对资产/接口的安全属性与期望结果的高层声明；技术中立，不写协议、算法、产品、阈值。
 - Cybersecurity Claim：剩余风险可接受/已转移的正式声明；说明剩余风险、依据、适用条件、有效期与批准角色。
 - Cybersecurity Control：控制类型（预防/检测/纠正；技术/操作）+ 控制目标 + 作用点；不写具体协议/算法/产品。
-- Cybersecurity Requirement：保护对象 + 安全属性/控制目标 + 应/不应行为 + 适用条件 + 验证方法；技术中立。
+- Cybersecurity Requirement：责任主体（哪个组件/系统/模块负责实施）+ 保护对象（对什么）+ 应/不应行为（实施什么控制）+ 触发条件 + 可验证结果 + 验证方法；技术中立。禁止用事件、现象、数据或抽象名词作句子主语。
 - 即使输入需求包含具体协议、算法、端口或数值，输出必须抽象为能力要求，不得原样保留。
 
 【任务与合并原则】：
 1. 跨资产归纳合并：输入是当前被评估对象（Item）中各个底层资产提出的网络安全要求列表。
-2. 原子化边界：一条 CSR = 一个保护对象 + 一个控制目标 + 一个可验证结果。
+2. 原子化边界：一条 CSR = 一个责任主体 + 一个保护对象 + 一个控制目标 + 一个可验证结果。
 3. 只有“同一资产类别、同一攻击面、同一控制目标、同一验证方法”才合并；适用范围、适用资产或安全等级不同的，必须拆成多条。
 4. 合并后必须保留所有来源的适用条件差异，不能用一个来源的阈值/例外代表全部来源。
 5. 技术中立：聚焦安全功能能力与防御目标（What & Why），严禁写死具体算法型号、协议版本、端口号或单一数值；用“经行业认可的高强度算法”“标准安全通道”“安全会话超时”等能力表述。
@@ -563,6 +576,7 @@ def synthesize_domain_csrs_with_llm(db: Session, domain_name: str, items: list) 
 7. 中英文双语规范：sub_category、title、cybersecurity_requirement、verification_method、rationale 必须中英文对照，格式为“中文 / English”。
 8. 100% 完整双向追溯：source_requirement_ids 必须精确列出该项涵盖的所有原始 raw_id；输入中的每一个 raw_id 必须被至少一项 CSR 覆盖，绝不允许丢项。
 9. 适用资产映射：applicable_assets 数组列出所有适用的资产名称。
+10. 责任主体明确（强制）：每条 CSR 的 cybersecurity_requirement 必须以负责实施的组件/系统/模块作主语，写清「谁（组件/系统/模块）对什么对象实施什么控制」；禁止用事件、现象、数据或抽象名词作句子主语；例如「完整性校验失败事件应记录至本地审计存储」必须写成「ADCU 审计模块应将完整性校验失败事件记录至本地审计存储」；同时在 subject 字段单列该责任主体。
 
 请严格输出如下 JSON 格式：
 {{
@@ -570,6 +584,7 @@ def synthesize_domain_csrs_with_llm(db: Session, domain_name: str, items: list) 
     {{
       "sub_category": "安全机制子分类名称 / Sub-category mechanism",
       "title": "项目级需求标题 / Project-level requirement title",
+      "subject": "责任主体（组件/系统/模块）/ Responsible subject",
       "cybersecurity_requirement": "中文需求完整规范描述... / English requirement specification...",
       "verification_method": "测试/分析/检查/演示方法 / Verification method",
       "requirement_type": "product | process | supplier",
@@ -790,6 +805,7 @@ def synthesize_project_csrs(db: Session, all_csrs: list, global_tier2_to_tier1: 
                 "applicable_assets": applicable_assets_str,
                 "assets_count": len(applicable_assets) if isinstance(applicable_assets, list) else 1,
                 "title": c.get("title") or "网络安全要求 / Cybersecurity Requirement",
+                "subject": c.get("subject") or extract_subject(c.get("cybersecurity_requirement") or ""),
                 "cybersecurity_requirement": c.get("cybersecurity_requirement") or "",
                 "verification_method": c.get("verification_method") or "",
                 "requirement_type": c.get("requirement_type") or "product",
@@ -878,6 +894,10 @@ def get_or_synthesize_global_csrs(db: Session, domain: Domain, steps: list, asse
                         r["source_count"] = len(sorted_t1)
                         r["_raw_source_ids"] = sorted_t1
                         r["_tier2_source_ids"] = tier2_sources
+
+                    # 责任主体兜底：老缓存没有 subject 时，从需求正文的【主体】段提取
+                    if not r.get("subject"):
+                        r["subject"] = extract_subject(r.get("cybersecurity_requirement") or "")
                         
                     if hash_to_global_map is not None:
                         for tid in r.get("_raw_source_ids", []):
