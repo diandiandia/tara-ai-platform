@@ -682,6 +682,158 @@ def synthesize_domain_csrs_with_llm(db: Session, domain_name: str, items: list) 
         return cons, report
 
 
+def classify_csr_functional_categories(db: Session, rows: list) -> list:
+    """把原子化后的 CSR 逐条分类到 17 个功能分类（LLM 主分类 + 规则校验）。
+
+    遵循「合并去重 → 原子化 → 分类」：本函数只做分类，不改变 CSR 的原子化结果。
+    每条结果写入：
+      functional_category / category_source / category_confidence / category_reason / needs_review
+    LLM 不可用时回退到确定性规则分类。
+    """
+    from app.core.taxonomy import (
+        FUNCTIONAL_PROMPT_LIST,
+        classify_functional_category,
+        correct_functional_category,
+    )
+
+    if not rows:
+        return rows
+
+    def _rule_of(r):
+        return classify_functional_category(
+            f"{r.get('title', '')} {r.get('cybersecurity_requirement', '')} {r.get('subject', '')}"
+        )
+
+    # 规则初判（LLM 失败/漏项时兜底）
+    for r in rows:
+        r["_rule_category"] = _rule_of(r)
+
+    settings = db.query(SystemSettings).first() if db is not None else None
+    if not settings or not settings.api_key or not settings.api_base_url:
+        print("[TARA-AI] 未配置大模型，功能分类回退规则分类")
+        for r in rows:
+            r["functional_category"] = r.get("_rule_category")
+            r["category_source"] = "rule_fallback"
+            r["category_confidence"] = "low"
+            r["category_reason"] = ""
+            r["needs_review"] = True
+        return rows
+
+    items = [
+        {
+            "id": r.get("csr_id"),
+            "title": r.get("title"),
+            "subject": r.get("subject"),
+            "requirement": r.get("cybersecurity_requirement"),
+        }
+        for r in rows
+    ]
+
+    prompt = f"""你是一名资深汽车网络安全需求管理专家（精通 ISO/SAE 21434 与 UNECE R155）。
+请把下面每一条**已原子化**的网络安全需求，归入且仅归入以下 17 个功能分类之一。
+
+【分类枚举（只能原样输出编号+名称，输出其它值一律视为不合格）】
+{FUNCTIONAL_PROMPT_LIST}
+
+【判定优先级（从上到下，命中即停）】
+1) 物理/PCB/丝印/封装/防拆/探针/HSM/eFUSE/SMPU/存储绑定/不可逆禁用 → 4.1 硬件安全
+2) 主题是调试（认证/会话/命令/审计/完整性） → 4.4 安全调试
+3) OTA/FOTA/远程升级/远程刷写 → 4.6 OTA 刷写安全
+4) 本地刷写（UDS/CAN/以太网/产线/诊断刷写） → 4.5 本地刷写安全
+5) 启动/回滚 → 4.7 安全启动
+6) 数据脱敏/去标识/匿名/隐私/数据分类 → 4.9 数据脱敏与隐私安全
+7) 存储 → 4.8 安全存储
+8) 诊断（27 服务） → 4.10 安全诊断
+9) 日志/审计 → 4.11 安全日志
+10) 加密/签名/密钥/证书/密码算法 → 4.12 密码、密钥与证书安全
+11) 雷达/摄像头/点云/图像/传感器 → 4.13 传感器安全
+12) 防火墙/入侵检测/网络隔离 → 4.14 防火墙安全
+13) 车内总线/报文/以太网 → 4.15 车内通信安全
+14) 远程/外网/云端 → 4.16 远程通讯安全
+15) 代码扫描/漏洞/SBOM/供应链/渗透测试 → 4.17 安全开发与供应链安全
+16) 认证/授权/最小权限/会话（非调试） → 4.3 访问控制
+17) 兜底 → 4.2 系统加固
+
+【反例（必须照此判定）】
+- "调试接口应对请求实体执行强身份认证" → 4.4 安全调试（不是 4.1）
+- "调试接口应在量产阶段通过 OTP 永久禁用" → 4.1 硬件安全
+- "通过 UDS 诊断刷写应用软件" → 4.5 本地刷写安全
+- "通过云端下发 OTA 包升级" → 4.6 OTA 刷写安全
+- "PCB 丝印应移除调试口标识" → 4.1 硬件安全
+- "用户个人数据应脱敏存储" → 4.9 数据脱敏与隐私安全
+
+【输出前自检】
+a) functional_category 是否严格是上面 17 个值之一？
+b) 是否符合优先级规则（尤其"调试认证→4.4、物理禁用→4.1"）？
+c) 本地刷写与 OTA 刷写是否区分正确？
+
+【输出 JSON 格式】
+{{"classifications": [{{"id": "CSR-XXX-001", "functional_category": "4.x 名称", "category_reason": "一句话理由"}}]}}
+
+必须覆盖输入中的每一个 id，不得遗漏、不得编造。"""
+
+    url = f"{settings.api_base_url.rstrip('/')}/chat/completions"
+    headers = {
+        "Authorization": f"Bearer {settings.api_key}",
+        "Content-Type": "application/json",
+    }
+    payload = {
+        "model": settings.model_name,
+        "messages": [
+            {"role": "system", "content": prompt},
+            {"role": "user", "content": json.dumps(items, ensure_ascii=False)},
+        ],
+        "response_format": {"type": "json_object"},
+    }
+
+    by_id = {}
+    try:
+        resp = post_llm_request_with_retry(url, headers, payload, max_retries=2)
+        raw_text = resp.json()["choices"][0]["message"]["content"]
+        parsed = clean_and_parse_json(raw_text)
+        for c in parsed.get("classifications") or []:
+            cid = str(c.get("id") or "").strip()
+            if cid:
+                by_id[cid] = c
+        print(f"[TARA-AI] 功能分类完成: LLM 覆盖 {len(by_id)}/{len(rows)} 条")
+    except Exception as exc:
+        print(f"[TARA-AI] 功能分类 LLM 失败，回退规则分类: {exc}")
+
+    for r in rows:
+        c = by_id.get(str(r.get("csr_id") or "").strip()) or {}
+        text = f"{r.get('title', '')} {r.get('cybersecurity_requirement', '')} {r.get('subject', '')}"
+        cat, source, needs_review = correct_functional_category(
+            c.get("functional_category"), text
+        )
+        if not c.get("functional_category"):
+            # LLM 未覆盖该条 → 规则兜底
+            cat = r.get("_rule_category") or classify_functional_category(text)
+            source = "rule_fallback"
+            needs_review = True
+        r["functional_category"] = cat
+        r["category_source"] = source
+        r["category_confidence"] = "low" if needs_review else "high"
+        r["category_reason"] = str(c.get("category_reason") or "")[:200]
+        r["needs_review"] = bool(needs_review)
+
+    # 按 17 功能分类重新编号并排序（CSR-HW / CSR-DBG / CSR-FLASH / CSR-OTA ...）
+    from app.core.taxonomy import FUNCTIONAL_PREFIX_MAP, FUNCTIONAL_CATEGORY_NAMES
+    grouped = {}
+    for r in rows:
+        grouped.setdefault(r.get("functional_category") or "4.2 系统加固", []).append(r)
+    for cat, lst in grouped.items():
+        prefix = FUNCTIONAL_PREFIX_MAP.get(cat, "CSR-GEN")
+        lst.sort(key=lambda x: str(x.get("csr_id") or ""))
+        for idx, r in enumerate(lst, 1):
+            new_id = f"{prefix}-{idx:03d}"
+            r["old_csr_id"] = r.get("csr_id")
+            r["csr_id"] = new_id
+            r["number"] = new_id
+    order = {c: i for i, c in enumerate(FUNCTIONAL_CATEGORY_NAMES)}
+    rows.sort(key=lambda r: (order.get(r.get("functional_category"), 99), str(r.get("csr_id") or "")))
+    return rows
+
+
 def synthesize_project_csrs(db: Session, all_csrs: list, global_tier2_to_tier1: dict = None) -> list:
     """
     对跨资产收集到的所有底层安全需求按标准安全分类域进行并发大模型全局提炼与编号，
@@ -848,6 +1000,9 @@ def synthesize_project_csrs(db: Session, all_csrs: list, global_tier2_to_tier1: 
             "CSR source traceability incomplete: "
             f"missing={missing_tier2[:20]}"
         )
+
+    # 合并去重 → 原子化 → 分类：对最终原子化 CSR 统一做 17 类功能分类
+    classify_csr_functional_categories(db, final_rows)
 
     return final_rows
 

@@ -541,12 +541,21 @@ from app.services.csr_synthesis import (
 )
 
 def _apply_security_domain_correction(rows: list) -> list:
-    """按控制机制纠正安全域（例如调试口身份认证应归系统安全，而不是硬件安全）。"""
-    from app.core.taxonomy import correct_security_domain
+    """按控制机制纠正安全域，并为缺少功能分类的旧缓存补规则分类。"""
+    from app.core.taxonomy import correct_security_domain, classify_functional_category
 
     for r in rows:
+        text = r.get("cybersecurity_requirement") or ""
         dom = clean_major_category(r.get("security_domain"))
-        r["security_domain"] = correct_security_domain(dom, r.get("cybersecurity_requirement") or "")
+        r["security_domain"] = correct_security_domain(dom, text)
+        if not r.get("functional_category"):
+            # 旧缓存（本功能上线前生成）没有功能分类字段，用规则兜底
+            r["functional_category"] = classify_functional_category(
+                f"{r.get('title', '')} {text} {r.get('subject', '')}"
+            )
+            r["category_source"] = "rule_fallback"
+            r["category_confidence"] = "low"
+            r["needs_review"] = True
     return rows
 
 
@@ -833,10 +842,11 @@ def create_excel_report(domain: Domain, steps: List[TaraStep], assets: List[Asse
         ws2.views.sheetView[0].showGridLines = True
         
         headers2 = [
-            "Atomic CSR ID", "Security Domain", "Control Category", "Requirement Title", "Subject / 责任主体", "Cybersecurity Requirement (CN/EN)",
+            "Atomic CSR ID", "Security Domain", "Functional Category / 功能分类", "Control Category", "Requirement Title", "Subject / 责任主体", "Cybersecurity Requirement (CN/EN)",
             "Verification Method / 验证方法", "Requirement Type / 需求类型", "Rationale / 需求依据",
             "Applicable Assets / 适用资产列表", "Assets Count / 覆盖资产数",
-            "Source Cybersecurity Requirement IDs / 来源TARA需求ID", "Source Count / 追溯条目数"
+            "Source Cybersecurity Requirement IDs / 来源TARA需求ID", "Source Count / 追溯条目数",
+            "Needs Review / 待复核"
         ]
         for col_idx, h in enumerate(headers2, 1):
             cell = ws2.cell(row=1, column=col_idx, value=h)
@@ -848,7 +858,7 @@ def create_excel_report(domain: Domain, steps: List[TaraStep], assets: List[Asse
         ws2.row_dimensions[1].height = 30
         csr_rows = csr_rows_pre
         current_row = 2
-        csr_keys = ["csr_id", "security_domain", "sub_category", "title", "subject", "cybersecurity_requirement", "verification_method", "requirement_type", "rationale", "applicable_assets", "assets_count", "source_cybersecurity_requirement_ids", "source_count"]
+        csr_keys = ["csr_id", "security_domain", "functional_category", "sub_category", "title", "subject", "cybersecurity_requirement", "verification_method", "requirement_type", "rationale", "applicable_assets", "assets_count", "source_cybersecurity_requirement_ids", "source_count", "needs_review"]
         
         for row_data in csr_rows:
             for col_idx, key in enumerate(csr_keys, 1):
@@ -857,6 +867,8 @@ def create_excel_report(domain: Domain, steps: List[TaraStep], assets: List[Asse
                     # Backward compatibility for cached rows created before
                     # the explicit source column was added.
                     val = row_data.get("source_tara_requirements", "")
+                if key == "needs_review":
+                    val = "Yes" if val else "No"
                 cell = ws2.cell(row=current_row, column=col_idx, value=val)
                 cell.font = cell_font
                 cell.border = thin_border
@@ -870,7 +882,7 @@ def create_excel_report(domain: Domain, steps: List[TaraStep], assets: List[Asse
             current_row += 1
             
         # 列宽设置 (Sheet 2)
-        col_w_map2 = {1: 16, 2: 24, 3: 28, 4: 35, 5: 65, 6: 32, 7: 14, 8: 45, 9: 40, 10: 14, 11: 40, 12: 14}
+        col_w_map2 = {1: 16, 2: 22, 3: 22, 4: 26, 5: 32, 6: 50, 7: 60, 8: 28, 9: 14, 10: 40, 11: 36, 12: 14, 13: 36, 14: 12, 15: 12}
         for c_idx, width in col_w_map2.items():
             col_letter = openpyxl.utils.get_column_letter(c_idx)
             ws2.column_dimensions[col_letter].width = width
@@ -1165,15 +1177,15 @@ def create_csv_report(domain: Domain, steps: List[TaraStep], assets: List[Asset]
     
     if export_type == "csr":
         headers_r2 = [
-            "Atomic CSR ID", "Security Domain", "Control Category", "Requirement Title", "Subject",
+            "Atomic CSR ID", "Security Domain", "Functional Category", "Control Category", "Requirement Title", "Subject",
             "Cybersecurity Requirement", "Verification Method", "Requirement Type", "Rationale",
             "Applicable Assets", "Assets Count",
-            "Source Cybersecurity Requirement IDs", "Source Count"
+            "Source Cybersecurity Requirement IDs", "Source Count", "Needs Review"
         ]
         keys = [
-            "csr_id", "security_domain", "sub_category", "title", "subject",
+            "csr_id", "security_domain", "functional_category", "sub_category", "title", "subject",
             "cybersecurity_requirement", "verification_method", "requirement_type", "rationale", "applicable_assets", "assets_count",
-            "source_cybersecurity_requirement_ids", "source_count"
+            "source_cybersecurity_requirement_ids", "source_count", "needs_review"
         ]
         rows = collect_csr_report_data(steps, assets)
     else:
@@ -1208,6 +1220,8 @@ def create_csv_report(domain: Domain, steps: List[TaraStep], assets: List[Asset]
                 val = row.get(k, "")
                 if k == "source_cybersecurity_requirement_ids" and not val:
                     val = row.get("source_tara_requirements", "")
+                if k == "needs_review":
+                    val = "Yes" if val else "No"
                 values.append("" if val is None else val)
             writer.writerow(values)
             
