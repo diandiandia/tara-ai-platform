@@ -39,9 +39,7 @@ export default function Workbench({ setPage, setDomainId, setDiagramId, projectI
 
   const { 
     assets, 
-    taraResults,
     fetchAssets, 
-    fetchTaraResults,
     confirmAsset, 
     extractAssets, 
     clearAssets,
@@ -261,7 +259,6 @@ export default function Workbench({ setPage, setDomainId, setDiagramId, projectI
       fetchDiagrams(activeDomain.id);
       fetchAssets(activeDomain.id);
       fetchTaraProgress(activeDomain.id);
-      fetchTaraResults(activeDomain.id);
       refreshMergedCount(activeDomain.id);
       
       // If domain is running, start polling progress
@@ -274,7 +271,7 @@ export default function Workbench({ setPage, setDomainId, setDiagramId, projectI
       setMergedCount(0);
       stopProgressPolling();
     }
-  }, [activeDomain, fetchAssets, fetchDiagrams, fetchTaraProgress, fetchTaraResults, startProgressPolling, refreshMergedCount]);
+  }, [activeDomain, fetchAssets, fetchDiagrams, fetchTaraProgress, startProgressPolling, refreshMergedCount]);
 
   const handleCreateDomainSubmit = async (e) => {
     e.preventDefault();
@@ -1097,7 +1094,7 @@ export default function Workbench({ setPage, setDomainId, setDiagramId, projectI
                   <span>{t("启动 TARA 分析")}</span>
                 </button>
 
-                {(activeDomain.status === 'completed' || activeDomain.status === 'failed') && taraResults && taraResults.length > 0 && (
+                {(activeDomain.status === 'completed' || activeDomain.status === 'failed') && (
                   <button
                     onClick={() => { setDomainId(activeDomain.id); setPage('tara-results'); }}
                     className="btn btn-secondary"
