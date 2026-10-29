@@ -1428,36 +1428,6 @@ def aggregate_subsystem_requirements(diagram_title: str, items: list, settings: 
     return consolidated_results
 
 
-def aggregate_global_requirements(subsystem_items: list, settings: dict = None) -> list:
-    """
-    Step 4: 全资产通用归纳去重。
-    对跨子系统的通用安全控制（如通用日志审计、全局密钥管理、基础安全启动与防拆检测）
-    执行跨子系统聚类合并，并合并资产列表与 TARA 来源 ID。
-    """
-    if not subsystem_items:
-        return []
-    if len(subsystem_items) <= 1:
-        return subsystem_items
-
-    clusters = []
-    for it in subsystem_items:
-        toks = semantic_tokens(it.get("cybersecurity_requirement", "") or it.get("clause", ""))
-        matched = False
-        for c in clusters:
-            if _jaccard(toks, c["tokens"]) >= 0.85:
-                c["source_tara_ids"].update(it["source_tara_ids"])
-                c["applicable_assets"].update(it["applicable_assets"])
-                matched = True
-                break
-        if not matched:
-            it_copy = dict(it)
-            it_copy["tokens"] = toks
-            it_copy["source_tara_ids"] = set(it["source_tara_ids"])
-            it_copy["applicable_assets"] = set(it["applicable_assets"])
-            clusters.append(it_copy)
-    return clusters
-
-
 def _classify_batch_with_llm(batch_items: list, settings: dict = None) -> list:
     """使用大模型对一批原子 CSR 需求进行忠实评估分类。"""
     if not batch_items:
@@ -1569,6 +1539,230 @@ def classify_csrs_with_llm(items: list, settings: dict = None) -> list:
         for f in as_completed(futures):
             f.result()
     return items
+
+
+def _cluster_fallback_for_category(cat_name: str, items: list) -> list:
+    """无大模型或网络异常时，使用确定性语义聚类将一个分类下的需求收敛至 2~4 条。"""
+    if len(items) <= 2:
+        return items
+
+    clusters = []
+    for it in items:
+        toks = semantic_tokens(it.get("cybersecurity_requirement", "") or it.get("clause", ""))
+        matched = False
+        for c in clusters:
+            if _jaccard(toks, c["tokens"]) >= 0.50:
+                c["source_tara_ids"].update(it.get("source_tara_ids") or it.get("_raw_source_ids") or [])
+                applicable = it.get("applicable_assets", [])
+                if isinstance(applicable, str):
+                    c["applicable_assets"].update([a.strip() for a in applicable.split("\n") if a.strip()])
+                elif isinstance(applicable, (set, list)):
+                    c["applicable_assets"].update(applicable)
+                matched = True
+                break
+        if not matched:
+            it_copy = dict(it)
+            it_copy["tokens"] = toks
+            it_copy["source_tara_ids"] = set(it.get("source_tara_ids") or it.get("_raw_source_ids") or [])
+            applicable = it.get("applicable_assets", [])
+            if isinstance(applicable, str):
+                it_copy["applicable_assets"] = set([a.strip() for a in applicable.split("\n") if a.strip()])
+            elif isinstance(applicable, (set, list)):
+                it_copy["applicable_assets"] = set(applicable)
+            else:
+                it_copy["applicable_assets"] = set()
+            clusters.append(it_copy)
+
+    # 贪心收敛至 <= 4 条
+    while len(clusters) > 4:
+        best_pair = (0, 1)
+        best_sim = -1.0
+        for i in range(len(clusters)):
+            for j in range(i + 1, len(clusters)):
+                sim = _jaccard(clusters[i]["tokens"], clusters[j]["tokens"])
+                if sim > best_sim:
+                    best_sim = sim
+                    best_pair = (i, j)
+        i, j = best_pair
+        clusters[i]["source_tara_ids"].update(clusters[j]["source_tara_ids"])
+        clusters[i]["applicable_assets"].update(clusters[j]["applicable_assets"])
+        clusters[i]["tokens"].update(clusters[j]["tokens"])
+        clusters.pop(j)
+
+    for c in clusters:
+        c["functional_category"] = cat_name
+
+    return clusters
+
+
+def _synthesize_single_category(cat_name: str, items: list, settings: dict = None) -> list:
+    """对单个功能分类内的微观/子系统需求执行项目级（系统级）最终综合提炼，目标收敛为 2~4 条。"""
+    if not items:
+        return []
+    if len(items) <= 2:
+        if len(items) == 2:
+            t1 = semantic_tokens(items[0].get("cybersecurity_requirement", ""))
+            t2 = semantic_tokens(items[1].get("cybersecurity_requirement", ""))
+            if _jaccard(t1, t2) >= 0.75:
+                items[0]["source_tara_ids"].update(items[1].get("source_tara_ids") or items[1].get("_raw_source_ids") or [])
+                app1 = items[0].get("applicable_assets", [])
+                app2 = items[1].get("applicable_assets", [])
+                set1 = set([a.strip() for a in app1.split("\n") if a.strip()]) if isinstance(app1, str) else set(app1)
+                set2 = set([a.strip() for a in app2.split("\n") if a.strip()]) if isinstance(app2, str) else set(app2)
+                items[0]["applicable_assets"] = set1.union(set2)
+                return [items[0]]
+        return items
+
+    target_count = "2~3" if len(items) <= 15 else "3~4"
+
+    if settings and settings.get("api_key") and settings.get("api_base_url") and settings["api_key"] not in ["mock_test_key", ""]:
+        try:
+            items_prompt = ""
+            for idx, it in enumerate(items):
+                applicable = it.get("applicable_assets", [])
+                assets_list = [a.strip() for a in applicable.split("\n") if a.strip()] if isinstance(applicable, str) else list(applicable)
+                assets_str = ", ".join(assets_list[:3])
+                req = it.get("cybersecurity_requirement") or it.get("clause") or ""
+                items_prompt += f"[{idx}] (资产: {assets_str}) 主体: {it.get('subject')} | 标题: {it.get('title')} | 需求: {req[:90]}\n"
+
+            prompt = f"""你是一名资深汽车网络安全总架构师。当前正在对【{cat_name}】分类下的 {len(items)} 项安全需求进行「项目级（系统级）最终综合归纳提炼与合并去重」。
+
+【任务目标】：
+消除由于按资产或子系统划分导致的碎片化冗余，将输入的 {len(items)} 项具体场景/接口的微观需求，提炼收敛为 {target_count} 条高内聚、权威规范的【项目级网络安全需求（CSR）】。
+
+【核心规则】：
+1. 收敛目标：严格输出 {target_count} 条规范需求，全面覆盖该分类下各个关键防御维度（如机制生成、安全存储、可信验证、监控告警等）。
+2. 100% 来源覆盖契约（绝对强制）：输出的每一项 CSR 必须包含 source_indexes 字段，列出其所涵盖的输入项索引列表（例如 [0, 1, 2, 5, 8]）。所有输入的索引（0 到 {len(items)-1}）必须被完整覆盖，严禁遗漏任何索引！
+3. 规范主体与表述：责任主体统一使用系统级规范主体（如“ADCU 系统”、“ADCU 通信子系统”、“ADCU 访问控制服务”等）。正文采用中英文双语对照（中文描述 / English specification）。保持技术中立，不写死固定加密算法型号。
+4. 明确验证方法（测试/分析/演示/审查）与需求类型（product/process）。
+
+【待合并需求列表】：
+{items_prompt}
+
+【输出严格 JSON 格式】：
+{{
+  "category_csrs": [
+    {{
+      "source_indexes": [0, 1, 2],
+      "title": "中文标题 / English Title",
+      "subject": "责任主体 / Responsible Subject",
+      "cybersecurity_requirement": "中文需求正文... / English requirement specification...",
+      "verification_method": "测试/分析 / Test/Analysis",
+      "requirement_type": "product",
+      "rationale": "需求依据 / Rationale"
+    }}
+  ]
+}}
+"""
+            url = f"{settings['api_base_url'].rstrip('/')}/chat/completions"
+            headers = {"Authorization": f"Bearer {settings['api_key']}", "Content-Type": "application/json"}
+            payload = {
+                "model": settings.get("model_name", "deepseek-flash"),
+                "messages": [{"role": "user", "content": prompt}],
+                "response_format": {"type": "json_object"}
+            }
+            resp = post_llm_request_with_retry(url, headers, payload, max_retries=2)
+            parsed = clean_and_parse_json(resp.json()["choices"][0]["message"]["content"])
+            cat_csrs = parsed.get("category_csrs", [])
+            if cat_csrs:
+                covered = set()
+                results = []
+                for c in cat_csrs:
+                    src_idxs = c.get("source_indexes", [])
+                    raw_ids = set()
+                    assets_set = set()
+                    for idx in src_idxs:
+                        if isinstance(idx, int) and 0 <= idx < len(items):
+                            covered.add(idx)
+                            raw_ids.update(items[idx].get("source_tara_ids") or items[idx].get("_raw_source_ids") or [])
+                            applicable = items[idx].get("applicable_assets", [])
+                            if isinstance(applicable, str):
+                                assets_set.update([a.strip() for a in applicable.split("\n") if a.strip()])
+                            elif isinstance(applicable, (set, list)):
+                                assets_set.update(applicable)
+                    if raw_ids:
+                        results.append({
+                            "functional_category": cat_name,
+                            "title": c.get("title") or f"{cat_name}安全要求",
+                            "subject": c.get("subject") or "ADCU 系统",
+                            "cybersecurity_requirement": c.get("cybersecurity_requirement") or "",
+                            "verification_method": c.get("verification_method") or "测试/分析 / Test/Analysis",
+                            "requirement_type": c.get("requirement_type") or "product",
+                            "rationale": c.get("rationale") or "",
+                            "source_tara_ids": raw_ids,
+                            "applicable_assets": assets_set
+                        })
+
+                # 兜底：若 LLM 遗漏了部分 index，将其合并到第一项以保证 100% 来源追溯
+                if results:
+                    for idx in range(len(items)):
+                        if idx not in covered:
+                            missing_item = items[idx]
+                            m_raw = missing_item.get("source_tara_ids") or missing_item.get("_raw_source_ids") or []
+                            m_assets = missing_item.get("applicable_assets", [])
+                            results[0]["source_tara_ids"].update(m_raw)
+                            if isinstance(m_assets, str):
+                                results[0]["applicable_assets"].update([a.strip() for a in m_assets.split("\n") if a.strip()])
+                            elif isinstance(m_assets, (set, list)):
+                                results[0]["applicable_assets"].update(m_assets)
+                    return results
+        except Exception as e:
+            print(f"[TARA-AI] 分类 [{cat_name}] 大模型项目级提炼异常 ({e})，启用聚类兜底...")
+
+    return _cluster_fallback_for_category(cat_name, items)
+
+
+def aggregate_global_requirements(subsystem_items: list, settings: dict = None) -> list:
+    """
+    Step 4: 全资产通用与分类项目级归纳提炼。
+    将跨子系统的同类安全控制按 17 个标准功能分类进行系统级全局归纳，
+    消除按资产和子系统分段导致的碎片化冗余，将需求总数收敛至 50 条左右的高质量项目级 CSR，
+    同时严格继承并合并所有原始 TARA 需求 ID 与适用资产，确保 100% 来源双向追溯。
+    """
+    if not subsystem_items:
+        return []
+    if len(subsystem_items) <= 1:
+        return subsystem_items
+
+    from app.core.taxonomy import classify_functional_category
+
+    # 1. 确保所有条目具备客观的 17 功能分类
+    for it in subsystem_items:
+        if not it.get("functional_category"):
+            req_val = it.get('cybersecurity_requirement') or it.get('clause') or it.get('title') or ''
+            it["functional_category"] = classify_functional_category(f"{it.get('title', '')} {req_val} {it.get('subject', '')}")
+
+    # 如果具备大模型配置，批量快速优化一次分类
+    if settings and settings.get("api_key") and settings["api_key"] not in ["mock_test_key", ""]:
+        try:
+            classify_csrs_with_llm(subsystem_items, settings=settings)
+        except Exception as e:
+            print(f"[TARA-AI] 全局归纳前大模型分类批量微调异常 ({e})，保留预分类...")
+
+    # 2. 按 17 功能分类分组
+    by_cat = defaultdict(list)
+    for it in subsystem_items:
+        cat = it.get("functional_category") or "4.2 系统加固"
+        by_cat[cat].append(it)
+
+    # 3. 对各个分类并发执行项目级综合提炼（收敛至 2~4 条核心 CSR）
+    consolidated_results = []
+    with ThreadPoolExecutor(max_workers=5) as executor:
+        future_to_cat = {
+            executor.submit(_synthesize_single_category, cat, items, settings): cat
+            for cat, items in by_cat.items()
+        }
+        for fut in as_completed(future_to_cat):
+            cat = future_to_cat[fut]
+            try:
+                res = fut.result()
+                consolidated_results.extend(res)
+            except Exception as e:
+                print(f"[TARA-AI] 分类 [{cat}] 全局提炼异常 ({e})，启用聚类兜底...")
+                fallback_res = _cluster_fallback_for_category(cat, by_cat[cat])
+                consolidated_results.extend(fallback_res)
+
+    return consolidated_results
 
 
 def classify_and_finalize_csrs(global_items: list, all_input_raw_ids: Set[str] = None, settings: dict = None) -> list:
@@ -1822,13 +2016,13 @@ def get_or_synthesize_global_csrs(
     获取或执行项目级全局网络安全需求归纳提炼。
     支持 force_recompute 强制刷新缓存。若命中已有的 TaraStep(stage='global_csr') 且非 force 则直接返回。
     """
-    # 1. 尝试从已有 steps 中读取 global_csr 缓存 (除非 force_recompute)
+    # 1. 尝试从已有 steps 中读取 global_csr 缓存 (除非 force_recompute 或历史旧缓存条目过多 > 65)
     if not force_recompute:
         for s in steps:
             if s.stage == "global_csr" and s.analysis_result:
                 fo = s.analysis_result.get("final_output", {})
                 cached_rows = fo.get("consolidated_csrs", [])
-                if cached_rows:
+                if cached_rows and len(cached_rows) <= 65:
                     if hash_to_global_map is not None:
                         for r in cached_rows:
                             cid = r.get("csr_id")

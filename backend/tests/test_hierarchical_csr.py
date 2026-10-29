@@ -93,5 +93,39 @@ class HierarchicalCsrTests(unittest.TestCase):
             classify_and_finalize_csrs(fake_items, all_input_raw_ids={"CSR_AAAAAA01", "CSR_AAAAAA02"})
         self.assertIn("100% 追溯断裂", str(ctx.exception))
 
+    def test_category_global_consolidation_and_coverage(self):
+        # 模拟生成 15 条跨不同子系统和资产的安全日志需求
+        items = []
+        raw_ids = set()
+        for i in range(15):
+            raw_id = f"CSR_LOG_{i:04d}"
+            raw_ids.add(raw_id)
+            items.append({
+                "functional_category": "4.11 安全日志",
+                "title": f"日志审计要求_{i}",
+                "subject": f"子系统模块_{i}",
+                "cybersecurity_requirement": f"子系统模块_{i}应针对安全事件_{i}生成只追加审计日志并记录时间源。",
+                "verification_method": "测试",
+                "requirement_type": "product",
+                "rationale": "防篡改审计",
+                "source_tara_ids": {raw_id},
+                "applicable_assets": {f"资产_{i}"}
+            })
+
+        # 执行全局提炼（模拟无外网环境下的聚类收敛）
+        condensed = aggregate_global_requirements(items, settings=None)
+        # 校验条目数严格收敛至 2~4 条
+        self.assertLessEqual(len(condensed), 4)
+        self.assertGreaterEqual(len(condensed), 1)
+
+        # 校验 15 个原始 ID 100% 无遗漏继承
+        observed_ids = set()
+        observed_assets = set()
+        for c in condensed:
+            observed_ids.update(c["source_tara_ids"])
+            observed_assets.update(c["applicable_assets"])
+        self.assertEqual(observed_ids, raw_ids)
+        self.assertEqual(len(observed_assets), 15)
+
 if __name__ == "__main__":
     unittest.main()
