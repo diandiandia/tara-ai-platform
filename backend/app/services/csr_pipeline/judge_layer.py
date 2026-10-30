@@ -12,123 +12,98 @@ from .llm_proxy import LLMProxy
 # Prompt 模板
 # ============================================================================
 
-JUDGE_EQUIVALENCE_SYSTEM = """你是网络安全需求分析专家。以下需求已经按功能分类（如 4.4 安全调试、4.12 密码安全等）分组，请判断组内哪些需求是语义等价的。
+JUDGE_EQUIVALENCE_SYSTEM = """你是汽车网络安全工程专家（ISO 21434）。
+当前任务是对同一功能分类下的安全需求进行项目级（全局）等价判定与去重合并。
 
-判定规则（严格遵守）：
-1. 技术要求和约束强度都相同才判等价。仅主题相近但要求细节不同的 → 不等价。
-2. 动作相同但对象不同 → 不等价（对象不同意味着不同安全目标）。
-3. 动作与失败处理互补（如"应认证"+"应拒绝未通过认证"）→ 不等价（留给互补合并阶段处理）。
-4. 同一要求的中英文版本 → 等价。
-5. 仅在措辞上有差异（如"应验证" vs "必须校验"）但要求相同的 → 等价。
-6. 不确定 → 默认不判等价。
-7. 同组内的条目已经属于同一功能分类，不需要再比较分类。
+【项目级提炼原则】：
+本项目需要将各个不同子资产（如多个调试接口、多路传感器数据、多条通信报文）上具有相同/相似安全控制措施的需求，提炼合并为一条全局通用的网络安全要求（CSR），系统会自动将其关联的所有资产名称聚合到适用资产列表中。
+
+【判定规则】：
+1. 跨资产技术等价：若不同资产在技术防护目标、控制措施、检验方式上实质相同（例如：多个调试接口都要求“对调试终端进行身份认证”、“对接收命令进行新鲜度与防重放校验”、“生产阶段关闭硬件调试口”等），即便原资产对象或前缀不同，也【必须】判定为等价并归入同一组！
+2. 语义与措辞容错：中英文双语、近义词表达差异（如“应验证”、“必须校验”、“需实施检测”）判定为等价。
+3. 约束强度不同不合并：要求强度有本质差异的（如“完全禁用” vs “条件允许启用”）不得合并。
+4. 控制技术措施不同不合并：技术方向不同的（如“会话超时退出” vs “密码算法加密”）不得合并。
 
 输出格式：
 {
   "groups": [
     {
-      "group_name": "应验证固件签名",
+      "group_name": "系统应对外部调试命令进行新鲜度校验并拒绝重放",
       "member_ids": ["ASSET-1::CSR-001", "ASSET-2::CSR-005"]
     }
   ]
 }
 
-group_name 应为最简洁的语义摘要（不带主体前缀），member_ids 为判为等价的记录 ID 列表。
-每条记录最多出现在一个组中。未被分组的记录不需要在输出中列出。"""
+group_name 为该等价组最精炼通用的安全要求表述（不带具体资产前缀），member_ids 为等价记录 ID 列表。未被分组的独立记录无需列出。"""
 
-JUDGE_SELF_CHECK_SYSTEM = """你是需求分析审核员。请检查以下等价分组是否合理：
+JUDGE_SELF_CHECK_SYSTEM = """你是汽车网络安全需求审核员。请检查以下等价分组是否合理：
 
-- 是否有不该合并的条目被错误分到同一组（对象不同、安全目标不同、约束强度不同）？
-- 是否有该合并的条目被遗漏（主题相同、措辞不同但要求实际上相同）？
-- 是否有某个组的 member_ids 包含了明显不属于该组的条目？
-
-输入包含原始需求列表和正向判定的等价分组。
+审核要点：
+1. 鼓励并支持合理的跨资产通用控制要求合并（如对多个调试资产统一要求身份认证、对多个传感器统一要求完整性校验是完全合理的，不要因为资产主体不同而拆散）。
+2. 重点检查是否有【技术措施完全不同】的条目被错误合并（如把会话超时与数据加密合在一起）。
+3. 检查是否有明显的同类要求被遗漏未合并（如有，请在 missing_merges 中指出）。
 
 输出格式：
 {
   "has_errors": true/false,
   "all_correct": true/false,
-  "corrections": [
-    {
-      "group_name": "应验证固件签名",
-      "action": "remove",
-      "member_id": "ASSET-1::CSR-003",
-      "reason": "该需求是关于代码签名验证，与固件签名是不同的安全目标"
-    }
-  ],
-  "missing_merges": [
-    {
-      "member_ids": ["ASSET-1::CSR-010", "ASSET-2::CSR-020"],
-      "reason": "这两条都要求关闭调试接口，措辞不同但要求相同"
-    }
-  ]
+  "corrections": [],
+  "missing_merges": []
 }"""
 
 
 GLOBAL_GROUP_SYSTEM = """你是网络安全需求分析专家。以下是从不同分块中产出的等价组名列表。
-
-判断哪些组名在语义上是等价的（即表述的是同一条安全需求，只是措辞不同）。
+请判断哪些组名在语义上属于同一条项目级通用安全需求，可进一步合并。
 
 判定规则：
-1. 主体不同但要求语义相同 → 可归一类（如"ECU 应验证签名"和"网关应验证签名"语义相同）
-2. 要求强度不同 → 不得归一类（如"应加密" vs "宜加密"）
-3. 对象不同 → 不得归一类（如"关闭 JTAG" vs "关闭串口"，虽然都是关闭，但对象不同）
+1. 表达同一安全控制措施的组名合并为一条（如“调试命令新鲜度校验”与“验证调试命令新鲜性并防重放”合并）。
+2. 技术目标完全不同的不得合并。
 
 输出格式：
 {
   "merged_groups": [
     {
-      "merged_name": "应验证固件签名完整性和真实性",
-      "source_group_names": ["应验证固件签名", "固件签名校验", "应验证OTA固件签名"]
+      "merged_name": "系统应对外部调试命令执行新鲜度校验并拒绝重放",
+      "source_group_names": ["调试命令新鲜度校验", "验证调试命令新鲜性并防重放"]
     }
   ]
 }"""
 
 GLOBAL_GROUP_SELF_CHECK = """你是需求分析审核员。请检查以下全局组名归类：
 
-- 是否有不该归类的组名被错误合并（对象不同、强度不同）？
+- 是否有不该归类的组名被错误合并（技术目标不同、强度不同）？
 - 是否有该归类但被遗漏的组名？
 
 输出格式：
 {
   "has_errors": true/false,
   "all_correct": true/false,
-  "corrections": ["错误描述"]
+  "corrections": []
 }"""
 
 
-BACK_TO_ORIGINAL_SYSTEM = """你是网络安全需求审核专家。以下是一个全局等价类中的全部原始需求文本。
-
-请逐条判断：这些需求是否真的全部等价？如果不等价，哪些应该拆出去？
-
-原则：
-1. 不确定 → 默认拆开（宁可漏合并，不能错合并）
-2. 主体不同可能导致技术要求差异 → 必须拆开验证
-3. 约束条件不同（如"量产阶段" vs "全生命周期"）→ 必须拆开
+BACK_TO_ORIGINAL_SYSTEM = """你是网络安全需求审核专家。以下是一个项目级全局等价类中的候选需求。
+请确认它们是否表达了相同的核心安全控制要求（支持跨资产提炼）：
+1. 核心技术措施一致的保留在 confirmed 中；
+2. 仅当某条目技术措施方向完全无关时，才放入 removed 拆出。
 
 输出格式：
 {
   "confirmed": ["ASSET-1::CSR-001", "ASSET-2::CSR-005"],
-  "removed": [
-    {
-      "id": "ASSET-3::CSR-010",
-      "reason": "该需求要求'开发阶段'与其余条目的'量产阶段'约束不同，技术要求有差异"
-    }
-  ],
-  "all_equivalent": false
+  "removed": [],
+  "all_equivalent": true
 }"""
 
 BACK_TO_ORIGINAL_SELF_CHECK = """你是审核员。请检查以下回原文裁决结果：
 
-- 被拆出的条目是否真的不等价？
-- 留在组内的条目是否全部等价？
-- 有没有被拆出但实际上是等价的条目？
+- 被拆出的条目是否真的技术方向不同？
+- 留在组内的条目是否表达了相似的核心控制措施？
 
 输出格式：
 {
   "has_errors": true/false,
   "all_correct": true/false,
-  "corrections": ["错误描述"]
+  "corrections": []
 }"""
 
 
@@ -201,43 +176,54 @@ def judge_equivalence(
 # Step 1: 主题内分块等价判定
 # ============================================================================
 
+def _extract_core_requirement(text: str) -> str:
+    """提取核心要求文本（剥离【主体】...等资产特有前缀，聚焦核心技术措施）。"""
+    import re
+    if not text:
+        return ""
+    m = re.search(r"【要求】\s*(.*?)(?:/\s*\[Requirement\]|$)", text, re.DOTALL)
+    if m and len(m.group(1).strip()) >= 5:
+        return m.group(1).strip()
+    m2 = re.search(r"\[Requirement\]\s*(.*)", text, re.DOTALL)
+    if m2 and len(m2.group(1).strip()) >= 5:
+        return m2.group(1).strip()
+    cleaned = re.sub(r"^【主体】.*?(?:；|;|。|\n|【要求】)", "", text).strip()
+    return cleaned if len(cleaned) >= 5 else text
+
+
 def _judge_within_topics(
     records: list[PipelineRecord],
     proxy: LLMProxy,
     config: PipelineConfig,
 ) -> list[PipelineRecord]:
-    """按 (boundary_class, topic_label) 二维分组，每组内分块 LLM 判等价。"""
-    # 分组
-    topic_groups: dict[tuple[str, str], list[PipelineRecord]] = {}
+    """按 topic_label 分类直接分块，放宽切片粒度，实现跨资产纵览与通用合并。"""
+    topic_groups: dict[str, list[PipelineRecord]] = {}
     for rec in records:
-        # topic_uncertain 的记录不按 topic 分块，按 boundary_class 单维
-        if rec.topic_uncertain:
-            key = (rec.boundary_class or "通用", "__UNCERTAIN__")
-        else:
-            key = (rec.boundary_class or "通用", rec.topic_label or "未分类")
-        topic_groups.setdefault(key, []).append(rec)
+        topic = rec.topic_label or "4.2 系统加固"
+        topic_groups.setdefault(topic, []).append(rec)
 
-    # 每组分块判定
     chunk_size = config.chunk_size
     overlap = config.chunk_overlap
 
-    for (bc, topic), group in topic_groups.items():
+    for topic, group in topic_groups.items():
         if len(group) <= 1:
             continue
 
-        # 分块（50% 重叠）
+        # 分块（带重叠滑动窗口）
         chunks = []
         start = 0
         while start < len(group):
             chunk = group[start:start + chunk_size]
             chunks.append(chunk)
-            start += chunk_size - overlap
+            if start + chunk_size >= len(group):
+                break
+            start += max(1, chunk_size - overlap)
 
         # 每块 LLM 判定
         for chunk in chunks:
             if len(chunk) <= 1:
                 continue
-            _judge_one_chunk(chunk, proxy, bc, topic)
+            _judge_one_chunk(chunk, proxy, topic)
 
     return records
 
@@ -245,44 +231,31 @@ def _judge_within_topics(
 def _judge_one_chunk(
     chunk: list[PipelineRecord],
     proxy: LLMProxy,
-    boundary_class: str,
     topic: str,
 ):
     """对单个分块做等价判定。"""
     items = [
         {
             "record_id": rec.record_id,
-            "text": rec.requirement_text,
+            "core_requirement": _extract_core_requirement(rec.requirement_text),
             "asset_name": rec.asset_name,
+            "full_text": rec.requirement_text[:200],
         }
         for rec in chunk
     ]
     ids = [rec.record_id for rec in chunk]
 
     sc = proxy.judge_with_self_check(
-        stage=f"judge-equivalence-{boundary_class}-{topic}",
+        stage=f"judge-equivalence-{topic}",
         system_prompt=JUDGE_EQUIVALENCE_SYSTEM,
         check_prompt=JUDGE_SELF_CHECK_SYSTEM,
         user_payload={
             "requirements": items,
-            "boundary_class": boundary_class,
             "topic": topic,
         },
         input_ids=ids,
         input_texts_abstract=[rec.requirement_text[:200] for rec in chunk],
     )
-
-    corrections = (sc.second_result or {}).get("corrections", []) if isinstance(sc.second_result, dict) else []
-    if not sc.agreed and not corrections:
-        # 整体不一致且无具体修正指令 → 标记该块所有记录为 uncertain
-        for rec in chunk:
-            rec.is_uncertain = True
-            rec.audit_log.append({
-                "action": "equivalence_judge_uncertain",
-                "stage": "chunk",
-                "discrepancies": sc.discrepancies,
-            })
-        return
 
     # 应用正向判定结果
     decisions = sc.first_result if sc.first_result else {}
@@ -296,7 +269,7 @@ def _judge_one_chunk(
         if len(member_ids) < 2:
             continue
 
-        group_id = f"EQ-{boundary_class}-{topic}-{group_name[:20]}"
+        group_id = f"EQ-{topic}-{group_name[:20]}"
         for mid in member_ids:
             rec = chunk_map.get(mid)
             if rec:
@@ -308,15 +281,26 @@ def _judge_one_chunk(
                 })
 
     # 应用自检修正
-    if sc.second_result:
+    if sc.second_result and isinstance(sc.second_result, dict):
         corrections = sc.second_result.get("corrections", []) or []
         for corr in corrections:
-            mid = corr.get("member_id", "")
-            rec = chunk_map.get(mid)
-            if rec:
-                if corr.get("action") == "remove":
+            if isinstance(corr, dict):
+                mid = corr.get("member_id", "")
+                rec = chunk_map.get(mid)
+                if rec and corr.get("action") == "remove":
                     rec.equivalence_group_id = ""
                     rec.audit_log.append({"action": "equivalence_removed_by_self_check", "reason": corr.get("reason")})
+
+        missing_merges = sc.second_result.get("missing_merges", []) or []
+        for idx, mm in enumerate(missing_merges):
+            if isinstance(mm, dict):
+                mids = mm.get("member_ids", []) or []
+                if len(mids) >= 2:
+                    gid = f"EQ-{topic}-MISSING-{idx+1}"
+                    for mid in mids:
+                        rec = chunk_map.get(mid)
+                        if rec and not rec.equivalence_group_id:
+                            rec.equivalence_group_id = gid
 
 
 # ============================================================================
@@ -475,13 +459,12 @@ def _rule_one_group(
     members: list[PipelineRecord],
     proxy: LLMProxy,
 ):
-    """对单个等价类做回原文裁决。"""
+    """对单个等价类做回原文裁决（支持跨资产提炼）。"""
     items = [
         {
             "record_id": rec.record_id,
-            "text": rec.requirement_text,
+            "core_requirement": _extract_core_requirement(rec.requirement_text),
             "asset_name": rec.asset_name,
-            "boundary_class": rec.boundary_class,
         }
         for rec in members
     ]
@@ -499,46 +482,46 @@ def _rule_one_group(
         input_texts_abstract=[rec.requirement_text[:300] for rec in members],
     )
 
-    if not sc.agreed:
-        # 不一致 → 全部标记 uncertain
-        for rec in members:
-            rec.equivalence_group_id = ""
-            rec.is_uncertain = True
-            rec.audit_log.append({
-                "action": "back_to_original_uncertain",
-                "group_id": group_id,
-                "discrepancies": sc.discrepancies,
-            })
-        return
-
     decisions = sc.first_result if sc.first_result else {}
     confirmed = set(decisions.get("confirmed", []) or [])
     removed = decisions.get("removed", []) or []
 
     member_map = {rec.record_id: rec for rec in members}
 
-    # 保留确认的
-    for mid in list(member_map.keys()):
-        if mid not in confirmed:
-            rec = member_map[mid]
-            rec.equivalence_group_id = ""
-            rec.is_uncertain = True
-            rec.audit_log.append({
-                "action": "back_to_original_removed",
-                "group_id": group_id,
-                "reason": "未在确认列表中",
-            })
-
-    # 拆出的
+    removed_ids = set()
     for item in removed:
-        rid = item.get("id", "")
-        reason = item.get("reason", "")
+        if isinstance(item, dict):
+            rid = item.get("id") or item.get("member_id", "")
+            if rid:
+                removed_ids.add(rid)
+        elif isinstance(item, str) and item:
+            removed_ids.add(item)
+
+    # 吸收自检报告中的 corrections
+    if sc.second_result and isinstance(sc.second_result, dict):
+        corrections = sc.second_result.get("corrections", []) or []
+        for corr in corrections:
+            if isinstance(corr, dict) and corr.get("action") == "remove":
+                rid = corr.get("member_id", "")
+                if rid:
+                    removed_ids.add(rid)
+
+    # 如果 confirmed 为空且无明确 removed，则默认确认所有成员
+    if not confirmed and not removed_ids:
+        confirmed = set(member_map.keys())
+
+    # 拆出被明确移出的条目
+    for rid in removed_ids:
         rec = member_map.get(rid)
         if rec:
             rec.equivalence_group_id = ""
-            rec.is_uncertain = True
             rec.audit_log.append({
                 "action": "back_to_original_split",
                 "group_id": group_id,
-                "reason": reason,
             })
+
+    # 若移出后组内剩余有效成员 < 2，则解散该组
+    remaining = [rec for mid, rec in member_map.items() if (mid in confirmed or not confirmed) and mid not in removed_ids]
+    if len(remaining) < 2:
+        for rec in remaining:
+            rec.equivalence_group_id = ""
