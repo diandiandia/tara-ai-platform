@@ -275,10 +275,10 @@ export const useTaraStore = create((set, get) => ({
     }
   },
 
-  exportReport: async (domainId, format, desensitize) => {
+  exportReport: async (domainId, desensitize) => {
     try {
       const token = useAuthStore.getState().token;
-      const url = `${API_BASE}/reports/domains/${domainId}/export?format=${format}&desensitize=${desensitize}`;
+      const url = `${API_BASE}/reports/domains/${domainId}/export?desensitize=${desensitize}`;
       
       const response = await fetch(url, {
         method: 'GET',
@@ -294,7 +294,7 @@ export const useTaraStore = create((set, get) => ({
       const link = document.createElement('a');
       link.href = downloadUrl;
       
-      const filename = `TARA_Report_${domainId}_${desensitize ? 'desensitized' : 'full'}.${format}`;
+      const filename = `TARA_Report_${domainId}_${desensitize ? 'desensitized' : 'full'}.xlsx`;
       link.setAttribute('download', filename);
       document.body.appendChild(link);
       link.click();

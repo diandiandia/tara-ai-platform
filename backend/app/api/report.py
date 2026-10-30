@@ -8,7 +8,6 @@ import re
 from typing import List
 import openpyxl
 from openpyxl.styles import Font, Alignment, PatternFill, Border, Side
-import csv
 
 from app.core.database import get_db
 from app.api.auth import get_current_user
@@ -1171,115 +1170,43 @@ def create_excel_report(domain: Domain, steps: List[TaraStep], assets: List[Asse
     wb.save(file_path)
     return file_path
 
-def create_csv_report(domain: Domain, steps: List[TaraStep], assets: List[Asset], desensitize: bool, export_type: str = "tara", db: Session = None) -> str:
-    """
-    生成 ISO 21434 TARA CSV 格式报表，根据 export_type 可选导出 TARA 威胁分析 或 CSR 需求列表
-    使用 utf-8-sig 编码，防止中文在 Excel 中打开时显示乱码
-    """
-    filename_suffix = f"{export_type}_{'desensitized' if desensitize else 'full'}"
-    file_path = os.path.join(EXPORTS_DIR, f"TARA_Report_{domain.id}_{filename_suffix}.csv")
-    
-    if export_type == "csr":
-        headers_r2 = [
-            "Atomic CSR ID", "Security Domain", "Functional Category", "Control Category", "Requirement Title", "Subject",
-            "Cybersecurity Requirement", "Verification Method", "Requirement Type", "Rationale",
-            "Applicable Assets", "Assets Count",
-            "Source Cybersecurity Requirement IDs", "Source Count", "Needs Review"
-        ]
-        keys = [
-            "csr_id", "security_domain", "functional_category", "sub_category", "title", "subject",
-            "cybersecurity_requirement", "verification_method", "requirement_type", "rationale", "applicable_assets", "assets_count",
-            "source_cybersecurity_requirement_ids", "source_count", "needs_review"
-        ]
-        rows = collect_csr_report_data(steps, assets)
-    else:
-        headers_r2 = [
-            "Number", "Assets SN", "Assets Name",
-            "Cybersecurity Attributes Result",
-            "Damage Scenarios SN", "Damage Scenarios", "Safety", "Financial", "Operational", "Privacy", "Impact Level",
-            "Threat Scenarios", "Attack Path",
-            "Time Consuming", "Expertise", "Knowledge about TOE", "Window of opportunity", "Equipment", "Difficulty", "AF Level", "CAF Level",
-            "Risk Value", "Risk Treatment Recommend",
-            "Cybersecurity Claims ID", "Cybersecurity Claims", "Cybersecurity Goal ID", "Cybersecurity Goal", "Cybersecurity Control ID", "Cybersecurity Control", "Allocated to Device", "Cybersecurity Requirement ID", "Cybersecurity Requirement"
-        ]
-        keys = [
-            "number", "asset_sn", "asset_name",
-            "attribute_result",
-            "damage_scenario_sn", "damage_scenario", "safety", "financial", "operational", "privacy", "overall_impact",
-            "threat_scenario", "attack_path",
-            "time_consuming", "expertise", "knowledge_about_toe", "window_of_opportunity", "equipment", "difficulty", "af_level", "caf_level",
-            "risk_value", "risk_treatment",
-            "cybersecurity_claim_id", "cybersecurity_claim", "cybersecurity_goal_id", "cybersecurity_goal", "cybersecurity_control_id", "cybersecurity_control", "allocated_to_device", "cybersecurity_requirement_id", "cybersecurity_requirement"
-        ]
-        hash_to_global_map = {}
-        collect_csr_report_data(steps, assets, hash_to_global_map, db=db, domain=domain)
-        rows = collect_report_data(steps, assets, desensitize, hash_to_global_map)
-    
-    with open(file_path, mode="w", encoding="utf-8-sig", newline="") as f:
-        writer = csv.writer(f)
-        writer.writerow(headers_r2)
-        for row in rows:
-            values = []
-            for k in keys:
-                val = row.get(k, "")
-                if k == "source_cybersecurity_requirement_ids" and not val:
-                    val = row.get("source_tara_requirements", "")
-                if k == "needs_review":
-                    val = "Yes" if val else "No"
-                values.append("" if val is None else val)
-            writer.writerow(values)
-            
-    return file_path
-
 # ----------------- 导出报告接口 -----------------
 
 @router.get("/domains/{domain_id}/export")
 def export_report(
     domain_id: int,
-    format: str = "xlsx", # xlsx 或 csv
-    desensitize: bool = False, # 是否脱敏导出 (BR-57, BR-77)
-    export_type: str = "all", # all (导出全部Sheets，仅对xlsx有效), tara (只导出威胁分析), csr (只导出安全需求汇总)
-    force_recompute: bool = False, # 是否强制重新计算全局 CSR 需求
+    desensitize: bool = False,
+    export_type: str = "all",
+    force_recompute: bool = False,
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user)
 ):
     """
-    导出网络安全 TARA 评估报告与 CSR 安全需求汇总 (XLSX/CSV，支持数据脱敏与混合模型导出，BR-57, BR-77)
+    导出网络安全 TARA 评估报告与 CSR 安全需求汇总 (XLSX，支持数据脱敏与混合模型导出，BR-57, BR-77)
     """
     domain = db.query(Domain).filter(Domain.id == domain_id).first()
     if not domain:
         raise HTTPException(status_code=404, detail="子域控不存在")
         
-    # 获取最新的已完成运行记录和步骤结果
     last_run = db.query(TaraRun).filter(
         TaraRun.domain_id == domain_id,
         TaraRun.status == "completed"
     ).order_by(TaraRun.id.desc()).first()
     
     if not last_run:
-        raise HTTPException(status_code=400, detail="该域控当前没有已成功完成 of TARA 报告记录，无法执行导出。")
+        raise HTTPException(status_code=400, detail="该域控当前没有已成功完成的 TARA 报告记录，无法执行导出。")
         
     steps = db.query(TaraStep).filter(TaraStep.run_id == last_run.id).all()
     assets = db.query(Asset).filter(Asset.domain_id == domain_id).all()
     
     export_type_lower = export_type.lower().strip()
-    if format.lower() == "csv" and export_type_lower == "all":
-        # CSV不支持多sheet，默认设置为 tara 导出
-        export_type_lower = "tara"
         
     if export_type_lower not in ["all", "tara", "csr", "merged"]:
         raise HTTPException(status_code=400, detail="不支持的导出类型，可选值: all, tara, csr, merged。")
     
-    if format.lower() == "xlsx":
-        file_path = create_excel_report(domain, steps, assets, desensitize, export_type_lower, db=db, force_recompute=force_recompute)
-        media_type = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
-        filename = f"TARA_Report_{domain.name}_{export_type_lower}_{'desensitized' if desensitize else 'full'}.xlsx"
-    elif format.lower() == "csv":
-        file_path = create_csv_report(domain, steps, assets, desensitize, export_type_lower, db=db)
-        media_type = "text/csv; charset=utf-8-sig"
-        filename = f"TARA_Report_{domain.name}_{export_type_lower}_{'desensitized' if desensitize else 'full'}.csv"
-    else:
-        raise HTTPException(status_code=400, detail="不支持的导出文件格式，仅支持 'xlsx' 或 'csv'。")
+    file_path = create_excel_report(domain, steps, assets, desensitize, export_type_lower, db=db, force_recompute=force_recompute)
+    media_type = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+    filename = f"TARA_Report_{domain.name}_{export_type_lower}_{'desensitized' if desensitize else 'full'}.xlsx"
         
     return FileResponse(
         path=file_path,

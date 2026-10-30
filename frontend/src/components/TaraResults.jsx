@@ -936,7 +936,6 @@ export default function TaraResults({ setPage, domainId }) {
   }, [activeTab, domainId]);
 
   // Export States
-  const [exportFormat, setExportFormat] = useState('xlsx');
   const [exportDesensitize, setExportDesensitize] = useState(false);
   const [exporting, setExporting] = useState(false);
 
@@ -1207,7 +1206,7 @@ export default function TaraResults({ setPage, domainId }) {
 
   const handleExportClick = async () => {
     setExporting(true);
-    const success = await exportReport(domainId, exportFormat, exportDesensitize);
+    const success = await exportReport(domainId, exportDesensitize);
     setExporting(false);
     if (success) {
       alert(t('报告导出成功！文件已保存。'));
@@ -1353,21 +1352,10 @@ export default function TaraResults({ setPage, domainId }) {
           <div className="glass" style={{ padding: '20px 24px', display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '16px' }}>
             <div>
               <h4 style={{ fontSize: '15px', fontWeight: '600', color: 'var(--text-primary)' }}>{t("导出评估报告")}</h4>
-              <p style={{ color: 'var(--text-secondary)', fontSize: '12px', marginTop: '2px' }}>{t("一键生成与 Excel 完全对齐的 XLSX 工作簿或 CSV 归档规范文档")}</p>
+              <p style={{ color: 'var(--text-secondary)', fontSize: '12px', marginTop: '2px' }}>{t("一键生成与 Excel 完全对齐的 XLSX 工作簿")}</p>
             </div>
             
             <div style={{ display: 'flex', alignItems: 'center', gap: '16px', flexWrap: 'wrap' }}>
-              <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-                <span style={{ fontSize: '13px', color: 'var(--text-secondary)' }}>{t("文件格式:")}</span>
-                <select
-                  value={exportFormat}
-                  onChange={(e) => setExportFormat(e.target.value)}
-                  style={{ background: 'var(--bg-card)', border: '1px solid var(--border-color)', borderRadius: '4px', color: 'var(--text-primary)', padding: '6px 12px', outline: 'none', fontSize: '13px' }}
-                >
-                  <option value="xlsx">{t("Excel 工作簿 (.xlsx)")}</option>
-                  <option value="csv">{t("CSV 文件 (.csv)")}</option>
-                </select>
-              </div>
 
               <label style={{ display: 'flex', alignItems: 'center', gap: '6px', fontSize: '13px', cursor: 'pointer', color: 'var(--text-secondary)' }}>
                 <input
