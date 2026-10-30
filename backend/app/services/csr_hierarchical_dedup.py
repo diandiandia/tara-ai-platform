@@ -2,9 +2,9 @@
 
 This module implements the requested workflow:
 
-    per-asset dedup
-    -> pairwise group dedup (16 -> 8 -> 4)
-    -> K1 absorbs K2/K3/K4 in order
+    leaf group dedup
+    -> pure binary LLM merge (16 -> 8 -> 4 -> 2 -> 1)
+    -> final in-group consolidation for similar assets
     -> per-requirement atomization
     -> atomic-level dedup
     -> source-ID coverage validation
@@ -115,6 +115,9 @@ def make_record(asset, requirement: dict, req_map: Optional[dict] = None) -> dic
         "record_id": record_id,
         "asset_id": asset_id,
         "asset_name": asset_name,
+        "asset_type": _asset_attr(asset, "asset_type", ""),
+        "protocol": _asset_attr(asset, "protocol", ""),
+        "asset_description": _asset_attr(asset, "description", ""),
         "source_requirement_ids": list(source_ids),
         "source_texts": [source_entry],
         "text": text,
@@ -203,6 +206,9 @@ def _record_payload(record: dict) -> dict:
         "source_requirement_ids": _source_ids(record),
         "applicable_assets": record.get("applicable_assets") or [],
         "asset_name": record.get("asset_name") or "",
+        "asset_type": record.get("asset_type") or "",
+        "protocol": record.get("protocol") or "",
+        "asset_description": record.get("asset_description") or "",
         "requirement_scope": record.get("requirement_scope") or "",
         "requirement_type": record.get("requirement_type") or "",
         "owner": record.get("owner") or "",
@@ -277,6 +283,7 @@ def _full_scan_duplicate_pairs(
     records: Sequence[dict],
     settings: Optional[dict],
     atom_mode: bool = False,
+    consolidate_assets: bool = False,
 ) -> Optional[List[Tuple[int, int]]]:
     """Let the LLM compare all records in a small group at once.
 
@@ -300,9 +307,13 @@ def _full_scan_duplicate_pairs(
 3. 如果两条需求的主体指向功能上不同的对象或不同动作（例如认证 vs 审计、读 vs 写、固件 vs 日志），即使控制目标相似，也不是重复。
 4. 一条需求包含多个独立“应/不应/不得”，或只是部分重叠、条件不同的，不是重复。
 5. 不能因为文字相似就合并；不确定时不要输出该对。"""
+    consolidate_note = ""
+    if consolidate_assets and not atom_mode:
+        consolidate_note = """
+【最终内部优化】这是最终大组内部优化：来自相似资产（同一域控制器、同类接口、相似协议、相似描述）且表达同一控制目标的记录，即使主体名称或措辞不同，也可以合并为一条；合并后保留全部来源语句、原始 ID 和适用资产。不同动作或不同保护对象仍不得合并。"""
     system_prompt = f"""你是 ISO/SAE 21434 网络安全需求工程师。下面给出同一去重组的全部整条需求，请逐对比较并找出所有真正重复的需求对。
 【规则】
-{rules}
+{rules}{consolidate_note}
 6. 如果一条记录带有 statements（多个来源语句），必须把它的每条来源语句都与对方全部来源语句比较；只有全部内容都能对应且不丢失细节时才可判重复，否则不是重复。合并后所有来源语句都会保留。
 7. 必须比较每一对记录，输出所有重复对，不要只输出最相似的一对。
 8. 只输出判断，不重写需求，不新增 ID；不确定时不要输出该对。
@@ -343,6 +354,7 @@ def _judge_pairs(
     pairs: Sequence[Tuple[int, int]],
     settings: Optional[dict],
     atom_mode: bool = False,
+    consolidate_assets: bool = False,
 ) -> List[Tuple[int, int]]:
     """Return accepted duplicate pairs. LLM judges; exact text is fallback."""
     if not pairs:
@@ -377,16 +389,20 @@ def _judge_pairs(
 7. 只输出判断，不重写需求，不新增 ID。
 【输出 JSON】{"decisions":[{"a":"record-id","b":"record-id","duplicate":true,"reason":"..."}]}"""
     else:
-        system_prompt = """你是 ISO/SAE 21434 网络安全需求工程师。请判断候选整条需求对是否真正重复。
+        consolidate_note = ""
+        if consolidate_assets:
+            consolidate_note = """
+【最终内部优化】这是最终大组内部优化：来自相似资产（同一域控制器、同类接口、相似协议、相似描述）且表达同一控制目标的记录，即使主体名称或措辞不同，也可以合并为一条；合并后保留全部来源语句、原始 ID 和适用资产。不同动作或不同保护对象仍不得合并。"""
+        system_prompt = f"""你是 ISO/SAE 21434 网络安全需求工程师。请判断候选整条需求对是否真正重复。
 【规则】
 1. 先看 applicable_assets。来源资产有交集时，只有同一责任主体、同一保护对象、同一行为/控制目标、同一适用条件、同一验证方法、同一验收准则，才算重复。
 2. 来源资产不相交时，按控制语义判断：同一保护对象、同一行为/控制目标、同一适用条件才算重复。主体可以分别命名两个资产上承担相同职责的对应组件；allocated_to、verification_method、acceptance_criteria 可以不同，合并后保留全部值。
 3. 如果两条需求的主体指向功能上不同的对象或不同动作（例如认证 vs 审计、读 vs 写、固件 vs 日志），即使控制目标相似，也不是重复。
 4. 一条需求包含多个独立“应/不应/不得”，或只是部分重叠、条件不同的，不是重复。
-5. 不能因为文字相似就合并；不确定时 duplicate=false。
+5. 不能因为文字相似就合并；不确定时 duplicate=false。{consolidate_note}
 6. 如果一条记录带有 statements（多个来源语句），必须把它的每条来源语句都与对方全部来源语句比较；只有全部内容都能对应且不丢失细节时才可判重复。合并后所有来源语句都会保留。
 7. 只输出判断，不重写需求，不新增 ID。
-【输出 JSON】{"decisions":[{"a":"record-id","b":"record-id","duplicate":true,"reason":"..."}]}"""
+【输出 JSON】{{"decisions":[{{"a":"record-id","b":"record-id","duplicate":true,"reason":"..."}}]}}"""
 
     for start in range(0, len(unresolved), PAIR_BATCH_SIZE):
         batch = unresolved[start:start + PAIR_BATCH_SIZE]
@@ -602,7 +618,13 @@ def _merge_component(records: Sequence[dict], indexes: Sequence[int]) -> dict:
     return rep
 
 
-def dedup_records(records: Sequence[dict], settings: Optional[dict], atom_mode: bool = False, label: str = "") -> List[dict]:
+def dedup_records(
+    records: Sequence[dict],
+    settings: Optional[dict],
+    atom_mode: bool = False,
+    label: str = "",
+    consolidate_assets: bool = False,
+) -> List[dict]:
     """Deduplicate a list of records, preserving every source ID."""
     if len(records) < 2:
         return list(records)
@@ -616,7 +638,12 @@ def dedup_records(records: Sequence[dict], settings: Optional[dict], atom_mode: 
     else:
         full_scan_result = None
         if settings and len(records) <= FULL_SCAN_LIMIT:
-            full_scan_result = _full_scan_duplicate_pairs(records, settings, atom_mode=atom_mode)
+            full_scan_result = _full_scan_duplicate_pairs(
+                records,
+                settings,
+                atom_mode=atom_mode,
+                consolidate_assets=consolidate_assets,
+            )
         full_scanned = full_scan_result is not None
         if full_scanned:
             accepted.extend(full_scan_result)
@@ -651,7 +678,15 @@ def dedup_records(records: Sequence[dict], settings: Optional[dict], atom_mode: 
             ]
         if pairs:
             print(f"[TARA-AI] 词面候选 {label}: {len(pairs)} 对")
-        accepted.extend(_judge_pairs(records, pairs, settings, atom_mode=atom_mode))
+        accepted.extend(
+            _judge_pairs(
+                records,
+                pairs,
+                settings,
+                atom_mode=atom_mode,
+                consolidate_assets=consolidate_assets,
+            )
+        )
     if atom_mode:
         accepted = [
             (i, j) for i, j in accepted
@@ -702,34 +737,35 @@ def dedup_records(records: Sequence[dict], settings: Optional[dict], atom_mode: 
 
 
 def hierarchical_dedup(groups: List[List[dict]], settings: Optional[dict]) -> List[dict]:
-    """Reduce to at most four groups, then let K1 absorb K2/K3/K4 in order.
+    """Pure binary merge: 16 -> 8 -> 4 -> 2 -> 1.
 
-    This follows the requested 16 -> 8 -> 4 structure.  Each absorb call
-    deduplicates the combined group, so the accumulator always contains the
-    deduplicated union of everything compared so far.
+    Leaf groups are already deduplicated by the caller.  Each merge call
+    deduplicates the combined pair, so the final group is the deduplicated
+    union of every leaf.
     """
     groups = [list(g) for g in groups if g]
     if not groups:
         return []
     round_no = 0
-    while len(groups) > 4:
+    while len(groups) > 1:
         round_no += 1
         next_groups = []
         for i in range(0, len(groups), 2):
             if i + 1 < len(groups):
                 combined = groups[i] + groups[i + 1]
-                next_groups.append(dedup_records(combined, settings, atom_mode=False, label=f"round-{round_no}-pair-{i // 2}"))
+                next_groups.append(
+                    dedup_records(
+                        combined,
+                        settings,
+                        atom_mode=False,
+                        label=f"binary-round-{round_no}-pair-{i // 2}",
+                    )
+                )
             else:
                 next_groups.append(groups[i])
         groups = next_groups
-        print(f"[TARA-AI] 层级去重第 {round_no} 轮: {len(groups)} 组")
-    if len(groups) == 1:
-        return groups[0]
-    acc = groups[0]
-    for index, group in enumerate(groups[1:], start=2):
-        acc = dedup_records(acc + group, settings, atom_mode=False, label=f"absorb-K{index}")
-        print(f"[TARA-AI] K1 吸收 K{index} 后: {len(acc)} 条")
-    return acc
+        print(f"[TARA-AI] 二分去重第 {round_no} 轮: {len(groups)} 组")
+    return groups[0]
 
 
 def _atomization_units(records: Sequence[dict]) -> List[dict]:
@@ -924,29 +960,45 @@ def run_pipeline(
     settings: Optional[dict],
     req_map: Optional[dict] = None,
 ) -> Tuple[List[dict], dict]:
-    """Run per-asset dedup -> hierarchical dedup -> atomize -> atomic dedup.
+    """Run leaf dedup -> pure binary LLM merge -> final consolidation -> atomize.
 
     assets_data: [{"asset": asset_or_dict, "requirements": [stage5 requirement dicts]}]
+
+    All requirements go into one pool; the pool is split into leaf groups that
+    fit one LLM full scan, leaf groups are deduplicated, then adjacent groups
+    are merged 16 -> 8 -> 4 -> 2 -> 1.  After the single final group exists, one
+    more consolidation pass focuses on requirements from similar assets, then
+    the final group is atomized and atom-level deduplicated.
     """
     expected_ids: Set[str] = set()
-    per_asset_groups: List[List[dict]] = []
+    records: List[dict] = []
     for item in assets_data:
         asset = item["asset"]
-        requirements = item.get("requirements") or []
-        records = []
-        for requirement in requirements:
+        for requirement in item.get("requirements") or []:
             record = make_record(asset, requirement, req_map)
             expected_ids.update(_source_ids(record))
             if _text(record):
                 records.append(record)
-        if not records:
-            continue
-        deduped = dedup_records(records, settings, atom_mode=False, label=f"asset-{_asset_attr(asset, 'id', 0)}")
-        per_asset_groups.append(deduped)
-        print(f"[TARA-AI] 资产 [{_asset_attr(asset, 'name', '')}] {len(records)} -> {len(deduped)}")
 
-    final_group = hierarchical_dedup(per_asset_groups, settings)
-    print(f"[TARA-AI] 整条需求最终组: {len(final_group)} 条")
+    leaf_groups: List[List[dict]] = []
+    for index, start in enumerate(range(0, len(records), FULL_SCAN_LIMIT), start=1):
+        chunk = records[start:start + FULL_SCAN_LIMIT]
+        deduped = dedup_records(chunk, settings, atom_mode=False, label=f"leaf-{index}")
+        leaf_groups.append(deduped)
+        print(f"[TARA-AI] 二分叶子 {index}: {len(chunk)} -> {len(deduped)} 条")
+
+    final_group = hierarchical_dedup(leaf_groups, settings)
+    print(f"[TARA-AI] 二分合并后的最终大组: {len(final_group)} 条")
+
+    final_group = dedup_records(
+        final_group,
+        settings,
+        atom_mode=False,
+        label="final-internal-optimization",
+        consolidate_assets=True,
+    )
+    print(f"[TARA-AI] 最终内部优化（相似资产集中）后: {len(final_group)} 条")
+
     atoms = atomize_records(final_group, settings)
     print(f"[TARA-AI] 原子化: {len(atoms)} 条")
     atoms = dedup_records(atoms, settings, atom_mode=True, label="atomic-dedup")

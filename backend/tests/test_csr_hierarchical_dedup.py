@@ -64,11 +64,11 @@ def _fake_llm(settings, system_prompt, payload):
 
 
 class HierarchyShapeTests(unittest.TestCase):
-    def test_pairwise_to_four_then_k1_absorbs_k2_k3_k4(self):
+    def test_pure_binary_merge_to_one_group(self):
         groups = [[{"record_id": f"R{i}"}] for i in range(16)]
         calls = []
 
-        def fake_dedup(records, settings, atom_mode=False, label=""):
+        def fake_dedup(records, settings, atom_mode=False, label="", consolidate_assets=False):
             calls.append(label)
             return list(records)
 
@@ -76,12 +76,11 @@ class HierarchyShapeTests(unittest.TestCase):
             result = dedup.hierarchical_dedup(groups, None)
 
         self.assertEqual(len(result), 16)
-        self.assertEqual(sum(1 for c in calls if c.startswith("round-1-")), 8)
-        self.assertEqual(sum(1 for c in calls if c.startswith("round-2-")), 4)
-        self.assertEqual(
-            [c for c in calls if c.startswith("absorb-")],
-            ["absorb-K2", "absorb-K3", "absorb-K4"],
-        )
+        self.assertEqual(sum(1 for c in calls if c.startswith("binary-round-1-")), 8)
+        self.assertEqual(sum(1 for c in calls if c.startswith("binary-round-2-")), 4)
+        self.assertEqual(sum(1 for c in calls if c.startswith("binary-round-3-")), 2)
+        self.assertEqual(sum(1 for c in calls if c.startswith("binary-round-4-")), 1)
+        self.assertFalse(any(c.startswith("absorb-") for c in calls))
 
 
 class MergeTraceabilityTests(unittest.TestCase):
@@ -172,6 +171,37 @@ class AtomMergeSafetyTests(unittest.TestCase):
                 label="atom-safety",
             )
         self.assertEqual(len(out), 2)
+
+
+class FinalConsolidationTests(unittest.TestCase):
+    def test_consolidation_prompt_and_asset_metadata(self):
+        a = dedup.make_record(
+            {"id": 1, "name": "USB debug", "asset_type": "interface", "protocol": "USB", "description": "debug port"},
+            _requirement("ID1", "系统应记录调试操作。 / The system shall log debug operations."),
+        )
+        b = dedup.make_record(
+            {"id": 2, "name": "UART debug", "asset_type": "interface", "protocol": "UART", "description": "debug port"},
+            _requirement("ID2", "系统应记录调试操作。 / The system shall log debug operations."),
+        )
+        captured = []
+
+        def fake_llm(settings, system_prompt, payload):
+            captured.append((system_prompt, payload))
+            return {"duplicate_pairs": [], "decisions": []}
+
+        with patch.object(dedup, "_call_llm_json", side_effect=fake_llm):
+            dedup.dedup_records(
+                [a, b],
+                {"api_key": "test", "api_base_url": "http://fake", "model_name": "fake"},
+                label="final-consolidation",
+                consolidate_assets=True,
+            )
+
+        self.assertTrue(any("最终内部优化" in prompt for prompt, _ in captured))
+        record_payload = captured[0][1]["records"][0]
+        self.assertEqual(record_payload["asset_type"], "interface")
+        self.assertEqual(record_payload["protocol"], "USB")
+        self.assertEqual(record_payload["asset_description"], "debug port")
 
 
 class CompatibilityTests(unittest.TestCase):

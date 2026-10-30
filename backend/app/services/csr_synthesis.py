@@ -2287,14 +2287,16 @@ def classify_and_finalize_csrs(global_items: list, all_input_raw_ids: Set[str] =
 
 
 def hierarchical_synthesize_project_csrs(db: Session, domain: Domain, steps: list, assets: list) -> list:
-    """Per-asset dedup -> hierarchical cross-asset dedup -> atomization -> atomic dedup.
+    """Leaf dedup -> pure binary LLM merge -> final consolidation -> atomization.
 
     The whole-requirement hierarchy follows the requested structure:
-      1. each asset deduplicates its own TARA requirements (LLM judged);
-      2. groups are merged pairwise to 16 -> 8 -> 4, then K1 absorbs
-         K2/K3/K4 in order, with an LLM duplicate decision per merge;
-      3. the final group is atomized, preserving every original TARA ID;
-      4. atoms are deduplicated again and traced back to their source IDs.
+      1. all requirements go into one pool and are split into leaf groups;
+      2. each leaf group is deduplicated, then groups are merged pairwise
+         16 -> 8 -> 4 -> 2 -> 1 with an LLM duplicate decision per merge;
+      3. after one final group exists, one consolidation pass focuses on
+         requirements from similar assets;
+      4. the final group is atomized, preserving every original TARA ID;
+      5. atoms are deduplicated again and traced back to their source IDs.
     """
     settings_dict = None
     if db:
