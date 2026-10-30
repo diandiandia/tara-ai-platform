@@ -50,14 +50,22 @@ def hash_dedup(records: list[PipelineRecord], config: PipelineConfig) -> list[Pi
     threshold = config.fuzzy_dedup_threshold
 
     if len(result) > 1:
+        norm_texts = [normalize_text(r.requirement_text) for r in result]
+        lengths = [len(t) for t in norm_texts]
         for i in range(len(result)):
+            len_i = lengths[i]
+            if len_i == 0:
+                continue
+            text_i = norm_texts[i]
             for j in range(i + 1, len(result)):
                 if result[i].near_duplicate and result[j].near_duplicate:
                     continue
-                sim = edit_distance_similarity(
-                    result[i].requirement_text,
-                    result[j].requirement_text,
-                )
+                len_j = lengths[j]
+                max_len = max(len_i, len_j)
+                if abs(len_i - len_j) / max_len > (1.0 - threshold):
+                    continue
+                text_j = norm_texts[j]
+                sim = edit_distance_similarity(text_i, text_j)
                 if sim >= threshold:
                     # 两条都标记
                     if not result[i].near_duplicate:

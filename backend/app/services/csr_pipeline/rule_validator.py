@@ -365,19 +365,30 @@ def edit_distance_similarity(a: str, b: str) -> float:
         return 1.0
     if not a or not b:
         return 0.0
+    if a == b:
+        return 1.0
     len_a, len_b = len(a), len(b)
-    # 动态规划
-    dp = [[0] * (len_b + 1) for _ in range(len_a + 1)]
-    for i in range(len_a + 1):
-        dp[i][0] = i
-    for j in range(len_b + 1):
-        dp[0][j] = j
-    for i in range(1, len_a + 1):
-        for j in range(1, len_b + 1):
-            cost = 0 if a[i - 1] == b[j - 1] else 1
-            dp[i][j] = min(dp[i - 1][j] + 1, dp[i][j - 1] + 1, dp[i - 1][j - 1] + cost)
     max_len = max(len_a, len_b)
-    return 1.0 - dp[len_a][len_b] / max_len
+    len_diff = abs(len_a - len_b)
+    if len_diff / max_len > 0.1:
+        return 1.0 - (len_diff / max_len)
+
+    # 动态规划 (O(N) 空间)
+    if len_a < len_b:
+        a, b = b, a
+        len_a, len_b = len_b, len_a
+
+    prev = list(range(len_b + 1))
+    curr = [0] * (len_b + 1)
+    for i in range(1, len_a + 1):
+        curr[0] = i
+        ch_a = a[i - 1]
+        for j in range(1, len_b + 1):
+            cost = 0 if ch_a == b[j - 1] else 1
+            curr[j] = min(prev[j] + 1, curr[j - 1] + 1, prev[j - 1] + cost)
+        prev, curr = curr, prev
+
+    return 1.0 - prev[len_b] / max_len
 
 
 # ============================================================================
