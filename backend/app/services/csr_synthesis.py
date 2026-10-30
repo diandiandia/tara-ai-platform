@@ -1269,6 +1269,440 @@ def atomize_and_dedup_asset_requirements(asset, reqs: list, req_map: dict) -> li
     return clusters
 
 
+def _normalize_id_list(value) -> list:
+    if value is None:
+        return []
+    if isinstance(value, str):
+        parts = re.split(r"[;,；\n]", value)
+    elif isinstance(value, (list, tuple, set)):
+        parts = list(value)
+    else:
+        parts = [value]
+    result = []
+    for part in parts:
+        part = str(part).strip()
+        if part and part.upper() != "N/A" and part not in result:
+            result.append(part)
+    return result
+
+
+def _tara_requirement_id(r: dict, req_map: dict) -> str:
+    """Prefer the explicit TARA requirement ID; fall back to the content hash."""
+    rid = str(r.get("cybersecurity_requirement_id") or r.get("csr_id") or "").strip()
+    if rid and rid.upper() != "N/A":
+        return rid
+    text = str(r.get("cybersecurity_requirement") or "").strip()
+    return req_map.get(text) or _content_hash_id("CSR_", text)
+
+
+def _asset_context(asset) -> dict:
+    return {
+        "id": getattr(asset, "id", 0),
+        "name": getattr(asset, "name", ""),
+        "type": getattr(asset, "asset_type", ""),
+        "description": getattr(asset, "description", ""),
+        "protocol": getattr(asset, "protocol", ""),
+        "diagram_id": getattr(asset, "diagram_id", None),
+    }
+
+
+def _requirement_payload(r: dict, req_map: dict) -> dict:
+    return {
+        "requirement_id": _tara_requirement_id(r, req_map),
+        "title": r.get("title") or "",
+        "subject": r.get("subject") or "",
+        "text": r.get("cybersecurity_requirement") or "",
+        "verification_method": r.get("verification_method") or "",
+        "acceptance_criteria": r.get("acceptance_criteria") or "",
+        "requirement_scope": r.get("requirement_scope") or "",
+        "owner": r.get("owner") or "",
+        "allocated_to": r.get("allocated_to") or "",
+        "allocation_type": r.get("allocation_type") or "",
+        "requirement_type": r.get("requirement_type") or "product",
+        "goal_ids": _normalize_id_list(r.get("goal_ids")),
+        "control_ids": _normalize_id_list(r.get("control_ids")),
+        "claim_ids": _normalize_id_list(r.get("claim_ids")),
+        "control_type": r.get("control_type") or "",
+        "implementation_type": r.get("implementation_type") or "",
+        "control_objective": r.get("control_objective") or "",
+        "control_point": r.get("control_point") or "",
+        "dependencies": _normalize_id_list(r.get("dependencies")),
+        "source_ids": _normalize_id_list(r.get("source_ids")),
+        "rationale": r.get("rationale") or "",
+        "open_issue": r.get("open_issue") or "",
+    }
+
+
+def _atom_from_requirement(asset, r: dict, source_ids: list, subject: str, statement: str) -> dict:
+    asset_name = getattr(asset, "name", "") or ""
+    source_ids = _normalize_id_list(source_ids)
+    return {
+        "atom_id": _content_hash_id("ATOM_", f"{getattr(asset, 'id', 0)}:{','.join(source_ids)}:{statement}"),
+        "asset_id": getattr(asset, "id", 0),
+        "asset_name": asset_name,
+        "diagram_id": getattr(asset, "diagram_id", None),
+        "subject": subject or r.get("subject") or asset_name,
+        "cybersecurity_requirement": statement,
+        "title": r.get("title") or statement[:80],
+        "sub_title": r.get("sub_title") or r.get("sub_category") or "",
+        "source_requirement_ids": source_ids,
+        "source_tara_ids": set(source_ids),
+        "_raw_source_ids": source_ids,
+        "applicable_assets": {asset_name} if asset_name else set(),
+        "verification_method": r.get("verification_method") or "测试/分析 / Test/Analysis",
+        "acceptance_criteria": r.get("acceptance_criteria") or "",
+        "requirement_scope": r.get("requirement_scope") or "",
+        "owner": r.get("owner") or "",
+        "allocated_to": r.get("allocated_to") or "",
+        "allocation_type": r.get("allocation_type") or "",
+        "requirement_type": r.get("requirement_type") or "product",
+        "goal_ids": _normalize_id_list(r.get("goal_ids")),
+        "control_ids": _normalize_id_list(r.get("control_ids")),
+        "claim_ids": _normalize_id_list(r.get("claim_ids")),
+        "control_type": r.get("control_type") or "",
+        "implementation_type": r.get("implementation_type") or "",
+        "control_objective": r.get("control_objective") or "",
+        "control_point": r.get("control_point") or "",
+        "dependencies": _normalize_id_list(r.get("dependencies")),
+        "source_ids": _normalize_id_list(r.get("source_ids")),
+        "rationale": r.get("rationale") or "",
+        "open_issue": r.get("open_issue") or "",
+    }
+
+
+_RESPONSIBLE_SUBJECT_BLOCKERS = (
+    "身份", "会话", "命令", "数据", "事件", "日志", "报文", "状态",
+    "条件", "结果", "信息", "文件", "资源", "异常", "上下文",
+)
+
+
+def _is_responsible_subject(subject: str) -> bool:
+    subject = str(subject or "").strip()
+    if not subject or subject == "系统":
+        return False
+    return not any(word in subject for word in _RESPONSIBLE_SUBJECT_BLOCKERS)
+
+
+def _rewrite_atom_subject(asset, atom: dict) -> dict:
+    """Make the responsibility subject component/system/module oriented.
+
+    The LLM sometimes puts the protected object or an event into subject
+    (e.g. "调试主机身份"). For ISO 21434 traceability the subject must be the
+    component/system/module responsible for implementing the requirement.
+    """
+    subject = str(atom.get("subject") or "").strip()
+    if not _is_responsible_subject(subject):
+        subject = getattr(asset, "name", "") or "系统"
+    atom["subject"] = subject
+
+    statement = str(atom.get("cybersecurity_requirement") or "").strip()
+    if statement:
+        if statement.startswith("系统"):
+            statement = subject + statement[2:]
+        elif statement.startswith("The system"):
+            statement = subject + statement[len("The system"):]
+        elif re.match(r"^(应|不应|不得|禁止|仅|必须|需要)", statement):
+            statement = subject + statement
+        atom["cybersecurity_requirement"] = statement
+    return atom
+
+
+def _atom_payload(atom: dict) -> dict:
+    return {
+        "atom_id": atom.get("atom_id") or "",
+        "subject": atom.get("subject") or "",
+        "statement": atom.get("cybersecurity_requirement") or "",
+        "source_requirement_ids": _normalize_id_list(atom.get("source_requirement_ids")),
+        "requirement_scope": atom.get("requirement_scope") or "",
+        "owner": atom.get("owner") or "",
+        "allocated_to": atom.get("allocated_to") or "",
+        "allocation_type": atom.get("allocation_type") or "",
+        "verification_method": atom.get("verification_method") or "",
+        "acceptance_criteria": atom.get("acceptance_criteria") or "",
+        "requirement_type": atom.get("requirement_type") or "product",
+        "goal_ids": _normalize_id_list(atom.get("goal_ids")),
+        "control_ids": _normalize_id_list(atom.get("control_ids")),
+        "claim_ids": _normalize_id_list(atom.get("claim_ids")),
+    }
+
+
+def _call_llm_json(settings: dict, system_prompt: str, user_obj: dict) -> dict:
+    if not settings or not settings.get("api_key") or settings.get("api_key") in ["mock_test_key", ""]:
+        raise RuntimeError("no LLM settings")
+    url = f"{settings['api_base_url'].rstrip('/')}/chat/completions"
+    headers = {
+        "Authorization": f"Bearer {settings['api_key']}",
+        "Content-Type": "application/json",
+    }
+    payload = {
+        "model": settings.get("model_name", "deepseek-flash"),
+        "messages": [
+            {"role": "system", "content": system_prompt},
+            {"role": "user", "content": json.dumps(user_obj, ensure_ascii=False)},
+        ],
+        "response_format": {"type": "json_object"},
+    }
+    resp = post_llm_request_with_retry(url, headers, payload, max_retries=2)
+    return clean_and_parse_json(resp.json()["choices"][0]["message"]["content"])
+
+
+def _rule_atoms_for_requirement(asset, r: dict, req_map: dict) -> list:
+    rid = _tara_requirement_id(r, req_map)
+    text = str(r.get("cybersecurity_requirement") or "").strip()
+    if not text or text == "N/A":
+        return []
+    parsed = extract_subject_and_clauses(text)
+    if not parsed:
+        parsed = [("", text, text)]
+    return [
+        _rewrite_atom_subject(
+            asset,
+            _atom_from_requirement(asset, r, [rid], subject, statement),
+        )
+        for subject, _clause, statement in parsed
+    ]
+
+
+def atomize_asset_requirements_with_llm(asset, reqs: list, req_map: dict, settings: dict = None) -> list:
+    """Step 1: per-asset LLM atomization, preserving the original TARA IDs."""
+    if not reqs:
+        return []
+
+    payloads = [_requirement_payload(r, req_map) for r in reqs]
+    input_ids = {p["requirement_id"] for p in payloads if p.get("requirement_id")}
+    atoms = []
+
+    system_prompt = """你是 ISO/SAE 21434 网络安全需求工程师。请对一个资产的所有原始网络安全需求做“原子化拆解”。
+【规则】
+1. 只拆不合并：一条原始需求可以拆成多条原子需求；不要跨原始需求合并。
+2. 每条原子需求的 source_requirement_ids 只包含它来源的那个原始 requirement_id；拆分后的多条原子需求都带同一个原始 ID。
+3. 一条原子需求 = 一个责任主体 + 一个保护对象 + 一个行为 + 一个可验证结果。
+4. subject 必须是组件、系统、模块或角色；不得使用对象、事件、数据、条件、日志、命令、会话、身份、文件、资源作为 subject。如果原文没有明确责任主体，使用 asset.name 或 asset.name + 功能模块，不得只写“系统”。statement 必须以 subject 开头。
+5. 一条原子需求只能有一个行为。出现“并/且/以及/同时”连接不同动作、对象或结果时，必须拆成多条；认证、授权、审计、日志、恢复、配置、产线/运维流程必须分开。
+6. statement 必须中英文对照，格式为“中文描述 / English specification”；必须保留输入中的英文含义，不得只输出中文。
+7. 不要写具体协议/算法/产品/端口/阈值；保留输入中的验证方法、验收准则、scope、owner、allocated_to、goal/control/claim IDs、rationale 等字段。
+7. 不得编造 requirement_id；不得新增输入中不存在的原始需求。
+【正例】
+subject=ADCU调试服务；statement=ADCU调试服务应在建立调试会话前验证调试主机身份。
+【反例】
+subject=调试主机身份；statement=系统应验证调试主机身份并拒绝未认证会话，并记录事件。
+【输出 JSON】
+{"atomic_requirements":[{"atom_id":"A-001","subject":"...","statement":"...","source_requirement_ids":["TARA-REQ-001"],"verification_method":"...","acceptance_criteria":"...","requirement_scope":"item","owner":"...","allocated_to":"...","allocation_type":"primary","requirement_type":"product","goal_ids":[],"control_ids":[],"claim_ids":[],"rationale":"..."}]}"""
+
+    if settings:
+        try:
+            parsed = _call_llm_json(
+                settings,
+                system_prompt,
+                {"asset": _asset_context(asset), "requirements": payloads},
+            )
+            for item in parsed.get("atomic_requirements", []) or parsed.get("atoms", []) or []:
+                source_ids = _normalize_id_list(
+                    item.get("source_requirement_ids")
+                    or item.get("source_requirement_id")
+                    or item.get("source_tara_ids")
+                )
+                source_ids = [sid for sid in source_ids if sid in input_ids]
+                statement = str(item.get("statement") or item.get("cybersecurity_requirement") or "").strip()
+                if not source_ids or not statement:
+                    continue
+                base = next(
+                    (r for r in reqs if _tara_requirement_id(r, req_map) == source_ids[0]),
+                    reqs[0],
+                )
+                atom = _atom_from_requirement(
+                    asset, base, source_ids,
+                    str(item.get("subject") or ""), statement,
+                )
+                for field in (
+                    "title", "verification_method", "acceptance_criteria",
+                    "requirement_scope", "owner", "allocated_to", "allocation_type",
+                    "requirement_type", "control_type", "implementation_type",
+                    "control_objective", "control_point", "rationale", "open_issue",
+                ):
+                    if item.get(field):
+                        atom[field] = item[field]
+                atom["goal_ids"] = _normalize_id_list(item.get("goal_ids")) or atom["goal_ids"]
+                atom["control_ids"] = _normalize_id_list(item.get("control_ids")) or atom["control_ids"]
+                atom["claim_ids"] = _normalize_id_list(item.get("claim_ids")) or atom["claim_ids"]
+                atoms.append(_rewrite_atom_subject(asset, atom))
+        except Exception as e:
+            print(f"[TARA-AI] 资产 {getattr(asset, 'name', '')} LLM 原子化失败，使用规则拆解兜底: {e}")
+
+    if not atoms:
+        for r in reqs:
+            atoms.extend(_rule_atoms_for_requirement(asset, r, req_map))
+
+    # Coverage guard: every original TARA ID must survive atomization.
+    covered = {
+        sid for atom in atoms
+        for sid in _normalize_id_list(atom.get("source_requirement_ids"))
+    }
+    for r in reqs:
+        rid = _tara_requirement_id(r, req_map)
+        if rid not in covered:
+            atoms.extend(_rule_atoms_for_requirement(asset, r, req_map))
+    return atoms
+
+
+def _atoms_compatible(a: dict, b: dict) -> bool:
+    for field in ("requirement_scope", "owner", "allocated_to", "verification_method", "acceptance_criteria"):
+        av = str(a.get(field) or "").strip()
+        bv = str(b.get(field) or "").strip()
+        if av and bv and av != bv:
+            return False
+    return True
+
+
+def _rule_dedup_asset_atoms(asset, atoms: list, threshold: float = 0.85) -> list:
+    clusters = []
+    for atom in atoms:
+        toks = semantic_tokens(atom.get("cybersecurity_requirement") or "")
+        matched = None
+        for cluster in clusters:
+            same_source = bool(
+                set(_normalize_id_list(cluster["rep"].get("source_requirement_ids")))
+                & set(_normalize_id_list(atom.get("source_requirement_ids")))
+            )
+            if (
+                not same_source
+                and _jaccard(toks, cluster["tokens"]) >= threshold
+                and _atoms_compatible(cluster["rep"], atom)
+            ):
+                matched = cluster
+                break
+        if matched:
+            matched["source_ids"].update(_normalize_id_list(atom.get("source_requirement_ids")))
+            matched["assets"].update(atom.get("applicable_assets") or set())
+            matched["tokens"].update(toks)
+        else:
+            clusters.append({
+                "rep": dict(atom),
+                "tokens": toks,
+                "source_ids": set(_normalize_id_list(atom.get("source_requirement_ids"))),
+                "assets": set(atom.get("applicable_assets") or set()),
+            })
+    result = []
+    for cluster in clusters:
+        atom = dict(cluster["rep"])
+        atom["source_requirement_ids"] = sorted(cluster["source_ids"])
+        atom["source_tara_ids"] = set(cluster["source_ids"])
+        atom["_raw_source_ids"] = sorted(cluster["source_ids"])
+        atom["applicable_assets"] = set(cluster["assets"])
+        result.append(atom)
+    return result
+
+
+def _dedupe_exact_atoms(items: list) -> list:
+    result = []
+    seen = set()
+    for item in items:
+        source_key = tuple(sorted(_normalize_id_list(item.get("source_requirement_ids"))))
+        statement_key = re.sub(r"\s+", "", str(item.get("cybersecurity_requirement") or ""))
+        key = (source_key, statement_key)
+        if key in seen:
+            continue
+        seen.add(key)
+        result.append(item)
+    return result
+
+
+
+def dedup_asset_atoms_with_llm(asset, atoms: list, settings: dict = None) -> list:
+    """Step 2: per-asset LLM deduplication; source IDs are unioned."""
+    if not atoms:
+        return []
+    input_ids = {
+        sid for atom in atoms
+        for sid in _normalize_id_list(atom.get("source_requirement_ids"))
+    }
+    if len(atoms) <= 1:
+        return atoms
+
+    system_prompt = """你是 ISO/SAE 21434 网络安全需求工程师。请只对当前资产内的原子需求做去重合并。
+【规则】
+1. 只合并，不新增；不得产生输入中不存在的原始 requirement_id。
+2. 不同 source_requirement_id 的原子：只有同时满足同一 requirement_scope、同一 owner、同一 allocated_to、同一责任主体、同一保护对象、同一动作/控制目标、同一 verification_method、同一 acceptance_criteria、同一适用条件，才允许合并；source IDs 取并集。
+3. 同一 source_requirement_id 的原子：只有“同一动作、同一保护对象、同一控制目标，只是条件、字段或枚举值不同”时才允许合并；不同动作/控制目标的不得合并。
+4. 不同动作必须分开，例如：身份认证、权限授权、审计记录、拒绝操作、告警、证据保留、资源限制、会话终止、数据遮蔽、数据排除、默认禁用与临时启用，不得互相合并。
+5. 不同条件/例外/对象/组件/验证方法/验收准则的，即使文字相似，也不合并。
+6. 合并时 source_requirement_ids 取并集；不得丢失任何输入原始 ID。
+7. 不跨资产合并。
+【可合并的正例】
+- 记录主体 / 记录动作 / 记录结果 → 一条“记录主体、动作和结果”
+- 校验格式 / 校验边界 → 一条“校验格式和边界”
+- 会话异常 / 失效 / 超时后终止 → 一条“异常、失效或超时后终止”
+- 遮蔽敏感字段 / 排除敏感字段 → 一条“遮蔽或排除”
+【不得合并的反例】
+- 默认禁用 vs 临时启用
+- 身份认证 vs 权限授权 vs 审计记录 vs 拒绝操作
+- 完整性校验 vs 记录事件
+- 检测未授权修改 vs 生成告警
+【输出 JSON】
+{"deduplicated_requirements":[{"dedup_id":"D-001","subject":"...","statement":"...","source_requirement_ids":["TARA-REQ-001","TARA-REQ-002"],"verification_method":"...","acceptance_criteria":"...","requirement_scope":"item","owner":"...","allocated_to":"...","allocation_type":"primary","requirement_type":"product","goal_ids":[],"control_ids":[],"claim_ids":[],"merge_reason":"..."}]}"""
+
+    deduped = []
+    if settings:
+        try:
+            parsed = _call_llm_json(
+                settings,
+                system_prompt,
+                {"asset": _asset_context(asset), "atoms": [_atom_payload(a) for a in atoms]},
+            )
+            for item in parsed.get("deduplicated_requirements", []) or parsed.get("requirements", []) or []:
+                source_ids = _normalize_id_list(item.get("source_requirement_ids"))
+                source_ids = [sid for sid in source_ids if sid in input_ids]
+                statement = str(item.get("statement") or item.get("cybersecurity_requirement") or "").strip()
+                if not source_ids or not statement:
+                    continue
+                base = next(
+                    (a for a in atoms if set(_normalize_id_list(a.get("source_requirement_ids"))) & set(source_ids)),
+                    atoms[0],
+                )
+                merged = dict(base)
+                merged["atom_id"] = item.get("dedup_id") or _content_hash_id(
+                    "ATOM_", f"{getattr(asset, 'id', 0)}:{','.join(source_ids)}:{statement}"
+                )
+                merged["cybersecurity_requirement"] = statement
+                merged["source_requirement_ids"] = sorted(source_ids)
+                merged["source_tara_ids"] = set(source_ids)
+                merged["_raw_source_ids"] = sorted(source_ids)
+                merged["applicable_assets"] = set(base.get("applicable_assets") or {getattr(asset, "name", "")})
+                for field in (
+                    "subject", "verification_method", "acceptance_criteria",
+                    "requirement_scope", "owner", "allocated_to", "allocation_type",
+                    "requirement_type", "control_type", "implementation_type",
+                    "control_objective", "control_point", "rationale", "open_issue",
+                ):
+                    if item.get(field):
+                        merged[field] = item[field]
+                merged["goal_ids"] = _normalize_id_list(item.get("goal_ids")) or merged.get("goal_ids", [])
+                merged["control_ids"] = _normalize_id_list(item.get("control_ids")) or merged.get("control_ids", [])
+                merged["claim_ids"] = _normalize_id_list(item.get("claim_ids")) or merged.get("claim_ids", [])
+                deduped.append(_rewrite_atom_subject(asset, merged))
+        except Exception as e:
+            print(f"[TARA-AI] 资产 {getattr(asset, 'name', '')} LLM 去重失败，使用语义去重兜底: {e}")
+
+    if not deduped:
+        deduped = _rule_dedup_asset_atoms(asset, atoms)
+
+    # Same-source atoms may be merged by the LLM only when they share the same
+    # action/object/objective (see the dedup prompt); do not auto-split them.
+
+    # Coverage guard: a deduplicated item must not delete an original ID.
+    covered = {
+        sid for item in deduped
+        for sid in _normalize_id_list(item.get("source_requirement_ids"))
+    }
+    for sid in sorted(input_ids - covered):
+        originals = [
+            dict(a) for a in atoms
+            if sid in _normalize_id_list(a.get("source_requirement_ids"))
+        ]
+        deduped.extend(originals)
+    return _dedupe_exact_atoms(deduped)
+
+
 def _aggregate_subsystem_batch(diagram_title: str, batch_items: list, settings: dict = None) -> list:
     """对子系统内单批（<=25项）原子需求调用大模型或语义聚类进行综合归纳提炼。"""
     if not batch_items:
@@ -1817,6 +2251,21 @@ def classify_and_finalize_csrs(global_items: list, all_input_raw_ids: Set[str] =
             "verification_method": r.get("verification_method") or "测试/分析 / Test/Analysis",
             "requirement_type": r.get("requirement_type") or "product",
             "rationale": r.get("rationale") or "",
+            "requirement_scope": r.get("requirement_scope") or "",
+            "owner": r.get("owner") or "",
+            "allocated_to": r.get("allocated_to") or "",
+            "allocation_type": r.get("allocation_type") or "",
+            "acceptance_criteria": r.get("acceptance_criteria") or "",
+            "goal_ids": _normalize_id_list(r.get("goal_ids")),
+            "control_ids": _normalize_id_list(r.get("control_ids")),
+            "claim_ids": _normalize_id_list(r.get("claim_ids")),
+            "control_type": r.get("control_type") or "",
+            "implementation_type": r.get("implementation_type") or "",
+            "control_objective": r.get("control_objective") or "",
+            "control_point": r.get("control_point") or "",
+            "source_ids": _normalize_id_list(r.get("source_ids")),
+            "dependencies": _normalize_id_list(r.get("dependencies")),
+            "open_issue": r.get("open_issue") or "",
             "applicable_assets": applicable_assets_str,
             "assets_count": len(sorted_assets),
             "source_cybersecurity_requirement_ids": source_ids_str,
@@ -1838,13 +2287,14 @@ def classify_and_finalize_csrs(global_items: list, all_input_raw_ids: Set[str] =
 
 
 def hierarchical_synthesize_project_csrs(db: Session, domain: Domain, steps: list, assets: list) -> list:
-    """
-    五步分层架构实现 TARA 原始安全需求向标准 CSR_Requirements 的综合提炼：
-    1. 资产内原子化 (extract_subject_and_clauses)
-    2. 资产内去重 (intra-asset deduplication)
-    3. 中间局部场景图/子系统聚合去重 (subsystem batch LLM aggregation)
-    4. 全资产通用安全控制去重 (global cross-subsystem deduplication)
-    5. 17 分类、规范编号与双向追溯构建 (100% bidirectional verification)
+    """Per-asset dedup -> hierarchical cross-asset dedup -> atomization -> atomic dedup.
+
+    The whole-requirement hierarchy follows the requested structure:
+      1. each asset deduplicates its own TARA requirements (LLM judged);
+      2. groups are merged pairwise to 16 -> 8 -> 4, then K1 absorbs
+         K2/K3/K4 in order, with an LLM duplicate decision per merge;
+      3. the final group is atomized, preserving every original TARA ID;
+      4. atoms are deduplicated again and traced back to their source IDs.
     """
     settings_dict = None
     if db:
@@ -1854,19 +2304,10 @@ def hierarchical_synthesize_project_csrs(db: Session, domain: Domain, steps: lis
                 settings_dict = {
                     "api_base_url": s.api_base_url,
                     "model_name": s.model_name or "deepseek-flash",
-                    "api_key": s.api_key
+                    "api_key": s.api_key,
                 }
         except Exception as e:
             print(f"[TARA-AI] 读取系统配置异常: {e}")
-
-    # 读取场景图 (Diagrams)
-    diagram_map = {}
-    if db and domain and getattr(domain, "id", None):
-        try:
-            diags = db.query(Diagram).filter(Diagram.domain_id == domain.id).all()
-            diagram_map = {d.id: d.title for d in diags}
-        except Exception as e:
-            print(f"[TARA-AI] 读取场景图异常: {e}")
 
     steps_by_asset = {}
     for step in steps:
@@ -1874,11 +2315,9 @@ def hierarchical_synthesize_project_csrs(db: Session, domain: Domain, steps: lis
             steps_by_asset[step.asset_id] = {}
         steps_by_asset[step.asset_id][step.stage] = step
 
-    goal_map, claim_map, control_map, req_map = build_id_maps(steps)
-
-    # 收集全部原始 TARA 需求与目标资产
+    _, _, _, req_map = build_id_maps(steps)
     all_raw_ids = set()
-    asset_atomic_items = []
+    assets_data = []
 
     for asset in assets:
         if getattr(asset, "status", "confirmed") == "rejected":
@@ -1891,58 +2330,34 @@ def hierarchical_synthesize_project_csrs(db: Session, domain: Domain, steps: lis
         reqs = fo.get("requirements", [])
         if not reqs:
             reqs = fo.get("summarized_csrs") or []
+        if not reqs:
+            continue
 
-        # 记录所有原始 ID
         for r in reqs:
-            raw_t = str(r.get("cybersecurity_requirement") or "").strip()
-            if raw_t and raw_t != "N/A":
-                raw_id = req_map.get(raw_t) or _content_hash_id("CSR_", raw_t)
-                all_raw_ids.add(raw_id)
+            rid = _tara_requirement_id(r, req_map)
+            ids = _normalize_id_list(
+                r.get("source_requirement_ids") or r.get("source_tara_ids")
+            )
+            if rid and rid not in ids:
+                ids.append(rid)
+            if not ids and rid:
+                ids = [rid]
+            all_raw_ids.update(ids)
+        assets_data.append({"asset": asset, "requirements": reqs})
 
-        # Step 1 & 2: 资产内原子化与去重
-        atoms = atomize_and_dedup_asset_requirements(asset, reqs, req_map)
-        asset_atomic_items.extend(atoms)
+    from app.services.csr_hierarchical_dedup import run_pipeline as run_hierarchical_dedup
 
-    print(f"[TARA-AI] 步骤 1&2 完成: 跨 {len(assets)} 个资产收集 {len(all_raw_ids)} 项原始需求，解构成 {len(asset_atomic_items)} 项资产内原子需求。")
-
-    # Step 3: 按子系统/场景图聚合
-    items_by_diagram = defaultdict(list)
-    for it in asset_atomic_items:
-        did = it.get("diagram_id")
-        items_by_diagram[did].append(it)
-
-    subsystem_results = []
-    with ThreadPoolExecutor(max_workers=4) as executor:
-        future_to_diag = {
-            executor.submit(
-                aggregate_subsystem_requirements,
-                diagram_map.get(did, f"Subsystem_{did}" if did else "General_Subsystem"),
-                items_by_diagram[did],
-                settings_dict
-            ): did
-            for did in items_by_diagram
-        }
-        for fut in as_completed(future_to_diag):
-            did = future_to_diag[fut]
-            diag_title = diagram_map.get(did, f"Subsystem_{did}" if did else "General_Subsystem")
-            try:
-                res = fut.result()
-                print(f"[TARA-AI] 子系统 [{diag_title}] 聚合: {len(items_by_diagram[did])} 原子项 -> {len(res)} 项子系统 CSR")
-                subsystem_results.extend(res)
-            except Exception as e:
-                print(f"[TARA-AI] 子系统 [{diag_title}] 聚合异常: {e}")
-                subsystem_results.extend(items_by_diagram[did])
-
-    # Step 4: 全资产通用归纳去重
-    global_items = aggregate_global_requirements(subsystem_results, settings_dict)
-    print(f"[TARA-AI] 步骤 4 完成: 全资产跨子系统通用归纳，收敛至 {len(global_items)} 项全局 CSR。")
-
-    # Step 5: 17 分类与最终编号 (由大模型执行客观忠实分类判定)
-    final_rows = classify_and_finalize_csrs(global_items, all_input_raw_ids=all_raw_ids, settings=settings_dict)
-    print(f"[TARA-AI] 步骤 5 完成: 17 分类编号完成，最终生成 {len(final_rows)} 项规范 CSR，100% 来源双向追溯校验通过！")
-
+    final_items, coverage = run_hierarchical_dedup(assets_data, settings_dict, req_map)
+    final_rows = classify_and_finalize_csrs(
+        final_items,
+        all_input_raw_ids=all_raw_ids,
+        settings=settings_dict,
+    )
+    print(
+        f"[TARA-AI] 层级去重/原子化完成：{coverage['input_count']} 项原始 TARA 需求 -> "
+        f"{len(final_rows)} 项最终 CSR，覆盖 {coverage['covered_count']} 项"
+    )
     return final_rows
-
 
 def synthesize_project_csrs(db: Session, all_csrs: list, global_tier2_to_tier1: dict = None) -> list:
     """兼容旧接口签名的全局综合提炼入口。"""

@@ -204,5 +204,70 @@ class CoverageRetryTests(unittest.TestCase):
         self.assertEqual(report.get("mode"), "llm_coverage_retry")
 
 
+class PerAssetFlowTests(unittest.TestCase):
+    class _Asset:
+        id = 1
+        name = "ADCU"
+        asset_type = "software"
+        description = ""
+        protocol = ""
+        diagram_id = None
+        status = "confirmed"
+
+    class _Step:
+        asset_id = 1
+        stage = "stage5"
+        analysis_result = {
+            "final_output": {
+                "requirements": [
+                    {
+                        "cybersecurity_requirement_id": "TARA-1",
+                        "csr_id": "TARA-1",
+                        "cybersecurity_requirement": "ADCU 应支持安全启动；ADCU 应进行调试认证。",
+                        "title": "启动与调试 / Boot and Debug",
+                        "verification_method": "测试 / Test",
+                        "acceptance_criteria": "通过 / Pass",
+                        "requirement_scope": "item",
+                        "owner": "Tier1",
+                        "allocated_to": "ADCU",
+                    },
+                    {
+                        "cybersecurity_requirement_id": "TARA-2",
+                        "csr_id": "TARA-2",
+                        "cybersecurity_requirement": "ADCU 应在建立调试会话前进行身份认证。",
+                        "title": "调试认证 / Debug Auth",
+                        "verification_method": "测试 / Test",
+                        "acceptance_criteria": "通过 / Pass",
+                        "requirement_scope": "item",
+                        "owner": "Tier1",
+                        "allocated_to": "ADCU",
+                    },
+                ]
+            }
+        }
+
+    def test_asset_atomize_and_dedup_preserve_source_ids(self):
+        asset = self._Asset()
+        reqs = self._Step.analysis_result["final_output"]["requirements"]
+        atoms = csr_synthesis.atomize_asset_requirements_with_llm(asset, reqs, {}, None)
+        deduped = csr_synthesis.dedup_asset_atoms_with_llm(asset, atoms, None)
+        covered = {
+            sid for item in deduped
+            for sid in item.get("source_requirement_ids", [])
+        }
+        self.assertEqual(covered, {"TARA-1", "TARA-2"})
+
+    def test_hierarchical_per_asset_flow_keeps_original_ids(self):
+        rows = csr_synthesis.hierarchical_synthesize_project_csrs(
+            None, None, [self._Step()], [self._Asset()]
+        )
+        covered = {
+            sid for row in rows
+            for sid in row.get("source_requirement_ids", [])
+        }
+        self.assertEqual(covered, {"TARA-1", "TARA-2"})
+        self.assertTrue(all(row["source_cybersecurity_requirement_ids"] for row in rows))
+
+
 if __name__ == "__main__":
     unittest.main()
