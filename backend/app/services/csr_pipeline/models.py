@@ -56,6 +56,7 @@ class PipelineRecord:
     goal_ids: list[str] = field(default_factory=list)
     control_ids: list[str] = field(default_factory=list)
     claim_ids: list[str] = field(default_factory=list)
+    applicable_assets: list[str] = field(default_factory=list)
 
     # ===== 管道动态抽取字段 =====
     action_verbs: list[str] = field(default_factory=list)
@@ -85,6 +86,10 @@ class PipelineRecord:
     self_check_info: dict = field(default_factory=dict)
     audit_log: list[dict] = field(default_factory=list)
     stage_failures: list[str] = field(default_factory=list)
+
+    def __post_init__(self):
+        if not self.applicable_assets and self.asset_name:
+            self.applicable_assets = [self.asset_name]
 
     def mark_merged(self, stage: str, source_record_ids: list[str]):
         self.merge_stage = stage
@@ -141,6 +146,7 @@ class PipelineContext:
     settings: dict | None = None
     req_map: dict = field(default_factory=dict)
     config: Any = None                   # PipelineConfig
+    llm_proxy: Any = None                # LLMProxy
     all_source_ids: set = field(default_factory=set)
     log_dir: str = ""
     cleanup_log: list[dict] = field(default_factory=list)

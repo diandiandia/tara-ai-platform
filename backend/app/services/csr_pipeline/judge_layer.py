@@ -272,8 +272,9 @@ def _judge_one_chunk(
         input_texts_abstract=[rec.requirement_text[:200] for rec in chunk],
     )
 
-    if not sc.agreed:
-        # 不一致 → 标记该块所有记录为 uncertain
+    corrections = (sc.second_result or {}).get("corrections", []) if isinstance(sc.second_result, dict) else []
+    if not sc.agreed and not corrections:
+        # 整体不一致且无具体修正指令 → 标记该块所有记录为 uncertain
         for rec in chunk:
             rec.is_uncertain = True
             rec.audit_log.append({

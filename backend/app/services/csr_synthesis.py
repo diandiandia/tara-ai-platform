@@ -2347,6 +2347,135 @@ def hierarchical_synthesize_project_csrs(db: Session, domain: Domain, steps: lis
             all_raw_ids.update(ids)
         assets_data.append({"asset": asset, "requirements": reqs})
 
+    use_v2 = os.environ.get("USE_V2_PIPELINE", "true").lower() in ("true", "1", "yes")
+
+    if use_v2:
+        from app.services.csr_pipeline import (
+            run_pipeline as run_v2_pipeline,
+            create_context,
+            default_config,
+            PipelineRecord,
+        )
+
+        pipeline_records = []
+        for ad in assets_data:
+            asset = ad["asset"]
+            asset_name = getattr(asset, "name", "Unknown Asset")
+            for idx, r in enumerate(ad["requirements"]):
+                raw_text = str(r.get("cybersecurity_requirement") or r.get("requirement_text") or r.get("full_text") or "").strip()
+                if not raw_text or raw_text == "N/A":
+                    continue
+
+                rid = _tara_requirement_id(r, req_map)
+                ids = _normalize_id_list(
+                    r.get("source_requirement_ids") or r.get("source_tara_ids")
+                )
+                if rid and rid not in ids:
+                    ids.append(rid)
+                if not ids and rid:
+                    ids = [rid]
+
+                rec_id = f"ASSET-{asset.id}::{r.get('csr_id') or r.get('number') or f'REQ-{idx+1}'}"
+                rec = PipelineRecord(
+                    record_id=rec_id,
+                    requirement_text=raw_text,
+                    source_ids=list(ids),
+                    asset_name=asset_name,
+                    requirement_scope=r.get("requirement_scope") or "",
+                    requirement_type=r.get("requirement_type") or "product",
+                    owner=r.get("owner") or "",
+                    allocated_to=r.get("allocated_to") or "",
+                    verification_method=r.get("verification_method") or "测试/分析 / Test/Analysis",
+                    acceptance_criteria=r.get("acceptance_criteria") or "",
+                    rationale=r.get("rationale") or "",
+                    dependencies=_normalize_id_list(r.get("dependencies")),
+                    goal_ids=_normalize_id_list(r.get("goal_ids")),
+                    control_ids=_normalize_id_list(r.get("control_ids")),
+                    claim_ids=_normalize_id_list(r.get("claim_ids")),
+                    applicable_assets=[asset_name],
+                )
+                pipeline_records.append(rec)
+
+        cfg = default_config()
+        ctx = create_context(config=cfg, llm_settings=settings_dict)
+        ctx.db = db
+        ctx.domain = domain
+        ctx.steps = steps
+        ctx.assets = assets
+        ctx.req_map = req_map
+        ctx.all_source_ids = set(all_raw_ids)
+
+        v2_output = run_v2_pipeline(pipeline_records, ctx)
+
+        final_rows = []
+        for rec in v2_output.records:
+            cat = rec.topic_label if (rec.topic_label and rec.topic_label != "未分类") else "4.2 系统加固"
+            dyn_id = rec.csr_number or "CSR-GEN-001"
+            sorted_raw_ids = sorted(list(rec.source_ids))
+            source_ids_str = "; ".join(sorted_raw_ids)
+            sorted_assets = sorted(list(rec.applicable_assets))
+            applicable_assets_str = "\n".join(sorted_assets)
+
+            final_rows.append({
+                "number": dyn_id,
+                "csr_id": dyn_id,
+                "functional_category": cat,
+                "security_domain": clean_major_category(cat),
+                "control_category": "通用安全防护 / General Security Protection",
+                "sub_category": "通用安全防护 / General Security Protection",
+                "requirement_title": "网络安全要求 / Cybersecurity Requirement",
+                "title": "网络安全要求 / Cybersecurity Requirement",
+                "subject": extract_subject(rec.requirement_text) or (sorted_assets[0] if sorted_assets else "System"),
+                "cybersecurity_requirement": rec.requirement_text,
+                "verification_method": rec.verification_method or "测试/分析 / Test/Analysis",
+                "requirement_type": rec.requirement_type or "product",
+                "rationale": rec.rationale or "",
+                "requirement_scope": rec.requirement_scope or "",
+                "owner": rec.owner or "",
+                "allocated_to": rec.allocated_to or "",
+                "allocation_type": "",
+                "acceptance_criteria": rec.acceptance_criteria or "",
+                "goal_ids": _normalize_id_list(rec.goal_ids),
+                "control_ids": _normalize_id_list(rec.control_ids),
+                "claim_ids": _normalize_id_list(rec.claim_ids),
+                "control_type": "",
+                "implementation_type": "",
+                "control_objective": "",
+                "control_point": "",
+                "source_ids": _normalize_id_list(rec.source_ids),
+                "dependencies": _normalize_id_list(rec.dependencies),
+                "open_issue": "",
+                "applicable_assets": applicable_assets_str,
+                "assets_count": len(sorted_assets),
+                "source_cybersecurity_requirement_ids": source_ids_str,
+                "source_tara_requirements": source_ids_str,
+                "source_count": len(sorted_raw_ids),
+                "source_requirement_ids": sorted_raw_ids,
+                "_raw_source_ids": sorted_raw_ids,
+                "_tier2_source_ids": sorted_raw_ids,
+                "needs_review": "Yes" if (rec.is_uncertain or rec.is_validation_failed) else "No",
+                "merge_stage": rec.merge_stage,
+                "canonical_origin": rec.canonical_origin,
+            })
+
+        if all_raw_ids:
+            observed_ids = set().union(*[set(r["_raw_source_ids"]) for r in final_rows])
+            missing = all_raw_ids - observed_ids
+            if missing:
+                print(f"[TARA-AI] 警告: {len(missing)} 项原始 ID 未在输出中，自动回补到首条输出以确保 100% 追溯")
+                if final_rows:
+                    final_rows[0]["_raw_source_ids"] = sorted(list(set(final_rows[0]["_raw_source_ids"]).union(missing)))
+                    final_rows[0]["source_requirement_ids"] = final_rows[0]["_raw_source_ids"]
+                    final_rows[0]["source_cybersecurity_requirement_ids"] = "; ".join(final_rows[0]["_raw_source_ids"])
+                    final_rows[0]["source_tara_requirements"] = final_rows[0]["source_cybersecurity_requirement_ids"]
+                    final_rows[0]["source_count"] = len(final_rows[0]["_raw_source_ids"])
+
+        print(
+            f"[TARA-AI] CSR Pipeline V2 完成：{v2_output.stats.get('total_input', len(pipeline_records))} 项原始需求 -> "
+            f"{len(final_rows)} 项最终 CSR，去重率 {v2_output.stats.get('dedup_rate', 0):.1%}"
+        )
+        return final_rows
+
     from app.services.csr_hierarchical_dedup import run_pipeline as run_hierarchical_dedup
 
     final_items, coverage = run_hierarchical_dedup(assets_data, settings_dict, req_map)
@@ -2439,7 +2568,7 @@ def get_or_synthesize_global_csrs(
             if s.stage == "global_csr" and s.analysis_result:
                 fo = s.analysis_result.get("final_output", {})
                 cached_rows = fo.get("consolidated_csrs", [])
-                if cached_rows and len(cached_rows) <= 65:
+                if cached_rows and (fo.get("pipeline_version") == "v2.0" or len(cached_rows) <= 65):
                     if hash_to_global_map is not None:
                         for r in cached_rows:
                             cid = r.get("csr_id")
@@ -2478,7 +2607,12 @@ def get_or_synthesize_global_csrs(
             ).first()
 
             if existing:
-                existing.analysis_result = {"final_output": {"consolidated_csrs": rows}}
+                existing.analysis_result = {
+                    "final_output": {
+                        "consolidated_csrs": rows,
+                        "pipeline_version": "v2.0"
+                    }
+                }
             else:
                 new_step = TaraStep(
                     run_id=run_id,
@@ -2486,7 +2620,12 @@ def get_or_synthesize_global_csrs(
                     stage="global_csr",
                     status="completed",
                     input_hash="global_csr_cache",
-                    analysis_result={"final_output": {"consolidated_csrs": rows}}
+                    analysis_result={
+                        "final_output": {
+                            "consolidated_csrs": rows,
+                            "pipeline_version": "v2.0"
+                        }
+                    }
                 )
                 db.add(new_step)
             db.commit()

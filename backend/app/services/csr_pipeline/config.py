@@ -170,7 +170,19 @@ def get_default_config() -> PipelineConfig:
         synonym_table=SYNONYM_TABLE,
         classify_fn=None,       # 由调用方注入 classify_and_finalize_csrs
         numbering_prefix_map=_build_numbering_prefix_map(),
+        csr_number_prefix_map=_build_numbering_prefix_map(),
         max_uncertainty_rate=0.15,
         max_retries=3,
         temperature=0.0,
     )
+
+
+default_config = get_default_config
+
+
+def rebuild_config(**overrides) -> PipelineConfig:
+    cfg = get_default_config()
+    for k, v in overrides.items():
+        if hasattr(cfg, k):
+            setattr(cfg, k, v)
+    return cfg

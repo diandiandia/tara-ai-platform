@@ -11,6 +11,8 @@ import time
 from typing import Any
 from .models import SelfCheckResult
 
+LLMSettings = dict
+
 
 # ---------------------------------------------------------------------------
 # LLM 调用底层

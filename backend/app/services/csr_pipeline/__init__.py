@@ -35,6 +35,8 @@ def run_pipeline(
     print(f"\n[CSR-Pipeline-V2] 开始执行，输入 {len(records)} 条")
     config = context.config
     proxy = context.llm_proxy
+    initial_records = list(records)
+    initial_count = len(records)
 
     # ==========================================================================
     # Phase 1: 预处理层（纯程序优先，LLM 兜底）
@@ -43,7 +45,7 @@ def run_pipeline(
 
     # 1.1 哈希去重（纯程序，无 LLM）
     records = hash_dedup(records, config)
-    stats_phase1 = hash_dedup_stats(len(records), records)
+    stats_phase1 = hash_dedup_stats(initial_count, records)
 
     # 1.2 保守原子化（LLM + 程序校验）
     try:
@@ -113,7 +115,7 @@ def run_pipeline(
     # ==========================================================================
     print("[CSR-Pipeline-V2] Phase 4: 输出层")
 
-    output = finalize_output(records, config)
+    output = finalize_output(records, config, original_records=initial_records)
 
     # 汇总统计
     output.stats = {

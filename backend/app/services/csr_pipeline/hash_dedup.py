@@ -31,6 +31,9 @@ def hash_dedup(records: list[PipelineRecord], config: PipelineConfig) -> list[Pi
             existing = hash_map[h]
             existing.source_ids = list(set(existing.source_ids + rec.source_ids))
             existing.merge_source_ids = list(set(existing.merge_source_ids + [rec.record_id] + rec.merge_source_ids))
+            existing_assets = getattr(existing, "applicable_assets", None) or ([existing.asset_name] if existing.asset_name else [])
+            rec_assets = getattr(rec, "applicable_assets", None) or ([rec.asset_name] if rec.asset_name else [])
+            existing.applicable_assets = sorted(list(set(existing_assets + rec_assets)))
             existing.audit_log.append({
                 "action": "hash_dedup_exact",
                 "merged_record_id": rec.record_id,
