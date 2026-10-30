@@ -4,6 +4,7 @@
 消除完全重复和高度相似的条目，降低 LLM 调用量。
 """
 from __future__ import annotations
+import difflib
 import hashlib
 from .models import PipelineRecord, PipelineConfig
 from .rule_validator import normalize_text, edit_distance_similarity
@@ -57,6 +58,7 @@ def hash_dedup(records: list[PipelineRecord], config: PipelineConfig) -> list[Pi
             if len_i == 0:
                 continue
             text_i = norm_texts[i]
+            sm = difflib.SequenceMatcher(None, text_i, "")
             for j in range(i + 1, len(result)):
                 if result[i].near_duplicate and result[j].near_duplicate:
                     continue
@@ -65,7 +67,10 @@ def hash_dedup(records: list[PipelineRecord], config: PipelineConfig) -> list[Pi
                 if abs(len_i - len_j) / max_len > (1.0 - threshold):
                     continue
                 text_j = norm_texts[j]
-                sim = edit_distance_similarity(text_i, text_j)
+                sm.set_seq2(text_j)
+                if sm.quick_ratio() < threshold:
+                    continue
+                sim = sm.ratio()
                 if sim >= threshold:
                     # 两条都标记
                     if not result[i].near_duplicate:

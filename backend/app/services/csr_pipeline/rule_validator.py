@@ -357,8 +357,11 @@ class ConservativeAtomizeValidator:
 # 编辑器距离（用于近精确去重）
 # ============================================================================
 
+import difflib
+
+
 def edit_distance_similarity(a: str, b: str) -> float:
-    """编辑距离相似度（0-1）。"""
+    """编辑距离 / 序列相似度（0-1）。使用 Python 标准库 difflib (C 级别优化)。"""
     a = normalize_text(a)
     b = normalize_text(b)
     if not a and not b:
@@ -369,26 +372,13 @@ def edit_distance_similarity(a: str, b: str) -> float:
         return 1.0
     len_a, len_b = len(a), len(b)
     max_len = max(len_a, len_b)
-    len_diff = abs(len_a - len_b)
-    if len_diff / max_len > 0.1:
-        return 1.0 - (len_diff / max_len)
+    if abs(len_a - len_b) / max_len > 0.05:
+        return 1.0 - (abs(len_a - len_b) / max_len)
 
-    # 动态规划 (O(N) 空间)
-    if len_a < len_b:
-        a, b = b, a
-        len_a, len_b = len_b, len_a
-
-    prev = list(range(len_b + 1))
-    curr = [0] * (len_b + 1)
-    for i in range(1, len_a + 1):
-        curr[0] = i
-        ch_a = a[i - 1]
-        for j in range(1, len_b + 1):
-            cost = 0 if ch_a == b[j - 1] else 1
-            curr[j] = min(prev[j] + 1, curr[j - 1] + 1, prev[j - 1] + cost)
-        prev, curr = curr, prev
-
-    return 1.0 - prev[len_b] / max_len
+    sm = difflib.SequenceMatcher(None, a, b)
+    if sm.quick_ratio() < 0.95:
+        return sm.quick_ratio()
+    return sm.ratio()
 
 
 # ============================================================================
