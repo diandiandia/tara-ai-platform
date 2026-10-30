@@ -38,6 +38,10 @@ def _call_llm_json_internal(
 
     client = openai.OpenAI(api_key=api_key, base_url=api_base)
 
+    sys_content = system_prompt or ""
+    if "json" not in sys_content.lower():
+        sys_content += "\n请严格以 JSON 格式输出结果。"
+
     user_text = json.dumps(user_payload, ensure_ascii=False) if isinstance(user_payload, dict) else str(user_payload)
 
     last_error = None
@@ -47,7 +51,7 @@ def _call_llm_json_internal(
                 model=model,
                 temperature=temperature,
                 messages=[
-                    {"role": "system", "content": system_prompt},
+                    {"role": "system", "content": sys_content},
                     {"role": "user", "content": user_text},
                 ],
                 response_format={"type": "json_object"},

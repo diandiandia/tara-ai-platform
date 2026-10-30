@@ -151,67 +151,68 @@ def _identify_complements(
     if len(records) < 2:
         return records
 
-    # 收集所有独立条目（未参与等价合并的 + 等价合并类代表）
     candidates = _get_independent_or_reps(records)
-
-    # 规则匹配候选对
     candidate_pairs = _match_complement_candidates(candidates, config)
 
     if not candidate_pairs:
         return records
 
-    # LLM 确认
-    items = []
-    for act_id, fail_id in candidate_pairs:
-        act_rec = _find_record(candidates, act_id)
-        fail_rec = _find_record(candidates, fail_id)
-        if act_rec and fail_rec:
-            items.append({
-                "action_id": act_id,
-                "action_text": act_rec.requirement_text,
-                "failure_handler_id": fail_id,
-                "failure_handler_text": fail_rec.requirement_text,
-            })
-
-    if not items:
-        return records
-
-    sc = proxy.judge_with_self_check(
-        stage="complement-merge",
-        system_prompt=COMPLEMENT_CHECK_SYSTEM,
-        check_prompt=COMPLEMENT_SELF_CHECK,
-        user_payload={"candidate_pairs": items},
-        input_ids=[i["action_id"] for i in items] + [i["failure_handler_id"] for i in items],
-        input_texts_abstract=[f"{i['action_text'][:100]} + {i['failure_handler_text'][:100]}" for i in items],
-    )
-
-    if not sc.agreed:
-        return records
-
-    decisions = sc.first_result if sc.first_result else {}
-    pairs = decisions.get("complement_pairs", []) or []
-
     record_map = {rec.record_id: rec for rec in records}
+    pair_counter = 0
 
-    for idx, pair in enumerate(pairs):
-        act_id = pair.get("action_id", "")
-        fail_id = pair.get("failure_handler_id", "")
-        pair_id = f"COMP-{idx + 1}"
-
-        for rid in [act_id, fail_id]:
-            rec = record_map.get(rid)
-            if rec:
-                rec.complement_pair_id = pair_id
-                rec.merge_stage = "COMPLEMENT"
-                if rid == act_id:
-                    rec.complement_role = "ACTION"
-                else:
-                    rec.complement_role = "FAILURE_HANDLER"
-                rec.audit_log.append({
-                    "action": "complement_paired",
-                    "pair_id": pair_id,
-                    "pair_description": pair.get("pair_description", ""),
+    # 分批发给 LLM 确认（每批 <= 25 对）
+    for batch_idx in range(0, len(candidate_pairs), 25):
+        batch = candidate_pairs[batch_idx:batch_idx + 25]
+        items = []
+        for act_id, fail_id in batch:
+            act_rec = _find_record(candidates, act_id)
+            fail_rec = _find_record(candidates, fail_id)
+            if act_rec and fail_rec:
+                items.append({
+                    "action_id": act_id,
+                    "action_text": act_rec.requirement_text,
+                    "failure_handler_id": fail_id,
+                    "failure_handler_text": fail_rec.requirement_text,
                 })
+
+        if not items:
+            continue
+
+        sc = proxy.judge_with_self_check(
+            stage="complement-merge",
+            system_prompt=COMPLEMENT_CHECK_SYSTEM,
+            check_prompt=COMPLEMENT_SELF_CHECK,
+            user_payload={"candidate_pairs": items},
+            input_ids=[i["action_id"] for i in items] + [i["failure_handler_id"] for i in items],
+            input_texts_abstract=[f"{i['action_text'][:100]} + {i['failure_handler_text'][:100]}" for i in items],
+        )
+
+        if not sc.agreed:
+            continue
+
+        decisions = sc.first_result if sc.first_result else {}
+        pairs = decisions.get("complement_pairs", []) or []
+
+        for pair in pairs:
+            act_id = pair.get("action_id", "")
+            fail_id = pair.get("failure_handler_id", "")
+            pair_counter += 1
+            pair_id = f"COMP-{pair_counter}"
+
+            for rid in [act_id, fail_id]:
+                rec = record_map.get(rid)
+                if rec:
+                    rec.complement_pair_id = pair_id
+                    rec.merge_stage = "COMPLEMENT"
+                    if rid == act_id:
+                        rec.complement_role = "ACTION"
+                    else:
+                        rec.complement_role = "FAILURE_HANDLER"
+                    rec.audit_log.append({
+                        "action": "complement_paired",
+                        "pair_id": pair_id,
+                        "pair_description": pair.get("pair_description", ""),
+                    })
 
     return records
 
@@ -243,6 +244,12 @@ def _match_complement_candidates(
 
     for i in range(len(records)):
         for j in range(i + 1, len(records)):
+            # 互补对必须属于同一资产且同一功能主题
+            if records[i].asset_name != records[j].asset_name:
+                continue
+            if records[i].topic_label and records[j].topic_label and records[i].topic_label != records[j].topic_label:
+                continue
+
             ti = records[i].requirement_text.lower()
             tj = records[j].requirement_text.lower()
             for action_verbs, failure_verbs in patterns:
@@ -358,8 +365,7 @@ def _group_isomorphic(
     proxy: LLMProxy,
     config: PipelineConfig,
 ) -> list[PipelineRecord]:
-    """同构归组：LLM 识别 + 程序校验。"""
-    # 收集规范化后的独立条目
+    """同构归组：按功能分类分块，LLM 识别 + 程序校验。"""
     iso_validator = IsomorphicValidator(config)
     independent = [
         rec for rec in records
@@ -369,57 +375,71 @@ def _group_isomorphic(
     if len(independent) < 2:
         return records
 
-    # LLM 分组
-    items = [{"record_id": rec.record_id, "text": rec.canonical_text or rec.requirement_text} for rec in independent]
-    ids = [rec.record_id for rec in independent]
-
-    sc = proxy.judge_with_self_check(
-        stage="isomorphic-group",
-        system_prompt=ISOMORPHIC_SYSTEM,
-        check_prompt=ISOMORPHIC_SELF_CHECK,
-        user_payload={"requirements": items},
-        input_ids=ids,
-        input_texts_abstract=[(rec.canonical_text or rec.requirement_text)[:200] for rec in independent],
-    )
-
-    if not sc.agreed:
-        return records
-
-    decisions = sc.first_result if sc.first_result else {}
-    iso_groups = decisions.get("isomorphic_groups", []) or []
+    groups_by_topic: dict[str, list[PipelineRecord]] = {}
+    for rec in independent:
+        topic = rec.topic_label or "未分类"
+        groups_by_topic.setdefault(topic, []).append(rec)
 
     record_map = {rec.record_id: rec for rec in records}
+    iso_counter = 0
 
-    for idx, ig in enumerate(iso_groups):
-        member_ids = ig.get("member_ids", []) or []
-        object_labels = ig.get("object_labels", {}) or {}
-        enumerated_text = ig.get("enumerated_text", "")
-
-        if len(member_ids) < 2:
+    for topic, topic_records in groups_by_topic.items():
+        if len(topic_records) < 2:
             continue
 
-        group_members = [record_map[mid] for mid in member_ids if mid in record_map]
-        if len(group_members) < 2:
-            continue
+        for b_idx in range(0, len(topic_records), 25):
+            batch = topic_records[b_idx:b_idx + 25]
+            if len(batch) < 2:
+                continue
 
-        # 程序校验
-        val_result = iso_validator.check(group_members, enumerated_text)
+            items = [{"record_id": rec.record_id, "text": rec.canonical_text or rec.requirement_text} for rec in batch]
+            ids = [rec.record_id for rec in batch]
 
-        gid = f"ISO-{idx + 1}"
-        if val_result.valid and enumerated_text:
-            for rec in group_members:
-                rec.isomorphic_group_id = gid
-                rec.isomorphic_object_label = object_labels.get(rec.record_id, "")
-                rec.canonical_text = enumerated_text
-                rec.merge_stage = "ISOMORPHIC"
-                rec.audit_log.append({"action": "isomorphic_grouped", "group_id": gid})
-        else:
-            for rec in group_members:
-                rec.is_validation_failed = True
-                rec.audit_log.append({
-                    "action": "isomorphic_failed",
-                    "group_id": gid,
-                    "errors": val_result.errors,
-                })
+            sc = proxy.judge_with_self_check(
+                stage="isomorphic-group",
+                system_prompt=ISOMORPHIC_SYSTEM,
+                check_prompt=ISOMORPHIC_SELF_CHECK,
+                user_payload={"requirements": items, "topic": topic},
+                input_ids=ids,
+                input_texts_abstract=[(rec.canonical_text or rec.requirement_text)[:200] for rec in batch],
+            )
+
+            if not sc.agreed:
+                continue
+
+            decisions = sc.first_result if sc.first_result else {}
+            iso_groups = decisions.get("isomorphic_groups", []) or []
+
+            for ig in iso_groups:
+                member_ids = ig.get("member_ids", []) or []
+                object_labels = ig.get("object_labels", {}) or {}
+                enumerated_text = ig.get("enumerated_text", "")
+
+                if len(member_ids) < 2:
+                    continue
+
+                group_members = [record_map[mid] for mid in member_ids if mid in record_map]
+                if len(group_members) < 2:
+                    continue
+
+                val_result = iso_validator.check(group_members, enumerated_text)
+
+                iso_counter += 1
+                gid = f"ISO-{iso_counter}"
+                if val_result.valid and enumerated_text:
+                    for rec in group_members:
+                        rec.isomorphic_group_id = gid
+                        rec.isomorphic_object_label = object_labels.get(rec.record_id, "")
+                        rec.canonical_text = enumerated_text
+                        rec.merge_stage = "ISOMORPHIC"
+                        rec.audit_log.append({"action": "isomorphic_grouped", "group_id": gid})
+                else:
+                    for rec in group_members:
+                        rec.is_validation_failed = True
+                        rec.audit_log.append({
+                            "action": "isomorphic_failed",
+                            "group_id": gid,
+                            "errors": val_result.errors,
+                        })
 
     return records
