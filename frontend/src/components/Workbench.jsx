@@ -103,7 +103,7 @@ export default function Workbench({ setPage, setDomainId, setDiagramId, projectI
     if (!activeDomain) return;
     setExportingTara(true);
     try {
-      await exportReport(activeDomain.id, 'xlsx', false);
+      await exportReport(activeDomain.id, false, 'all');
     } finally {
       setExportingTara(false);
     }

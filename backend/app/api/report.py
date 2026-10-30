@@ -1175,7 +1175,7 @@ def create_excel_report(domain: Domain, steps: List[TaraStep], assets: List[Asse
 @router.get("/domains/{domain_id}/export")
 def export_report(
     domain_id: int,
-    desensitize: bool = False,
+    desensitize: str = "false",
     export_type: str = "all",
     force_recompute: bool = False,
     db: Session = Depends(get_db),
@@ -1184,6 +1184,8 @@ def export_report(
     """
     导出网络安全 TARA 评估报告与 CSR 安全需求汇总 (XLSX，支持数据脱敏与混合模型导出，BR-57, BR-77)
     """
+    is_desensitized = str(desensitize).strip().lower() in ("true", "1", "yes")
+
     domain = db.query(Domain).filter(Domain.id == domain_id).first()
     if not domain:
         raise HTTPException(status_code=404, detail="子域控不存在")
@@ -1204,9 +1206,9 @@ def export_report(
     if export_type_lower not in ["all", "tara", "csr", "merged"]:
         raise HTTPException(status_code=400, detail="不支持的导出类型，可选值: all, tara, csr, merged。")
     
-    file_path = create_excel_report(domain, steps, assets, desensitize, export_type_lower, db=db, force_recompute=force_recompute)
+    file_path = create_excel_report(domain, steps, assets, is_desensitized, export_type_lower, db=db, force_recompute=force_recompute)
     media_type = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
-    filename = f"TARA_Report_{domain.name}_{export_type_lower}_{'desensitized' if desensitize else 'full'}.xlsx"
+    filename = f"TARA_Report_{domain.name}_{export_type_lower}_{'desensitized' if is_desensitized else 'full'}.xlsx"
         
     return FileResponse(
         path=file_path,

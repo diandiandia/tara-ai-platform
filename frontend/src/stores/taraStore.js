@@ -275,10 +275,20 @@ export const useTaraStore = create((set, get) => ({
     }
   },
 
-  exportReport: async (domainId, desensitize) => {
+  exportReport: async (domainId, arg2 = false, arg3 = false, arg4 = 'all') => {
     try {
+      let desensitize = false;
+      let exportType = 'all';
+      if (typeof arg2 === 'string' && arg2.toLowerCase() === 'xlsx') {
+        desensitize = Boolean(arg3);
+        if (arg4 && typeof arg4 === 'string') exportType = arg4;
+      } else {
+        desensitize = Boolean(arg2);
+        if (arg3 && typeof arg3 === 'string') exportType = arg3;
+      }
+
       const token = useAuthStore.getState().token;
-      const url = `${API_BASE}/reports/domains/${domainId}/export?desensitize=${desensitize}`;
+      const url = `${API_BASE}/reports/domains/${domainId}/export?desensitize=${desensitize ? 'true' : 'false'}&export_type=${exportType}`;
       
       const response = await fetch(url, {
         method: 'GET',
@@ -286,7 +296,12 @@ export const useTaraStore = create((set, get) => ({
       });
       
       if (!response.ok) {
-        throw new Error('导出报告请求失败');
+        let errorMsg = '导出报告请求失败';
+        try {
+          const errData = await response.json();
+          if (errData && errData.detail) errorMsg = errData.detail;
+        } catch (_) {}
+        throw new Error(errorMsg);
       }
 
       const blob = await response.blob();
@@ -294,7 +309,7 @@ export const useTaraStore = create((set, get) => ({
       const link = document.createElement('a');
       link.href = downloadUrl;
       
-      const filename = `TARA_Report_${domainId}_${desensitize ? 'desensitized' : 'full'}.xlsx`;
+      const filename = `TARA_Report_${domainId}_${exportType}_${desensitize ? 'desensitized' : 'full'}.xlsx`;
       link.setAttribute('download', filename);
       document.body.appendChild(link);
       link.click();
