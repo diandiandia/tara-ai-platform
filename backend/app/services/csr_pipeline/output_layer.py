@@ -114,13 +114,13 @@ def _assign_csr_numbers(
     counters: dict[str, int] = {}
 
     for rec in records:
-        topic = rec.topic_label or "未分类"
+        topic = rec.topic_label or "4.2 系统加固"
 
         # 从 topic_label 提取序号前缀，如 "4.4 安全调试" → "4.4"
         match = re.match(r"(\d+\.\d+)", topic)
         key = match.group(1) if match else topic
 
-        prefix = prefix_map.get(topic, prefix_map.get(key, "CSR"))
+        prefix = prefix_map.get(topic, prefix_map.get(key, "CSR-HARDEN"))
         counters.setdefault(prefix, 0)
         counters[prefix] += 1
 
