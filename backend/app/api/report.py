@@ -870,6 +870,9 @@ def create_excel_report(domain: Domain, steps: List[TaraStep], assets: List[Asse
                     # Backward compatibility for cached rows created before
                     # the explicit source column was added.
                     val = row_data.get("source_tara_requirements", "")
+                if key == "cybersecurity_requirement" and val:
+                    from app.services.csr_pipeline.output_layer import _strip_markup_tags
+                    val = _strip_markup_tags(str(val))
                 if key == "needs_review":
                     val = "Yes" if val else "No"
                 cell = ws2.cell(row=current_row, column=col_idx, value=val)

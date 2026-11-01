@@ -25,6 +25,9 @@ def finalize_output(
     # Step 1.5: 纯程序层后置精准折叠（彻底消除规范文本完全相同或高相似的条目）
     merged_records = _post_merge_canonical_dedup(merged_records)
 
+    # Step 1.8: 清理【主体】【要求】等结构化标签残留，输出自然规范文本
+    _clean_requirement_tags(merged_records)
+
     # Step 2: 编号
     _assign_csr_numbers(merged_records, config)
 
@@ -175,6 +178,31 @@ def _post_merge_canonical_dedup(records: list[PipelineRecord]) -> list[PipelineR
         collapsed.append(rep)
 
     return collapsed
+
+
+def _clean_requirement_tags(records: list[PipelineRecord]):
+    """清理需求描述中的【主体】【要求】[Subject][Requirement]等标签残留。"""
+    for rec in records:
+        text = rec.requirement_text or rec.canonical_text or ""
+        if not text:
+            continue
+        cleaned = _strip_markup_tags(text)
+        rec.requirement_text = cleaned
+        rec.canonical_text = cleaned
+
+
+def _strip_markup_tags(text: str) -> str:
+    """去除【主体】和【要求】等标记，返回自然规范的中英文表述。"""
+    if not text:
+        return ""
+    t = text
+    t = re.sub(r"【要求】\s*", "", t)
+    t = re.sub(r"\[Requirement\]\s*", "", t, flags=re.IGNORECASE)
+    t = re.sub(r"【主体】\s*", "", t)
+    t = re.sub(r"\[Subject\]\s*", "", t, flags=re.IGNORECASE)
+    t = re.sub(r"\s*[；;]\s*(?=应|shall|the|it|system|系统)", "，", t, flags=re.IGNORECASE)
+    t = re.sub(r"^\s*[，,；;。]\s*", "", t)
+    return t.strip()
 
 
 def _assign_csr_numbers(
