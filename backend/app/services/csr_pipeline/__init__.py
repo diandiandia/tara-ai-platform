@@ -111,6 +111,18 @@ def run_pipeline(
     }
 
     # ==========================================================================
+    # Phase 3.5: 第二轮全局深度收敛层 (Round 2 Global Convergence)
+    # ==========================================================================
+    print(f"[CSR-Pipeline-V2] Phase 3.5: 第二轮全局深度收敛层 ({len(records)} 条)")
+
+    try:
+        if proxy.settings and len(records) > 1:
+            from .convergence_layer import global_convergence_pass
+            records = global_convergence_pass(records, proxy, config)
+    except Exception as e:
+        print(f"[CSR-Pipeline-V2] WARNING: 全局收敛层异常，跳过: {e}")
+
+    # ==========================================================================
     # Phase 4: 输出层（纯程序）
     # ==========================================================================
     print("[CSR-Pipeline-V2] Phase 4: 输出层")

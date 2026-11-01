@@ -22,6 +22,9 @@ def finalize_output(
     # Step 1: 按合并结果去重并聚合溯源与资产
     merged_records = _dedup_merged(records)
 
+    # Step 1.5: 纯程序层后置精准折叠（彻底消除规范文本完全相同或高相似的条目）
+    merged_records = _post_merge_canonical_dedup(merged_records)
+
     # Step 2: 编号
     _assign_csr_numbers(merged_records, config)
 
@@ -103,6 +106,75 @@ def _dedup_merged(records: list[PipelineRecord]) -> list[PipelineRecord]:
         result.append(rec)
 
     return result
+
+
+def _post_merge_canonical_dedup(records: list[PipelineRecord]) -> list[PipelineRecord]:
+    """纯程序层：彻底消除最终规范文本完全相同或高相似（>=0.92）的条目。"""
+    if len(records) <= 1:
+        return records
+
+    from difflib import SequenceMatcher
+
+    def _normalize_text(t: str) -> str:
+        if not t:
+            return ""
+        # 剥离主体与中英文标签，提取核心纯中文字符
+        no_subj = re.sub(r"^【主体?】[^【]*【要求】", "", t)
+        cn = no_subj.split("/")[0].strip()
+        return re.sub(r"[\s\W]+", "", cn).lower()
+
+    collapsed: list[PipelineRecord] = []
+    used = set()
+
+    for i in range(len(records)):
+        if i in used:
+            continue
+        rep = records[i]
+        rep_norm = _normalize_text(rep.requirement_text or rep.canonical_text or "")
+
+        all_sources = set(rep.source_ids)
+        all_assets = set(getattr(rep, "applicable_assets", [rep.asset_name]) or [rep.asset_name])
+        all_merge_sources = set(rep.merge_source_ids)
+        all_goals = set(rep.goal_ids)
+        all_controls = set(rep.control_ids)
+        all_claims = set(rep.claim_ids)
+        all_deps = set(rep.dependencies)
+
+        for j in range(i + 1, len(records)):
+            if j in used:
+                continue
+            other = records[j]
+            other_norm = _normalize_text(other.requirement_text or other.canonical_text or "")
+
+            is_same_topic = (rep.topic_label or "") == (other.topic_label or "")
+            is_match = False
+            if rep_norm and rep_norm == other_norm:
+                is_match = True
+            elif is_same_topic and len(rep_norm) >= 12 and len(other_norm) >= 12:
+                if SequenceMatcher(None, rep_norm, other_norm).ratio() >= 0.92:
+                    is_match = True
+
+            if is_match:
+                used.add(j)
+                all_sources.update(other.source_ids)
+                all_assets.update(getattr(other, "applicable_assets", [other.asset_name]) or [other.asset_name])
+                all_merge_sources.update(other.merge_source_ids)
+                all_merge_sources.add(other.record_id)
+                all_goals.update(other.goal_ids)
+                all_controls.update(other.control_ids)
+                all_claims.update(other.claim_ids)
+                all_deps.update(other.dependencies)
+
+        rep.source_ids = sorted(list(all_sources))
+        rep.applicable_assets = sorted(list(all_assets))
+        rep.merge_source_ids = sorted(list(all_merge_sources))
+        rep.goal_ids = sorted(list(all_goals))
+        rep.control_ids = sorted(list(all_controls))
+        rep.claim_ids = sorted(list(all_claims))
+        rep.dependencies = sorted(list(all_deps))
+        collapsed.append(rep)
+
+    return collapsed
 
 
 def _assign_csr_numbers(
