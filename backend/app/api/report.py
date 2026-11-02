@@ -20,6 +20,10 @@ from app.models.tara_step import TaraStep
 
 router = APIRouter(prefix="/reports", tags=["报告导出与脱敏服务"])
 
+
+def _strip_markup_tags(value) -> str:
+    return re.sub(r"【[^】]*】|\[[^\]]*\]", "", str(value or "")).strip()
+
 PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
 EXPORTS_DIR = os.path.join(PROJECT_ROOT, "exports_local")
 
@@ -895,7 +899,7 @@ def create_excel_report(domain: Domain, steps: List[TaraStep], assets: List[Asse
                     # the explicit source column was added.
                     val = row_data.get("source_tara_requirements", "")
                 if key == "cybersecurity_requirement" and val:
-                    val = re.sub(r"【[^】]*】|\[[^\]]*\]", "", str(val)).strip()
+                    val = _strip_markup_tags(val)
                 if key == "needs_review":
                     val = "Yes" if str(val).strip().lower() in ("yes", "true", "1") else "No"
                 cell = ws2.cell(row=current_row, column=col_idx, value=val)
