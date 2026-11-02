@@ -17,7 +17,9 @@ from app.models.tara_run import TaraRun
 from app.services.oem_csr_merge import (
     atomize_oem_requirements,
     build_final_rows,
+    collect_merge_conflict_rows,
     map_oem_atoms_to_catalog,
+    persist_merge_conflicts,
 )
 from app.services.req_merge import persist_merged_requirements
 from app.api.report import collect_merged_requirement_rows
@@ -117,7 +119,7 @@ class FinalRowsTests(unittest.TestCase):
         return build_final_rows(_catalog(), _tara_rows(), _atoms(), oem_mapping)
 
     def test_final_table_contains_all_six_resolutions(self):
-        rows, report = self._rows()
+        rows, conflicts, report = self._rows()
         by_id = {row["final_id"]: row for row in rows}
         self.assertEqual(by_id["FCSR-CS-A"]["resolution"], "same")
         self.assertEqual(by_id["FCSR-CS-B"]["resolution"], "partial")
@@ -129,6 +131,58 @@ class FinalRowsTests(unittest.TestCase):
         self.assertEqual(report["tara_missing_ids"], [])
         self.assertEqual(by_id["FCSR-CS-A"]["source_tara_ids"], ["T1", "T2"])
         self.assertEqual(by_id["FCSR-CS-A"]["source_catalog_csr_ids"], ["CS-A"])
+
+    def test_conflict_is_separate_and_oem_row_stays_reviewable(self):
+        oem_mapping = {"rows": [
+            {"tara_req_id": "A1", "source_tara_ids": ["OEM1"], "target_csr_id": "CS-A", "match_type": "conflict", "confidence": 0.8, "rationale": "conflict", "conflict_note": "OEM 要求禁用，固定 CSR 允许授权启用"},
+        ]}
+        rows, conflicts, report = build_final_rows(
+            _catalog(), _tara_rows(), _atoms(), oem_mapping
+        )
+        self.assertEqual(len(conflicts), 1)
+        self.assertEqual(conflicts[0]["catalog_csr_id"], "CS-A")
+        oem_rows = [row for row in rows if row["source_customer_ids"] == ["OEM1"]]
+        self.assertTrue(any(row["resolution"] == "customer_only" and row["needs_review"] for row in oem_rows))
+        self.assertEqual(report["conflict_count"], 1)
+        self.assertTrue(any(row["resolution"] == "customer_only" for row in rows))
+
+    def test_conflicts_are_persisted_in_separate_table(self):
+        engine = create_engine("sqlite:///:memory:")
+        Base.metadata.create_all(engine)
+        db = sessionmaker(bind=engine)()
+        try:
+            project = Project(name="Conflict test")
+            db.add(project)
+            db.flush()
+            domain = Domain(name="ADCU", project_id=project.id)
+            db.add(domain)
+            db.flush()
+            run = TaraRun(domain_id=domain.id, status="completed")
+            db.add(run)
+            db.commit()
+
+            count = persist_merge_conflicts(
+                db, project.id, domain.id, run.id,
+                [{
+                    "oem_atom_id": "A1",
+                    "source_customer_ids": ["OEM1"],
+                    "oem_text": "OEM 要求禁用",
+                    "catalog_csr_id": "CS-A",
+                    "catalog_name": "A",
+                    "catalog_text": "固定 CSR 允许授权启用",
+                    "confidence": 0.8,
+                    "rationale": "冲突",
+                    "conflict_note": "禁用 vs 授权启用",
+                }],
+            )
+            self.assertEqual(count, 1)
+            rows = collect_merge_conflict_rows(db, domain.id, run.id)
+            self.assertEqual(len(rows), 1)
+            self.assertEqual(rows[0]["source_customer_ids"], "OEM1")
+            self.assertEqual(rows[0]["status"], "Pending")
+        finally:
+            db.close()
+            engine.dispose()
 
     def test_persistence_keeps_customer_catalog_and_tara_sources(self):
         engine = create_engine("sqlite:///:memory:")
@@ -145,7 +199,7 @@ class FinalRowsTests(unittest.TestCase):
             db.add(run)
             db.commit()
 
-            rows, _report = self._rows()
+            rows, _conflicts, _report = self._rows()
             persisted = persist_merged_requirements(
                 db, project.id, domain.id, rows, tara_raw_map={}
             )

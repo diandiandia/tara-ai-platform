@@ -9,16 +9,18 @@ from app.api.auth import get_current_user
 from app.api.project import check_project_active
 from app.models.user import User
 from app.models.domain import Domain
-from app.models.asset import Asset
 from app.models.tara_run import TaraRun
-from app.models.tara_step import TaraStep
 from app.models.req_merge import CustomerRequirement, MergedRequirement, MergedRequirementSource
 from app.services.req_merge import (
     parse_customer_requirements_excel,
     preview_customer_excel,
     persist_merged_requirements,
 )
-from app.services.oem_csr_merge import merge_oem_requirements_with_fixed_csrs
+from app.services.oem_csr_merge import (
+    collect_merge_conflict_rows,
+    merge_oem_requirements_with_fixed_csrs,
+    persist_merge_conflicts,
+)
 
 router = APIRouter(tags=["客户需求与 TARA 需求合并"])
 
@@ -36,34 +38,6 @@ def _get_domain(domain_id: int, db: Session) -> Domain:
     if not domain:
         raise HTTPException(status_code=404, detail="子域控不存在")
     return domain
-
-
-def _collect_tara_csrs_from_domain(db: Session, domain: Domain) -> List[dict]:
-    """从该域控已完成的 TARA 分析中汇总其 CSR（TARA 侧来源）。"""
-    from app.api.report import collect_csr_report_data
-
-    last_run = (
-        db.query(TaraRun)
-        .filter(TaraRun.domain_id == domain.id, TaraRun.status == "completed")
-        .order_by(TaraRun.id.desc())
-        .first()
-    )
-    if not last_run:
-        return []
-    steps = db.query(TaraStep).filter(TaraStep.run_id == last_run.id).all()
-    assets = db.query(Asset).filter(Asset.domain_id == domain.id).all()
-    rows: List[dict] = []
-    for r in collect_csr_report_data(steps, assets, db=db, domain=domain):
-        rows.append({
-            "csr_id": r.get("csr_id"),
-            "security_domain": r.get("security_domain"),
-            "control_category": r.get("sub_category"),
-            "title": r.get("title"),
-            "requirement": r.get("cybersecurity_requirement"),
-            "source_raw_ids": r.get("source_cybersecurity_requirement_ids")
-            or r.get("source_tara_requirements") or "",
-        })
-    return rows
 
 
 # ---------------------------------------------------------------------------
@@ -213,7 +187,7 @@ def synthesize_merged_requirements(
         print("[TARA-AI] 固定 CSR 模式忽略上传的 TARA CSR 文件，使用已入库的固定 CSR 映射结果")
 
     try:
-        merged, report = merge_oem_requirements_with_fixed_csrs(
+        merged, conflicts, report = merge_oem_requirements_with_fixed_csrs(
             db,
             domain.project_id,
             domain_id,
@@ -223,6 +197,14 @@ def synthesize_merged_requirements(
         )
         persisted = persist_merged_requirements(
             db, domain.project_id, domain_id, merged, tara_raw_map={}
+        )
+        persisted_conflicts = persist_merge_conflicts(
+            db,
+            domain.project_id,
+            domain_id,
+            last_run.id,
+            conflicts,
+            replace=True,
         )
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc))
@@ -234,9 +216,22 @@ def synthesize_merged_requirements(
         "project_id": domain.project_id,
         "run_id": last_run.id,
         "merged_count": len(persisted),
+        "conflict_count": persisted_conflicts,
         "coverage": report,
         "source_mode": "fixed_csr_mapping",
     }
+
+@router.get("/domains/{domain_id}/merged-requirements/conflicts")
+def list_merge_conflicts(
+    domain_id: int,
+    run_id: Optional[int] = Query(None),
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    _get_domain(domain_id, db)
+    rows = collect_merge_conflict_rows(db, domain_id, run_id)
+    return {"domain_id": domain_id, "run_id": run_id, "count": len(rows), "rows": rows}
+
 
 @router.get("/domains/{domain_id}/merged-requirements")
 def list_merged_requirements(

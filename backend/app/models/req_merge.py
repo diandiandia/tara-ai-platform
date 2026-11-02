@@ -1,4 +1,4 @@
-from sqlalchemy import Column, Integer, String, Text, Boolean, DateTime, ForeignKey, func
+from sqlalchemy import Column, Integer, String, Text, Boolean, DateTime, Float, ForeignKey, UniqueConstraint, func
 from sqlalchemy.orm import relationship
 from app.core.database import Base
 
@@ -62,3 +62,34 @@ class MergedRequirementSource(Base):
     source_id = Column(String(100), nullable=False)   # SC-CS-HW-Req1 | CSR-HW-001
 
     merged = relationship("MergedRequirement", back_populates="sources")
+
+
+class MergeConflict(Base):
+    """OEM requirement vs fixed CSR conflict, kept for human adjudication.
+
+    Conflicts are deliberately not merged into MergedRequirement; they live in
+    this separate table and in the Merge_Conflicts report sheet.
+    """
+    __tablename__ = "merge_conflicts"
+    __table_args__ = (
+        UniqueConstraint(
+            "domain_id", "run_id", "oem_atom_id", "catalog_csr_id",
+            name="uq_merge_conflict_source_target",
+        ),
+    )
+
+    id = Column(Integer, primary_key=True, index=True)
+    project_id = Column(Integer, ForeignKey("projects.id", ondelete="CASCADE"), nullable=False, index=True)
+    domain_id = Column(Integer, ForeignKey("domains.id", ondelete="CASCADE"), nullable=False, index=True)
+    run_id = Column(Integer, ForeignKey("tara_runs.id", ondelete="CASCADE"), nullable=False, index=True)
+    oem_atom_id = Column(String(120), nullable=False)
+    source_customer_ids = Column(Text, nullable=True)
+    oem_text = Column(Text, nullable=True)
+    catalog_csr_id = Column(String(100), nullable=False, index=True)
+    catalog_name = Column(String(500), nullable=True)
+    catalog_text = Column(Text, nullable=True)
+    confidence = Column(Float, nullable=False, default=0.0)
+    rationale = Column(Text, nullable=True)
+    conflict_note = Column(Text, nullable=True)
+    status = Column(String(50), nullable=False, default="Pending")
+    created_at = Column(DateTime, server_default=func.now())

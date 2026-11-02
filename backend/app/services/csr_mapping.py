@@ -181,7 +181,7 @@ def _catalog_payload(catalog: Sequence[dict]) -> List[dict]:
     ]
 
 
-def _mapping_prompt(source_label: str = "TARA") -> str:
+def _mapping_prompt(source_label: str = "TARA", allow_conflict: bool = False) -> str:
     return f"""你是汽车网络安全需求映射专家。下面给出一个固定的 CSR 目录和一批 {source_label} 信息安全需求。
 你的任务不是改写或生成 CSR，而是判断每条 {source_label} 需求能被目录中的哪些 CSR 覆盖。
 
@@ -191,7 +191,8 @@ def _mapping_prompt(source_label: str = "TARA") -> str:
 3. match_type 只能是：
    - full：目录 CSR 完整覆盖该 {source_label} 需求；
    - partial：只覆盖一部分，必须在 missing_aspect 写清缺什么；
-   - gap：目录中没有能覆盖它的 CSR，target_csr_ids 必须为空数组。
+   - gap：目录中没有能覆盖它的 CSR，target_csr_ids 必须为空数组；
+   - conflict：双方针对同一对象/动作/条件给出互斥要求（仅 OEM 映射允许）；此时 target_csr_ids 必须包含冲突的 CSR，conflict_note 必须写明矛盾点。
 4. 不同动作、不同保护对象、不同适用条件不能强行映射到同一条 CSR；不确定时用 partial 或 gap，不要硬凑。
 5. 必须为输入中的每一条需求 ID（JSON 字段名 tara_id）返回且只返回一条记录；该 ID 必须原样返回。
 6. confidence 为 0 到 1 的小数；rationale 用一两句话说明依据。
@@ -231,6 +232,7 @@ def _validate_mapping_batch(
     batch: Sequence[dict],
     parsed: dict,
     catalog_ids: Set[str],
+    allow_conflict: bool = False,
 ) -> List[dict]:
     input_ids = {item["tara_req_id"] for item in batch}
     catalog_lookup = {csr_id.lower(): csr_id for csr_id in catalog_ids}
@@ -257,6 +259,7 @@ def _validate_mapping_batch(
         confidences: List[float] = []
         rationales: List[str] = []
         missing_aspects: List[str] = []
+        conflict_notes: List[str] = []
 
         for entry in entries:
             raw_targets = _norm_ids(
@@ -273,7 +276,10 @@ def _validate_mapping_batch(
                     dropped.append(target)
 
             raw_type = str(entry.get("match_type") or "").strip().lower()
-            if raw_type not in {"full", "partial", "gap"}:
+            allowed_types = {"full", "partial", "gap"}
+            if allow_conflict:
+                allowed_types.add("conflict")
+            if raw_type not in allowed_types:
                 raw_type = ""
             match_types.append(raw_type)
             try:
@@ -287,14 +293,20 @@ def _validate_mapping_batch(
             missing = str(entry.get("missing_aspect") or "").strip()
             if missing and missing not in missing_aspects:
                 missing_aspects.append(missing)
+            conflict_note = str(entry.get("conflict_note") or "").strip()
+            if conflict_note and conflict_note not in conflict_notes:
+                conflict_notes.append(conflict_note)
 
         needs_review = bool(dropped) or any(
-            value in {"partial"} for value in match_types
+            value in {"partial", "conflict"} for value in match_types
         ) or any(value < 0.6 for value in confidences)
         if dropped:
             rationales.append("LLM 返回了目录外 ID，已剔除: " + ", ".join(dropped))
 
         if not targets:
+            if "conflict" in match_types:
+                rows.append(_error_row(requirement, "LLM 标记 conflict 但未给出冲突 CSR"))
+                continue
             match_type = "gap"
             needs_review = True
             if not missing_aspects:
@@ -316,7 +328,10 @@ def _validate_mapping_batch(
 
         # A target exists.  If any item was partial, or any missing aspect was
         # provided, keep the worst status rather than upgrading to full.
-        if any(value in {"partial", "gap"} for value in match_types) or missing_aspects:
+        if "conflict" in match_types:
+            match_type = "conflict"
+            needs_review = True
+        elif any(value in {"partial", "gap"} for value in match_types) or missing_aspects:
             match_type = "partial"
             needs_review = True
         else:
@@ -334,6 +349,7 @@ def _validate_mapping_batch(
                 "confidence": confidence,
                 "rationale": " | ".join(rationales),
                 "missing_aspect": "；".join(missing_aspects),
+                "conflict_note": "；".join(conflict_notes),
                 "needs_review": needs_review,
             })
     return rows
@@ -346,6 +362,7 @@ def _call_mapping_batch(
     catalog_ids: Set[str],
     depth: int = 0,
     source_label: str = "TARA",
+    allow_conflict: bool = False,
 ) -> List[dict]:
     payload = {
         "catalog": list(catalog_payload),
@@ -366,15 +383,15 @@ def _call_mapping_batch(
         ],
     }
     try:
-        parsed = _call_llm_json(settings, _mapping_prompt(source_label), payload, temperature=0.0)
-        rows = _validate_mapping_batch(batch, parsed, catalog_ids)
+        parsed = _call_llm_json(settings, _mapping_prompt(source_label, allow_conflict), payload, temperature=0.0)
+        rows = _validate_mapping_batch(batch, parsed, catalog_ids, allow_conflict=allow_conflict)
         failed = any(row.get("match_type") == "error" for row in rows)
         if failed and len(batch) > 1 and depth < 2:
             print(f"[TARA-AI] 映射批次不完整，拆分为 {len(batch)} 条重试")
             mid = len(batch) // 2
             return (
-                _call_mapping_batch(settings, catalog_payload, batch[:mid], catalog_ids, depth + 1, source_label)
-                + _call_mapping_batch(settings, catalog_payload, batch[mid:], catalog_ids, depth + 1, source_label)
+                _call_mapping_batch(settings, catalog_payload, batch[:mid], catalog_ids, depth + 1, source_label, allow_conflict)
+                + _call_mapping_batch(settings, catalog_payload, batch[mid:], catalog_ids, depth + 1, source_label, allow_conflict)
             )
         return rows
     except Exception as exc:
@@ -382,8 +399,8 @@ def _call_mapping_batch(
             print(f"[TARA-AI] 映射批次失败，拆分为 {len(batch)} 条重试: {exc}")
             mid = len(batch) // 2
             return (
-                _call_mapping_batch(settings, catalog_payload, batch[:mid], catalog_ids, depth + 1, source_label)
-                + _call_mapping_batch(settings, catalog_payload, batch[mid:], catalog_ids, depth + 1, source_label)
+                _call_mapping_batch(settings, catalog_payload, batch[:mid], catalog_ids, depth + 1, source_label, allow_conflict)
+                + _call_mapping_batch(settings, catalog_payload, batch[mid:], catalog_ids, depth + 1, source_label, allow_conflict)
             )
         return [_error_row(item, f"LLM/解析失败: {exc}") for item in batch]
 
@@ -395,6 +412,7 @@ def map_tara_requirements(
     batch_size: int = DEFAULT_BATCH_SIZE,
     max_workers: int = 4,
     source_label: str = "TARA",
+    allow_conflict: bool = False,
 ) -> dict:
     """Map requirements to catalog rows. Returns rows plus a coverage summary."""
     if not catalog:
@@ -418,7 +436,7 @@ def map_tara_requirements(
         def run_batch(index: int, batch: Sequence[dict]) -> List[dict]:
             print(f"[TARA-AI] CSR 映射批次 {index + 1}/{len(batches)}: {len(batch)} 条")
             try:
-                return _call_mapping_batch(settings, catalog_payload, batch, catalog_ids, source_label=source_label)
+                return _call_mapping_batch(settings, catalog_payload, batch, catalog_ids, source_label=source_label, allow_conflict=allow_conflict)
             except Exception as exc:  # defensive: worker must not kill the pool
                 return [_error_row(item, f"映射批次异常: {exc}") for item in batch]
 
@@ -440,7 +458,7 @@ def map_tara_requirements(
     else:
         for index, batch in enumerate(batches, start=1):
             print(f"[TARA-AI] CSR 映射批次 {index}/{len(batches)}: {len(batch)} 条")
-            rows.extend(_call_mapping_batch(settings, catalog_payload, batch, catalog_ids, source_label=source_label))
+            rows.extend(_call_mapping_batch(settings, catalog_payload, batch, catalog_ids, source_label=source_label, allow_conflict=allow_conflict))
 
     # De-duplicate rows in case the model returned the same target twice.
     unique: Dict[Tuple, dict] = {}
@@ -454,11 +472,13 @@ def map_tara_requirements(
     for row in rows:
         by_tara[row["tara_req_id"]].append(row)
 
-    full_count = partial_count = gap_count = error_count = 0
+    full_count = partial_count = gap_count = error_count = conflict_count = 0
     for tara_id, tara_rows in by_tara.items():
         types = {row["match_type"] for row in tara_rows}
         if "error" in types:
             error_count += 1
+        elif "conflict" in types:
+            conflict_count += 1
         elif "gap" in types or not any(row["target_csr_id"] for row in tara_rows):
             gap_count += 1
         elif "partial" in types:
@@ -476,6 +496,7 @@ def map_tara_requirements(
         "partial_count": partial_count,
         "gap_count": gap_count,
         "error_count": error_count,
+        "conflict_count": conflict_count,
         "target_covered_count": len(target_ids),
         "catalog_count": len(catalog),
         "low_confidence_count": len({

@@ -895,8 +895,7 @@ def create_excel_report(domain: Domain, steps: List[TaraStep], assets: List[Asse
                     # the explicit source column was added.
                     val = row_data.get("source_tara_requirements", "")
                 if key == "cybersecurity_requirement" and val:
-                    from app.services.csr_pipeline.output_layer import _strip_markup_tags
-                    val = _strip_markup_tags(str(val))
+                    val = re.sub(r"【[^】]*】|\[[^\]]*\]", "", str(val)).strip()
                 if key == "needs_review":
                     val = "Yes" if str(val).strip().lower() in ("yes", "true", "1") else "No"
                 cell = ws2.cell(row=current_row, column=col_idx, value=val)
@@ -1313,6 +1312,49 @@ def create_excel_report(domain: Domain, steps: List[TaraStep], assets: List[Asse
             for c_idx, width in col_w_merged.items():
                 ws_merged.column_dimensions[openpyxl.utils.get_column_letter(c_idx)].width = width
 
+    # 导出 Merge_Conflicts：OEM 与固定 CSR 的冲突，单独成表供人工裁决
+    if export_type in ("all", "merged") and db is not None:
+        from app.services.oem_csr_merge import collect_merge_conflict_rows
+
+        run_id = getattr(steps[0], "run_id", None) if steps else None
+        conflict_rows = collect_merge_conflict_rows(db, domain.id, run_id)
+        if conflict_rows:
+            ws_conf = wb.create_sheet(title="Merge_Conflicts")
+            ws_conf.views.sheetView[0].showGridLines = True
+            conflict_headers = [
+                "Conflict ID", "OEM Req IDs / OEM需求编号", "OEM Atom ID",
+                "OEM Requirement / OEM需求原文", "Fixed CSR ID / 固定CSR编号",
+                "Fixed CSR Name / 固定CSR名称",
+                "Fixed CSR Text / 固定CSR原文", "Confidence / 置信度",
+                "Rationale / 判断依据", "Conflict Note / 冲突说明", "Status / 状态",
+            ]
+            for col_idx, header in enumerate(conflict_headers, 1):
+                cell = ws_conf.cell(row=1, column=col_idx, value=header)
+                cell.fill = header_fill_r1
+                cell.font = header_font
+                cell.alignment = Alignment(horizontal="center", vertical="center", wrap_text=True)
+                cell.border = thin_border
+            for row_idx, item in enumerate(conflict_rows, 2):
+                values = [
+                    item.get("id", ""), item.get("source_customer_ids", ""),
+                    item.get("oem_atom_id", ""), item.get("oem_text", ""),
+                    item.get("catalog_csr_id", ""), item.get("catalog_name", ""),
+                    item.get("catalog_text", ""), item.get("confidence", ""),
+                    item.get("rationale", ""), item.get("conflict_note", ""),
+                    item.get("status", ""),
+                ]
+                for col_idx, value in enumerate(values, 1):
+                    cell = ws_conf.cell(row=row_idx, column=col_idx, value=value)
+                    cell.font = cell_font
+                    cell.border = thin_border
+                    cell.alignment = Alignment(
+                        horizontal="center" if col_idx in (1, 2, 3, 5, 8, 11) else "left",
+                        vertical="center",
+                        wrap_text=True,
+                    )
+            for c_idx, width in {1: 12, 2: 24, 3: 18, 4: 55, 5: 16, 6: 30, 7: 55, 8: 10, 9: 45, 10: 55, 11: 12}.items():
+                ws_conf.column_dimensions[openpyxl.utils.get_column_letter(c_idx)].width = width
+
     filename_suffix = f"{export_type}_{'desensitized' if desensitize else 'full'}"
     file_path = os.path.join(EXPORTS_DIR, f"TARA_Report_{domain.id}_{filename_suffix}.xlsx")
     wb.save(file_path)
@@ -1356,8 +1398,8 @@ def export_report(
         raise HTTPException(status_code=400, detail="不支持的导出类型，可选值: all, tara, csr, merged。")
 
     csr_source_lower = str(csr_source or "auto").strip().lower()
-    if csr_source_lower not in ["auto", "mapping", "generated"]:
-        raise HTTPException(status_code=400, detail="不支持的 CSR 来源，可选值: auto, mapping, generated。")
+    if csr_source_lower not in ["auto", "mapping"]:
+        raise HTTPException(status_code=400, detail="不支持的 CSR 来源，可选值: auto, mapping；旧的 generated 模式已移除。")
     if csr_source_lower == "mapping":
         from app.services.csr_catalog import get_active_catalog_version
         if get_active_catalog_version(db) is None:

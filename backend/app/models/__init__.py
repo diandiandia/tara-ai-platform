@@ -7,7 +7,7 @@ from app.models.asset import Asset
 from app.models.tara_run import TaraRun
 from app.models.tara_step import TaraStep
 from app.models.system_settings import SystemSettings
-from app.models.req_merge import CustomerRequirement, MergedRequirement, MergedRequirementSource
+from app.models.req_merge import CustomerRequirement, MergedRequirement, MergedRequirementSource, MergeConflict
 from app.models.csr_catalog import CsrCatalogVersion, CsrCatalogEntry, TaraCsrMapping
 
 __all__ = [
@@ -23,6 +23,7 @@ __all__ = [
     "CustomerRequirement",
     "MergedRequirement",
     "MergedRequirementSource",
+    "MergeConflict",
     "CsrCatalogVersion",
     "CsrCatalogEntry",
     "TaraCsrMapping",

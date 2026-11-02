@@ -261,6 +261,7 @@ def map_oem_atoms_to_catalog(
         batch_size=batch_size,
         max_workers=max_workers,
         source_label="OEM",
+        allow_conflict=True,
     )
 
 
@@ -306,6 +307,7 @@ def build_final_rows(
                 }
 
     oem_by_target: Dict[str, List[Tuple[dict, dict]]] = defaultdict(list)
+    oem_conflicts_by_target: Dict[str, List[Tuple[dict, dict]]] = defaultdict(list)
     oem_by_atom: Dict[str, List[dict]] = defaultdict(list)
     for row in oem_mapping.get("rows") or []:
         atom_id = str(row.get("tara_req_id") or "").strip()
@@ -314,10 +316,13 @@ def build_final_rows(
             continue
         oem_by_atom[atom_id].append(row)
         target = str(row.get("target_csr_id") or "").strip()
-        if target:
+        if target and str(row.get("match_type")) == "conflict":
+            oem_conflicts_by_target[target].append((atom, row))
+        elif target:
             oem_by_target[target].append((atom, row))
 
     rows: List[dict] = []
+    conflicts: List[dict] = []
     resolution_counts: Dict[str, int] = defaultdict(int)
     catalog_partial_count = 0
     oem_partial_row_count = 0
@@ -327,8 +332,10 @@ def build_final_rows(
         csr_id = entry["csr_id"]
         tara_rows = tara_by_target.get(csr_id, [])
         oem_pairs = oem_by_target.get(csr_id, [])
+        conflict_pairs = oem_conflicts_by_target.get(csr_id, [])
         has_tara = bool(tara_rows)
         has_oem = bool(oem_pairs)
+        has_conflict = bool(conflict_pairs)
         tara_needs_review = any(
             str(_row_attr(row, "match_type")) == "partial"
             or float(_row_attr(row, "confidence") or 0.0) < 0.6
@@ -352,6 +359,8 @@ def build_final_rows(
         else:
             resolution = "catalog_only"
             needs_review = False
+        if has_conflict:
+            needs_review = True
 
         customer_ids: Set[str] = set()
         for atom, _row in oem_pairs:
@@ -380,6 +389,24 @@ def build_final_rows(
             if missing and missing not in missing_aspects:
                 missing_aspects.append(missing)
 
+        conflict_notes = []
+        for atom, row in conflict_pairs:
+            note = str(row.get("conflict_note") or "").strip()
+            if note and note not in conflict_notes:
+                conflict_notes.append(note)
+            conflicts.append({
+                "oem_atom_id": atom["atom_id"],
+                "source_customer_ids": list(atom["source_customer_ids"]),
+                "oem_text": atom["statement"],
+                "catalog_csr_id": csr_id,
+                "catalog_name": entry["name"],
+                "catalog_text": entry["description"],
+                "confidence": float(row.get("confidence") or 0.0),
+                "rationale": str(row.get("rationale") or ""),
+                "conflict_note": note or "OEM 与固定 CSR 存在互斥要求",
+                "resolution": "pending_review",
+            })
+
         subject = oem_pairs[0][0].get("subject") if oem_pairs else "系统 / System"
         rows.append({
             "final_id": f"FCSR-{csr_id}",
@@ -406,6 +433,7 @@ def build_final_rows(
                 [x for x in (
                     rationales + missing_aspects
                     + ([f"OEM原文: {' / '.join(oem_texts)}"] if oem_texts else [])
+                    + ([f"OEM冲突: {'；'.join(conflict_notes)}"] if conflict_notes else [])
                 ) if x]
             ),
         })
@@ -418,20 +446,32 @@ def build_final_rows(
     oem_seq = 0
     for atom in atoms:
         atom_rows = oem_by_atom.get(atom["atom_id"], [])
+        normal_rows = [row for row in atom_rows if str(row.get("match_type")) != "conflict"]
+        conflict_rows = [row for row in atom_rows if str(row.get("match_type")) == "conflict"]
         targets = [
-            str(row.get("target_csr_id") or "") for row in atom_rows
+            str(row.get("target_csr_id") or "") for row in normal_rows
             if row.get("target_csr_id")
         ]
         has_target = bool(targets)
-        has_partial = any(str(row.get("match_type")) == "partial" for row in atom_rows)
-        has_error = any(str(row.get("match_type")) == "error" for row in atom_rows)
-        if has_target and not has_partial and not has_error:
+        has_partial = any(str(row.get("match_type")) == "partial" for row in normal_rows)
+        has_error = any(str(row.get("match_type")) == "error" for row in normal_rows)
+        has_conflict = bool(conflict_rows)
+        if has_target and not has_partial and not has_error and not has_conflict:
+            continue
+        if has_target and not has_partial and not has_error and has_conflict:
+            # Normal target rows already carry the OEM source; the conflicting
+            # pair is recorded in Merge_Conflicts and is not duplicated here.
             continue
         oem_seq += 1
         missing = [
             str(row.get("missing_aspect") or "").strip()
-            for row in atom_rows
+            for row in normal_rows
             if str(row.get("missing_aspect") or "").strip()
+        ]
+        conflict_notes = [
+            str(row.get("conflict_note") or "").strip()
+            for row in conflict_rows
+            if str(row.get("conflict_note") or "").strip()
         ]
         rows.append({
             "final_id": f"FCSR-OEM-{oem_seq:03d}",
@@ -445,18 +485,19 @@ def build_final_rows(
             "source_tara_ids": [],
             "source_catalog_csr_ids": targets,
             "resolution": "customer_only" if not has_target else "partial",
-            "needs_review": has_partial or has_error,
+            "needs_review": has_partial or has_error or has_conflict,
             "confidence": max(
                 [float(row.get("confidence") or 0.0) for row in atom_rows] or [1.0]
             ),
             "rationale": "",
             "missing_aspect": "；".join(missing),
-            "conflict": False,
-            "conflict_note": "",
+            "conflict": has_conflict,
+            "conflict_note": "；".join(conflict_notes),
             "additional_info": "；".join(
                 [x for x in (
                     ([f"部分映射到: {', '.join(targets)}"] if targets else [])
                     + missing
+                    + ([f"OEM冲突: {'；'.join(conflict_notes)}"] if conflict_notes else [])
                 ) if x]
             ),
         })
@@ -521,9 +562,11 @@ def build_final_rows(
         "catalog_only_count": resolution_counts["catalog_only"],
         "customer_only_count": resolution_counts["customer_only"],
         "tara_gap_count": resolution_counts["tara_gap"],
+        "conflict_count": len(conflicts),
+        "conflict_atom_count": len({item["oem_atom_id"] for item in conflicts}),
         "all_covered": not (input_customer_ids - customer_covered) and not (input_tara_ids - tara_covered),
     }
-    return rows, report
+    return rows, conflicts, report
 
 
 def merge_oem_requirements_with_fixed_csrs(
@@ -533,7 +576,7 @@ def merge_oem_requirements_with_fixed_csrs(
     customer_reqs: Sequence[dict],
     domain,
     run,
-) -> Tuple[List[dict], dict]:
+) -> Tuple[List[dict], List[dict], dict]:
     """Full OEM + fixed-CSR merge pipeline for the API."""
     from app.models.csr_catalog import TaraCsrMapping
     from app.models.system_settings import SystemSettings
@@ -572,7 +615,7 @@ def merge_oem_requirements_with_fixed_csrs(
         raise ValueError(f"OEM 原子化未覆盖客户需求: {atomized['missing_customer_ids']}")
 
     mapped = map_oem_atoms_to_catalog(atomized["atoms"], catalog, settings)
-    rows, report = build_final_rows(
+    rows, conflicts, report = build_final_rows(
         catalog,
         tara_rows,
         atomized["atoms"],
@@ -586,8 +629,78 @@ def merge_oem_requirements_with_fixed_csrs(
         "oem_partial_count": mapped["summary"]["partial_count"],
         "oem_gap_count": mapped["summary"]["gap_count"],
         "oem_error_count": mapped["summary"]["error_count"],
+        "oem_conflict_count": mapped["summary"].get("conflict_count", 0),
         "catalog_version": version.version,
     })
     if not report["all_covered"]:
         raise ValueError(f"最终合并追溯断裂: {report}")
-    return rows, report
+    return rows, conflicts, report
+
+
+def persist_merge_conflicts(
+    db,
+    project_id: int,
+    domain_id: int,
+    run_id: int,
+    conflicts: Sequence[dict],
+    replace: bool = True,
+) -> int:
+    """Persist OEM vs fixed-CSR conflicts for human review (separate table)."""
+    from app.models.req_merge import MergeConflict
+
+    if replace:
+        db.query(MergeConflict).filter(
+            MergeConflict.domain_id == domain_id,
+            MergeConflict.run_id == run_id,
+        ).delete(synchronize_session=False)
+
+    seen: Set[Tuple] = set()
+    for item in conflicts:
+        key = (item.get("oem_atom_id"), item.get("catalog_csr_id"))
+        if key in seen:
+            continue
+        seen.add(key)
+        db.add(MergeConflict(
+            project_id=project_id,
+            domain_id=domain_id,
+            run_id=run_id,
+            oem_atom_id=item.get("oem_atom_id") or "",
+            source_customer_ids="; ".join(item.get("source_customer_ids") or []),
+            oem_text=item.get("oem_text") or "",
+            catalog_csr_id=item.get("catalog_csr_id") or "",
+            catalog_name=item.get("catalog_name") or "",
+            catalog_text=item.get("catalog_text") or "",
+            confidence=float(item.get("confidence") or 0.0),
+            rationale=item.get("rationale") or "",
+            conflict_note=item.get("conflict_note") or "",
+            status="Pending",
+        ))
+    db.commit()
+    return len(seen)
+
+
+def collect_merge_conflict_rows(db, domain_id: int, run_id: Optional[int] = None) -> List[dict]:
+    """Return conflict rows for reports/API; newest run if run_id omitted."""
+    from app.models.req_merge import MergeConflict
+
+    query = db.query(MergeConflict).filter(MergeConflict.domain_id == domain_id)
+    if run_id is not None:
+        query = query.filter(MergeConflict.run_id == run_id)
+    rows = query.order_by(MergeConflict.id).all()
+    return [
+        {
+            "id": row.id,
+            "run_id": row.run_id,
+            "oem_atom_id": row.oem_atom_id,
+            "source_customer_ids": row.source_customer_ids or "",
+            "oem_text": row.oem_text or "",
+            "catalog_csr_id": row.catalog_csr_id or "",
+            "catalog_name": row.catalog_name or "",
+            "catalog_text": row.catalog_text or "",
+            "confidence": row.confidence,
+            "rationale": row.rationale or "",
+            "conflict_note": row.conflict_note or "",
+            "status": row.status or "Pending",
+        }
+        for row in rows
+    ]
