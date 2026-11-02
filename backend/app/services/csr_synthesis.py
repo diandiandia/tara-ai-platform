@@ -1426,7 +1426,7 @@ def _atom_payload(atom: dict) -> dict:
     }
 
 
-def _call_llm_json(settings: dict, system_prompt: str, user_obj: dict) -> dict:
+def _call_llm_json(settings: dict, system_prompt: str, user_obj: dict, temperature: float = None) -> dict:
     if not settings or not settings.get("api_key") or settings.get("api_key") in ["mock_test_key", ""]:
         raise RuntimeError("no LLM settings")
     url = f"{settings['api_base_url'].rstrip('/')}/chat/completions"
@@ -1442,6 +1442,8 @@ def _call_llm_json(settings: dict, system_prompt: str, user_obj: dict) -> dict:
         ],
         "response_format": {"type": "json_object"},
     }
+    if temperature is not None:
+        payload["temperature"] = temperature
     resp = post_llm_request_with_retry(url, headers, payload, max_retries=2)
     return clean_and_parse_json(resp.json()["choices"][0]["message"]["content"])
 

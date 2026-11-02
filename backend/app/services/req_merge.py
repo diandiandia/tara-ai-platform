@@ -1,6 +1,10 @@
-"""客户（OEM）需求 + TARA 需求合并服务。
+"""客户（OEM）需求与固定 CSR 目录合并的持久化/解析基础。
 
-把「客户整车信息安全需求」与「我方 TARA 分析产出的原子需求」做语义合并，
+当前 API 使用的合并逻辑在 ``oem_csr_merge.py``：OEM 原子化 -> 固定 CSR 映射
+-> 最终表。下面的 17 分类自由对齐流水线是旧实现，保留用于兼容旧数据和
+旧测试，但不再是 ``/domains/{id}/merged-requirements/synthesize`` 的主路径。
+
+旧说明：把「客户整车信息安全需求」与「我方 TARA 分析产出的原子需求」做语义合并，
 产出统一的最终信息安全需求（FCSR），并保证双来源（客户 / TARA）100% 双向追溯。
 
 核心架构与处理流水线：
@@ -826,16 +830,16 @@ def persist_merged_requirements(
         # 汇总该最终需求涉及的所有 TARA 原始需求 ID（Source TARA Raw IDs 底层穿透）
         raw_id_list: List[str] = []
         for sid in tara_ids:
-            raw = tara_raw_map.get(sid)
-            if not raw:
-                continue
+            # New fixed-CSR rows already carry original TARA IDs; older rows
+            # carry generated CSR IDs that are expanded through tara_raw_map.
+            raw = tara_raw_map.get(sid) or sid
             for part in str(raw).split(","):
                 p = part.strip()
                 if p and p not in raw_id_list:
                     raw_id_list.append(p)
         tara_raw_ids = ", ".join(raw_id_list)
 
-        status_label = "Approved"
+        status_label = m.get("status") or ("Draft" if m.get("needs_review") else "Approved")
         if m.get("conflict"):
             status_label = "Conflict"
 
@@ -848,6 +852,7 @@ def persist_merged_requirements(
             requirement_title=m.get("requirement_title") or "",
             subject=m.get("subject") or extract_subject(m.get("requirement_text") or "") or "ECU控制器",
             requirement_text=m.get("requirement_text") or "",
+            additional_info=m.get("additional_info") or "",
             source_tara_raw_ids=tara_raw_ids,
             status=status_label,
             conflict_flag=bool(m.get("conflict")),
@@ -869,11 +874,19 @@ def persist_merged_requirements(
                 source_type="tara",
                 source_id=tid,
             ))
+        catalog_ids = m.get("source_catalog_csr_ids") or []
+        for cid in catalog_ids:
+            db.add(MergedRequirementSource(
+                merged_id=row.id,
+                source_type="catalog",
+                source_id=cid,
+            ))
 
         persisted.append({
             **m,
             "customer_ids": customer_ids,
             "tara_ids": tara_ids,
+            "catalog_ids": catalog_ids,
             "source_tara_raw_ids": tara_raw_ids,
         })
 

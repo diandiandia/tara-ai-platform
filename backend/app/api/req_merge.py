@@ -16,10 +16,9 @@ from app.models.req_merge import CustomerRequirement, MergedRequirement, MergedR
 from app.services.req_merge import (
     parse_customer_requirements_excel,
     preview_customer_excel,
-    parse_tara_csr_excel,
-    merge_requirements_with_llm,
     persist_merged_requirements,
 )
+from app.services.oem_csr_merge import merge_oem_requirements_with_fixed_csrs
 
 router = APIRouter(tags=["客户需求与 TARA 需求合并"])
 
@@ -176,9 +175,15 @@ def synthesize_merged_requirements(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
-    """把 OEM 客户需求与「本域控」的 TARA 需求合并为最终信息安全需求（FCSR）。
+    """把 OEM 客户需求与「固定 CSR 目录」合并为最终信息安全需求（FCSR）。
 
-    TARA 侧来源优先使用上传的 TARA CSR sheet；未上传时从本域控已完成的 TARA 分析中汇总。
+    新逻辑：
+      1. LLM 原子化 OEM 需求；
+      2. OEM 原子映射到固定 CSR（full / partial / gap）；
+      3. 生成最终表：same / partial / tara_only / catalog_only / customer_only / tara_gap。
+
+    ``tara_csr_file`` 参数保留用于兼容旧前端，但固定 CSR 模式下不再使用；
+    我们的 CSR 统一来自已入库的固定 CSR 目录和 TARA→固定 CSR 映射结果。
     """
     domain = _get_domain(domain_id, db)
     check_project_active(domain.project_id, db)
@@ -196,34 +201,42 @@ def synthesize_merged_requirements(
         for r in customer_rows
     ]
 
+    last_run = (
+        db.query(TaraRun)
+        .filter(TaraRun.domain_id == domain_id, TaraRun.status == "completed")
+        .order_by(TaraRun.id.desc())
+        .first()
+    )
+    if not last_run:
+        raise HTTPException(status_code=400, detail="该域控没有已完成的 TARA run")
     if tara_csr_file is not None:
-        path = _save_upload(tara_csr_file)
-        try:
-            tara_csrs = parse_tara_csr_excel(path, sheet_name=tara_csr_sheet)
-        finally:
-            os.unlink(path)
-    else:
-        tara_csrs = _collect_tara_csrs_from_domain(db, domain)
-
-    if not tara_csrs:
-        raise HTTPException(status_code=400, detail="没有可用的本域控 TARA CSR 来源")
+        print("[TARA-AI] 固定 CSR 模式忽略上传的 TARA CSR 文件，使用已入库的固定 CSR 映射结果")
 
     try:
-        merged, report = merge_requirements_with_llm(db, domain.project_id, customer_reqs, tara_csrs)
-        tara_raw_map = {tc["csr_id"]: (tc.get("source_raw_ids") or "") for tc in tara_csrs}
-        persisted = persist_merged_requirements(
-            db, domain.project_id, domain_id, merged, tara_raw_map=tara_raw_map
+        merged, report = merge_oem_requirements_with_fixed_csrs(
+            db,
+            domain.project_id,
+            domain_id,
+            customer_reqs,
+            domain,
+            last_run,
         )
+        persisted = persist_merged_requirements(
+            db, domain.project_id, domain_id, merged, tara_raw_map={}
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
     except Exception as exc:
         raise HTTPException(status_code=500, detail=f"需求合并失败: {exc}")
 
     return {
         "domain_id": domain_id,
         "project_id": domain.project_id,
+        "run_id": last_run.id,
         "merged_count": len(persisted),
         "coverage": report,
+        "source_mode": "fixed_csr_mapping",
     }
-
 
 @router.get("/domains/{domain_id}/merged-requirements")
 def list_merged_requirements(
@@ -248,6 +261,7 @@ def list_merged_requirements(
             "id": r.id,
             "final_id": r.final_id,
             "customer_ids": [x.source_id for x in refs if x.source_type == "customer"],
+            "catalog_ids": [x.source_id for x in refs if x.source_type == "catalog"],
             "tara_ids": [x.source_id for x in refs if x.source_type == "tara"],
             "security_domain": r.security_domain,
             "control_category": r.control_category,

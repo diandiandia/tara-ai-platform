@@ -53,7 +53,7 @@ from app.services.csr_synthesis import (
     get_csr_traceability_maps
 )
 
-def collect_report_data(steps: List[TaraStep], assets: List[Asset], desensitize: bool, hash_to_global_map: dict = None) -> List[dict]:
+def collect_report_data(steps: List[TaraStep], assets: List[Asset], desensitize: bool, hash_to_global_map: dict = None, mapping_only: bool = False) -> List[dict]:
     """
     收集并平铺 TARA 各阶段分析结果数据，返回扁平化字典列表
     """
@@ -489,16 +489,18 @@ def collect_report_data(steps: List[TaraStep], assets: List[Asset], desensitize:
                         line_global_ids.update(val)
                     else:
                         line_global_ids.add(val)
-                # 2. 通过资产级汇总 CSR ID 映射
-                for sm_id in tara_to_csr.get(cleaned, []):
-                    if hash_to_global_map and sm_id in hash_to_global_map:
-                        val = hash_to_global_map[sm_id]
-                        if isinstance(val, (set, list)):
-                            line_global_ids.update(val)
+                # 2. 通过资产级汇总 CSR ID 映射（映射模式只认固定目录，
+                #    不回退到旧的生成式 CSR ID，避免混入另一套 ID 空间）
+                if not mapping_only:
+                    for sm_id in tara_to_csr.get(cleaned, []):
+                        if hash_to_global_map and sm_id in hash_to_global_map:
+                            val = hash_to_global_map[sm_id]
+                            if isinstance(val, (set, list)):
+                                line_global_ids.update(val)
+                            else:
+                                line_global_ids.add(val)
                         else:
-                            line_global_ids.add(val)
-                    else:
-                        line_global_ids.add(sm_id)
+                            line_global_ids.add(sm_id)
                 part_to_global_map[cleaned] = sorted(list(line_global_ids))
                 matched_global_ids.extend(line_global_ids)
 
@@ -673,8 +675,8 @@ def build_csr_coverage_rows(csr_rows: list) -> list:
     return result
 
 
-CUSTOMER_ONLY_NA = "N/A (TARA Threat Analysis Enhanced)"
-TARA_ONLY_NA = "N/A (Customer Specific)"
+CUSTOMER_ONLY_NA = "N/A (无OEM来源 / No OEM Source)"
+TARA_ONLY_NA = "N/A (无TARA来源 / No TARA Source)"
 
 
 def collect_merged_requirement_rows(db: Session, domain_id: int) -> List[dict]:
@@ -698,10 +700,13 @@ def collect_merged_requirement_rows(db: Session, domain_id: int) -> List[dict]:
         )
         customer = [x.source_id for x in refs if x.source_type == "customer"]
         tara = [x.source_id for x in refs if x.source_type == "tara"]
+        catalog = [x.source_id for x in refs if x.source_type == "catalog"]
         result.append({
             "final_id": r.final_id,
             "customer_ids": ", ".join(customer) if customer else CUSTOMER_ONLY_NA,
+            "catalog_ids": ", ".join(catalog) if catalog else "",
             "tara_ids": ", ".join(tara) if tara else TARA_ONLY_NA,
+            "resolution": r.resolution or "",
             "source_tara_raw_ids": r.source_tara_raw_ids or "",
             "security_domain": r.security_domain or "",
             "control_category": r.control_category or "",
@@ -717,33 +722,51 @@ def collect_merged_requirement_rows(db: Session, domain_id: int) -> List[dict]:
     return result
 
 
-def create_excel_report(domain: Domain, steps: List[TaraStep], assets: List[Asset], desensitize: bool, export_type: str = "all", db: Session = None, force_recompute: bool = False) -> str:
+def create_excel_report(domain: Domain, steps: List[TaraStep], assets: List[Asset], desensitize: bool, export_type: str = "all", db: Session = None, force_recompute: bool = False, csr_source: str = "auto") -> str:
     """
     生成高度美观的 ISO 21434 TARA XLSX 格式报表，支持脱敏过滤，并支持导出安全需求 (CSR_Requirements) 的混合模型 sheet 页
     """
     wb = openpyxl.Workbook()
     default_ws = wb.active
-    
+
     # 颜色与样式设定 (Dark Gray Header Theme)
     header_fill_r1 = PatternFill(start_color="1F2937", end_color="1F2937", fill_type="solid")
     header_fill_r2 = PatternFill(start_color="374151", end_color="374151", fill_type="solid")
     header_font = Font(name="Microsoft YaHei", size=10, bold=True, color="FFFFFF")
     cell_font = Font(name="Microsoft YaHei", size=9.5)
-    
+
     thin_border = Border(
         left=Side(style='thin', color='D1D5DB'),
         right=Side(style='thin', color='D1D5DB'),
         top=Side(style='thin', color='D1D5DB'),
         bottom=Side(style='thin', color='D1D5DB')
     )
-    
+
     has_tara = export_type in ["all", "tara"]
     has_csr = export_type in ["all", "csr"]
     has_assets = export_type in ["all", "assets"]
-    
+
     # 提前收集合并后安全需求的映射字典
     hash_to_global_map = {}
-    csr_rows_pre = collect_csr_report_data(steps, assets, hash_to_global_map, db=db, domain=domain, force_recompute=force_recompute)
+    mapping_bundle = None
+    mapping_mode = False
+    mapping_details = []
+    unmapped_tara = []
+    if csr_source in ("auto", "mapping") and db is not None and domain is not None and steps:
+        from app.services.csr_mapping import collect_catalog_mapping_report_data
+        mapping_bundle = collect_catalog_mapping_report_data(db, domain, steps)
+        if mapping_bundle and (
+            csr_source == "mapping"
+            or int(mapping_bundle.get("summary", {}).get("mapping_rows") or 0) > 0
+        ):
+            mapping_mode = True
+    if mapping_mode:
+        csr_rows_pre = mapping_bundle["csr_rows"]
+        mapping_details = mapping_bundle.get("mapping_details") or []
+        unmapped_tara = mapping_bundle.get("unmapped") or []
+        hash_to_global_map.update(mapping_bundle.get("tara_to_targets") or {})
+    else:
+        csr_rows_pre = collect_csr_report_data(steps, assets, hash_to_global_map, db=db, domain=domain, force_recompute=force_recompute)
     
     # 导出 TARA Sheet
     if has_tara:
@@ -792,7 +815,7 @@ def create_excel_report(domain: Domain, steps: List[TaraStep], assets: List[Asse
         for col_idx, h in enumerate(headers_r2, 1):
             ws.cell(row=2, column=col_idx, value=h)
             
-        rows = collect_report_data(steps, assets, desensitize, hash_to_global_map)
+        rows = collect_report_data(steps, assets, desensitize, hash_to_global_map, mapping_only=mapping_mode)
         
         current_row = 3
         keys = [
@@ -849,7 +872,8 @@ def create_excel_report(domain: Domain, steps: List[TaraStep], assets: List[Asse
             "Verification Method / 验证方法", "Requirement Type / 需求类型", "Rationale / 需求依据",
             "Applicable Assets / 适用资产列表", "Assets Count / 覆盖资产数",
             "Source Cybersecurity Requirement IDs / 来源TARA需求ID", "Source Count / 追溯条目数",
-            "Needs Review / 待复核"
+            "Needs Review / 待复核", "Mapping Status / 映射状态",
+            "Matched TARA Count / 匹配TARA数"
         ]
         for col_idx, h in enumerate(headers2, 1):
             cell = ws2.cell(row=1, column=col_idx, value=h)
@@ -861,7 +885,7 @@ def create_excel_report(domain: Domain, steps: List[TaraStep], assets: List[Asse
         ws2.row_dimensions[1].height = 30
         csr_rows = csr_rows_pre
         current_row = 2
-        csr_keys = ["csr_id", "security_domain", "functional_category", "sub_category", "title", "subject", "cybersecurity_requirement", "verification_method", "requirement_type", "rationale", "applicable_assets", "assets_count", "source_cybersecurity_requirement_ids", "source_count", "needs_review"]
+        csr_keys = ["csr_id", "security_domain", "functional_category", "sub_category", "title", "subject", "cybersecurity_requirement", "verification_method", "requirement_type", "rationale", "applicable_assets", "assets_count", "source_cybersecurity_requirement_ids", "source_count", "needs_review", "mapping_status", "matched_tara_count"]
         
         for row_data in csr_rows:
             for col_idx, key in enumerate(csr_keys, 1):
@@ -874,7 +898,7 @@ def create_excel_report(domain: Domain, steps: List[TaraStep], assets: List[Asse
                     from app.services.csr_pipeline.output_layer import _strip_markup_tags
                     val = _strip_markup_tags(str(val))
                 if key == "needs_review":
-                    val = "Yes" if val else "No"
+                    val = "Yes" if str(val).strip().lower() in ("yes", "true", "1") else "No"
                 cell = ws2.cell(row=current_row, column=col_idx, value=val)
                 cell.font = cell_font
                 cell.border = thin_border
@@ -888,7 +912,7 @@ def create_excel_report(domain: Domain, steps: List[TaraStep], assets: List[Asse
             current_row += 1
             
         # 列宽设置 (Sheet 2)
-        col_w_map2 = {1: 16, 2: 22, 3: 22, 4: 26, 5: 32, 6: 50, 7: 60, 8: 28, 9: 14, 10: 40, 11: 36, 12: 14, 13: 36, 14: 12, 15: 12}
+        col_w_map2 = {1: 16, 2: 22, 3: 22, 4: 26, 5: 32, 6: 50, 7: 60, 8: 28, 9: 14, 10: 40, 11: 36, 12: 14, 13: 36, 14: 12, 15: 12, 16: 16, 17: 14}
         for c_idx, width in col_w_map2.items():
             col_letter = openpyxl.utils.get_column_letter(c_idx)
             ws2.column_dimensions[col_letter].width = width
@@ -914,6 +938,9 @@ def create_excel_report(domain: Domain, steps: List[TaraStep], assets: List[Asse
             "extra_stripped": PatternFill(start_color="FEE2E2", end_color="FEE2E2", fill_type="solid"),
             "missing_no_fallback": PatternFill(start_color="FECACA", end_color="FECACA", fill_type="solid"),
             "verification_missing": PatternFill(start_color="FEF3C7", end_color="FEF3C7", fill_type="solid"),
+            "full": PatternFill(start_color="DCFCE7", end_color="DCFCE7", fill_type="solid"),
+            "partial": PatternFill(start_color="FEF3C7", end_color="FEF3C7", fill_type="solid"),
+            "catalog_unmapped": PatternFill(start_color="E5E7EB", end_color="E5E7EB", fill_type="solid"),
         }
         for row_idx, cov_row in enumerate(build_csr_coverage_rows(csr_rows_pre), 2):
             values = [
@@ -934,6 +961,121 @@ def create_excel_report(domain: Domain, steps: List[TaraStep], assets: List[Asse
 
         for c_idx, width in {1: 30, 2: 26, 3: 24, 4: 22, 5: 12, 6: 60}.items():
             ws_cov.column_dimensions[openpyxl.utils.get_column_letter(c_idx)].width = width
+
+    # 导出固定 CSR 目录映射明细（TARA -> 固定 CSR，多对多）
+    if mapping_mode and mapping_bundle:
+        summary = mapping_bundle.get("summary") or {}
+        ws_map_sum = wb.create_sheet(title="CSR_Mapping_Summary")
+        ws_map_sum.views.sheetView[0].showGridLines = True
+        for col_idx, header in enumerate(["Metric / 指标", "Value / 数值"], 1):
+            cell = ws_map_sum.cell(row=1, column=col_idx, value=header)
+            cell.fill = header_fill_r1
+            cell.font = header_font
+            cell.alignment = Alignment(horizontal="center", vertical="center", wrap_text=True)
+            cell.border = thin_border
+        summary_rows = [
+            ("Catalog Version / 目录版本", summary.get("catalog_version", "")),
+            ("Catalog Requirement Count / 目录条数", summary.get("catalog_count", 0)),
+            ("Input TARA Requirement Count / TARA需求数", summary.get("input_count", 0)),
+            ("Mapped TARA Count / 已映射TARA数", summary.get("mapped_count", 0)),
+            ("Full Match Count / 完整覆盖数", summary.get("full_count", 0)),
+            ("Partial Match Count / 部分覆盖数", summary.get("partial_count", 0)),
+            ("Gap Count / 无匹配数", summary.get("gap_count", 0)),
+            ("Error Count / 映射错误数", summary.get("error_count", 0)),
+            ("Target CSR Covered / 被引用CSR数", summary.get("target_covered_count", 0)),
+            ("Catalog Rows Without TARA / 未被TARA引用目录数", summary.get("catalog_unmapped_count", 0)),
+            ("Low Confidence Count / 低置信度数", summary.get("low_confidence_count", 0)),
+            ("Mapping Rows / 映射关系行数", summary.get("mapping_rows", 0)),
+        ]
+        for row_idx, (metric, value) in enumerate(summary_rows, 2):
+            for col_idx, cell_value in enumerate([metric, value], 1):
+                cell = ws_map_sum.cell(row=row_idx, column=col_idx, value=cell_value)
+                cell.font = cell_font
+                cell.border = thin_border
+                cell.alignment = Alignment(horizontal="left" if col_idx == 1 else "center", vertical="center", wrap_text=True)
+        ws_map_sum.column_dimensions["A"].width = 42
+        ws_map_sum.column_dimensions["B"].width = 28
+
+        if mapping_details:
+            ws_map = wb.create_sheet(title="Mapping_Detail")
+            ws_map.views.sheetView[0].showGridLines = True
+            map_headers = [
+                "TARA Requirement ID / TARA需求ID", "Source TARA IDs / 原始TARA ID",
+                "Asset / 资产", "Target CSR ID / 目标CSR ID",
+                "Target CSR Name / 目标CSR名称", "Match Type / 匹配类型",
+                "Confidence / 置信度", "Rationale / 映射依据",
+                "Missing Aspect / 缺失方面", "Needs Review / 待复核",
+                "TARA Requirement Text / TARA需求原文",
+            ]
+            for col_idx, header in enumerate(map_headers, 1):
+                cell = ws_map.cell(row=1, column=col_idx, value=header)
+                cell.fill = header_fill_r1
+                cell.font = header_font
+                cell.alignment = Alignment(horizontal="center", vertical="center", wrap_text=True)
+                cell.border = thin_border
+            for row_idx, detail in enumerate(mapping_details, 2):
+                values = [
+                    detail.get("tara_req_id", ""),
+                    detail.get("source_tara_ids", ""),
+                    detail.get("asset_name", ""),
+                    detail.get("target_csr_id", "") or "未映射 / Unmapped",
+                    detail.get("target_csr_name", ""),
+                    detail.get("match_type", ""),
+                    detail.get("confidence", ""),
+                    detail.get("rationale", ""),
+                    detail.get("missing_aspect", ""),
+                    detail.get("needs_review", ""),
+                    detail.get("tara_text", ""),
+                ]
+                for col_idx, value in enumerate(values, 1):
+                    cell = ws_map.cell(row=row_idx, column=col_idx, value=value)
+                    cell.font = cell_font
+                    cell.border = thin_border
+                    cell.alignment = Alignment(
+                        horizontal="center" if col_idx in (1, 4, 6, 7, 10) else "left",
+                        vertical="center",
+                        wrap_text=True,
+                    )
+            for c_idx, width in {1: 20, 2: 22, 3: 22, 4: 18, 5: 32, 6: 12, 7: 10, 8: 50, 9: 40, 10: 12, 11: 60}.items():
+                ws_map.column_dimensions[openpyxl.utils.get_column_letter(c_idx)].width = width
+
+        if unmapped_tara:
+            ws_unmapped = wb.create_sheet(title="Unmapped_TARA")
+            ws_unmapped.views.sheetView[0].showGridLines = True
+            unmapped_headers = [
+                "TARA Requirement ID", "Source TARA IDs", "Asset / 资产",
+                "Match Type / 状态", "Confidence / 置信度",
+                "Rationale / 原因", "Missing Aspect / 缺失方面",
+                "TARA Requirement Text / TARA需求原文",
+            ]
+            for col_idx, header in enumerate(unmapped_headers, 1):
+                cell = ws_unmapped.cell(row=1, column=col_idx, value=header)
+                cell.fill = header_fill_r1
+                cell.font = header_font
+                cell.alignment = Alignment(horizontal="center", vertical="center", wrap_text=True)
+                cell.border = thin_border
+            for row_idx, detail in enumerate(unmapped_tara, 2):
+                values = [
+                    detail.get("tara_req_id", ""),
+                    detail.get("source_tara_ids", ""),
+                    detail.get("asset_name", ""),
+                    detail.get("match_type", ""),
+                    detail.get("confidence", ""),
+                    detail.get("rationale", ""),
+                    detail.get("missing_aspect", ""),
+                    detail.get("tara_text", ""),
+                ]
+                for col_idx, value in enumerate(values, 1):
+                    cell = ws_unmapped.cell(row=row_idx, column=col_idx, value=value)
+                    cell.font = cell_font
+                    cell.border = thin_border
+                    cell.alignment = Alignment(
+                        horizontal="center" if col_idx in (1, 4, 5) else "left",
+                        vertical="center",
+                        wrap_text=True,
+                    )
+            for c_idx, width in {1: 22, 2: 24, 3: 22, 4: 12, 5: 10, 6: 50, 7: 40, 8: 60}.items():
+                ws_unmapped.column_dimensions[openpyxl.utils.get_column_letter(c_idx)].width = width
 
     # 导出 Traceability_Matrix Sheet (全景双向追溯矩阵)
     if has_tara and has_csr:
@@ -1125,8 +1267,10 @@ def create_excel_report(domain: Domain, steps: List[TaraStep], assets: List[Asse
             merged_headers = [
                 "Final CSR ID\n最终需求编号",
                 "Mapped Customer Req IDs\n映射客户需求编号",
-                "Mapped TARA CSR IDs\n映射TARA需求编号",
+                "Mapped Fixed CSR IDs\n映射固定CSR编号",
+                "Mapped TARA IDs\n映射TARA需求编号",
                 "Source TARA Raw IDs / 追溯原始TARA需求\n(底层威胁分析条目ID)",
+                "Resolution / 合并结论",
                 "Security Domain\n安全域",
                 "Control Category\n控制分类",
                 "Requirement Title\n需求标题",
@@ -1148,8 +1292,9 @@ def create_excel_report(domain: Domain, steps: List[TaraStep], assets: List[Asse
 
             for row_idx, row_data in enumerate(merged_rows, 2):
                 values = [
-                    row_data["final_id"], row_data["customer_ids"], row_data["tara_ids"],
-                    row_data["source_tara_raw_ids"], row_data["security_domain"], row_data["control_category"],
+                    row_data["final_id"], row_data["customer_ids"], row_data.get("catalog_ids", ""),
+                    row_data["tara_ids"], row_data["source_tara_raw_ids"], row_data.get("resolution", ""),
+                    row_data["security_domain"], row_data["control_category"],
                     row_data["requirement_title"], row_data["subject"], row_data["requirement_text"],
                     row_data["additional_info"], row_data["status"],
                     row_data["allocated_module"], row_data["responsible_org"], row_data["remarks"],
@@ -1158,13 +1303,13 @@ def create_excel_report(domain: Domain, steps: List[TaraStep], assets: List[Asse
                     cell = ws_merged.cell(row=row_idx, column=col_idx, value=val)
                     cell.font = cell_font
                     cell.border = thin_border
-                    if col_idx in (1, 2, 3, 4, 11):
+                    if col_idx in (1, 2, 3, 4, 5, 6, 13):
                         cell.alignment = Alignment(horizontal="center", vertical="center", wrap_text=True)
                     else:
                         cell.alignment = Alignment(horizontal="left", vertical="center", wrap_text=True)
                 ws_merged.row_dimensions[row_idx].height = 70
 
-            col_w_merged = {1: 16, 2: 30, 3: 24, 4: 45, 5: 24, 6: 30, 7: 45, 8: 24, 9: 75, 10: 20, 11: 12, 12: 22, 13: 22, 14: 26}
+            col_w_merged = {1: 16, 2: 30, 3: 24, 4: 24, 5: 45, 6: 16, 7: 24, 8: 30, 9: 45, 10: 24, 11: 75, 12: 20, 13: 12, 14: 22, 15: 22, 16: 26}
             for c_idx, width in col_w_merged.items():
                 ws_merged.column_dimensions[openpyxl.utils.get_column_letter(c_idx)].width = width
 
@@ -1181,6 +1326,7 @@ def export_report(
     desensitize: str = "false",
     export_type: str = "all",
     force_recompute: bool = False,
+    csr_source: str = "auto",
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user)
 ):
@@ -1208,8 +1354,25 @@ def export_report(
         
     if export_type_lower not in ["all", "tara", "csr", "merged"]:
         raise HTTPException(status_code=400, detail="不支持的导出类型，可选值: all, tara, csr, merged。")
-    
-    file_path = create_excel_report(domain, steps, assets, is_desensitized, export_type_lower, db=db, force_recompute=force_recompute)
+
+    csr_source_lower = str(csr_source or "auto").strip().lower()
+    if csr_source_lower not in ["auto", "mapping", "generated"]:
+        raise HTTPException(status_code=400, detail="不支持的 CSR 来源，可选值: auto, mapping, generated。")
+    if csr_source_lower == "mapping":
+        from app.services.csr_catalog import get_active_catalog_version
+        if get_active_catalog_version(db) is None:
+            raise HTTPException(status_code=400, detail="尚未导入固定 CSR 目录，无法使用 mapping 导出。")
+
+    file_path = create_excel_report(
+        domain,
+        steps,
+        assets,
+        is_desensitized,
+        export_type_lower,
+        db=db,
+        force_recompute=force_recompute,
+        csr_source=csr_source_lower,
+    )
     media_type = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
     filename = f"TARA_Report_{domain.name}_{export_type_lower}_{'desensitized' if is_desensitized else 'full'}.xlsx"
         

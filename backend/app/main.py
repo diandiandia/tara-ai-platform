@@ -1,6 +1,6 @@
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
-from app.api import auth, project, diagram, asset, tara, settings, report, websocket, req_merge
+from app.api import auth, project, diagram, asset, tara, settings, report, websocket, req_merge, csr_mapping
 from app.core.database import Base, engine
 
 # 初始化数据库结构（SQLite 自动建表，安全备用）
@@ -30,6 +30,7 @@ app.include_router(tara.router, prefix="/api")
 app.include_router(settings.router, prefix="/api")
 app.include_router(report.router, prefix="/api")
 app.include_router(req_merge.router, prefix="/api")
+app.include_router(csr_mapping.router, prefix="/api")
 app.include_router(websocket.router)
 
 @app.get("/")
