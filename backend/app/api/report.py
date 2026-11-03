@@ -1333,7 +1333,6 @@ def create_excel_report(domain: Domain, steps: List[TaraStep], assets: List[Asse
                 "Final CSR ID\n最终需求编号",
                 "Mapped Customer Req IDs\n映射客户需求编号",
                 "Mapped Fixed CSR IDs\n映射固定CSR编号",
-                "Mapped TARA IDs\n映射TARA需求编号",
                 "Resolution / 合并结论",
                 "Security Domain\n安全域",
                 "Requirement Title\n需求标题",
@@ -1355,7 +1354,7 @@ def create_excel_report(domain: Domain, steps: List[TaraStep], assets: List[Asse
             for row_idx, row_data in enumerate(merged_rows, 2):
                 values = [
                     row_data["final_id"], row_data["customer_ids"], row_data.get("catalog_ids", ""),
-                    row_data["tara_ids"], row_data.get("resolution", ""),
+                    row_data.get("resolution", ""),
                     row_data["security_domain"], row_data["requirement_title"],
                     row_data["requirement_text"], row_data["additional_info"], row_data["status"],
                     row_data["allocated_module"], row_data["responsible_org"], row_data["remarks"],
@@ -1364,13 +1363,13 @@ def create_excel_report(domain: Domain, steps: List[TaraStep], assets: List[Asse
                     cell = ws_merged.cell(row=row_idx, column=col_idx, value=val)
                     cell.font = cell_font
                     cell.border = thin_border
-                    if col_idx in (1, 2, 3, 4, 5, 10):
+                    if col_idx in (1, 2, 3, 4, 9):
                         cell.alignment = Alignment(horizontal="center", vertical="center", wrap_text=True)
                     else:
                         cell.alignment = Alignment(horizontal="left", vertical="center", wrap_text=True)
                 ws_merged.row_dimensions[row_idx].height = 70
 
-            col_w_merged = {1: 16, 2: 30, 3: 24, 4: 24, 5: 16, 6: 24, 7: 45, 8: 75, 9: 20, 10: 12, 11: 22, 12: 22, 13: 26}
+            col_w_merged = {1: 16, 2: 30, 3: 24, 4: 16, 5: 24, 6: 45, 7: 75, 8: 20, 9: 12, 10: 22, 11: 22, 12: 26}
             for c_idx, width in col_w_merged.items():
                 ws_merged.column_dimensions[openpyxl.utils.get_column_letter(c_idx)].width = width
 
