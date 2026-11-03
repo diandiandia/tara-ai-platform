@@ -884,12 +884,14 @@ def create_excel_report(domain: Domain, steps: List[TaraStep], assets: List[Asse
         ws2.views.sheetView[0].showGridLines = True
         
         headers2 = [
-            "Atomic CSR ID", "Security Domain", "Functional Category / 功能分类", "Control Category", "Requirement Title", "Subject / 责任主体", "Cybersecurity Requirement (CN/EN)",
-            "Verification Method / 验证方法", "Requirement Type / 需求类型", "Rationale / 需求依据",
-            "Applicable Assets / 适用资产列表", "Assets Count / 覆盖资产数",
-            "Source Cybersecurity Requirement IDs / 来源TARA需求ID", "Source Count / 追溯条目数",
-            "Needs Review / 待复核", "Mapping Status / 映射状态",
-            "Matched TARA Count / 匹配TARA数"
+            "Atomic CSR ID / 固定CSR编号",
+            "Requirement Title / 需求名称",
+            "Cybersecurity Requirement (CN/EN) / 需求原文",
+            "Rationale / 需求依据",
+            "Applicable Assets / 适用资产列表",
+            "Assets Count / 覆盖资产数",
+            "Source Cybersecurity Requirement IDs / 来源TARA需求ID",
+            "Mapping Status / 映射状态",
         ]
         for col_idx, h in enumerate(headers2, 1):
             cell = ws2.cell(row=1, column=col_idx, value=h)
@@ -901,7 +903,11 @@ def create_excel_report(domain: Domain, steps: List[TaraStep], assets: List[Asse
         ws2.row_dimensions[1].height = 30
         csr_rows = csr_rows_pre
         current_row = 2
-        csr_keys = ["csr_id", "security_domain", "functional_category", "sub_category", "title", "subject", "cybersecurity_requirement", "verification_method", "requirement_type", "rationale", "applicable_assets", "assets_count", "source_cybersecurity_requirement_ids", "source_count", "needs_review", "mapping_status", "matched_tara_count"]
+        csr_keys = [
+            "csr_id", "title", "cybersecurity_requirement", "rationale",
+            "applicable_assets", "assets_count",
+            "source_cybersecurity_requirement_ids", "mapping_status",
+        ]
         
         for row_data in csr_rows:
             for col_idx, key in enumerate(csr_keys, 1):
@@ -912,13 +918,11 @@ def create_excel_report(domain: Domain, steps: List[TaraStep], assets: List[Asse
                     val = row_data.get("source_tara_requirements", "")
                 if key == "cybersecurity_requirement" and val:
                     val = _strip_markup_tags(val)
-                if key == "needs_review":
-                    val = "Yes" if str(val).strip().lower() in ("yes", "true", "1") else "No"
                 cell = ws2.cell(row=current_row, column=col_idx, value=val)
                 cell.font = cell_font
                 cell.border = thin_border
                 
-                if key in ["title", "cybersecurity_requirement", "verification_method", "rationale", "applicable_assets"]:
+                if key in ["title", "cybersecurity_requirement", "rationale", "applicable_assets"]:
                     cell.alignment = Alignment(horizontal="left", vertical="center", wrap_text=True)
                 else:
                     cell.alignment = Alignment(horizontal="center", vertical="center", wrap_text=True)
@@ -927,7 +931,7 @@ def create_excel_report(domain: Domain, steps: List[TaraStep], assets: List[Asse
             current_row += 1
             
         # 列宽设置 (Sheet 2)
-        col_w_map2 = {1: 16, 2: 22, 3: 22, 4: 26, 5: 32, 6: 50, 7: 60, 8: 28, 9: 14, 10: 40, 11: 36, 12: 14, 13: 36, 14: 12, 15: 12, 16: 16, 17: 14}
+        col_w_map2 = {1: 20, 2: 34, 3: 70, 4: 45, 5: 40, 6: 14, 7: 42, 8: 18}
         for c_idx, width in col_w_map2.items():
             col_letter = openpyxl.utils.get_column_letter(c_idx)
             ws2.column_dimensions[col_letter].width = width
