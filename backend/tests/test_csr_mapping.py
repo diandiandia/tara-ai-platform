@@ -138,6 +138,29 @@ class MappingValidationTests(unittest.TestCase):
         self.assertNotIn("CS-FAKE-999", {row["target_csr_id"] for row in rows})
         self.assertIn("目录外", by_tara["T4"][0]["rationale"])
 
+    def test_conflict_is_recorded_only_when_allowed(self):
+        parsed = {"mappings": [
+            {
+                "tara_id": "T1",
+                "target_csr_ids": ["CS-HW-001"],
+                "match_type": "conflict",
+                "confidence": 0.7,
+                "rationale": "互斥",
+                "conflict_note": "TARA 要求禁用调试口，目录允许授权启用",
+            },
+        ]}
+        allowed = _validate_mapping_batch(
+            self.batch[:1], parsed, self.catalog_ids, allow_conflict=True
+        )
+        self.assertEqual(allowed[0]["match_type"], "conflict")
+        self.assertEqual(
+            allowed[0]["conflict_note"], "TARA 要求禁用调试口，目录允许授权启用"
+        )
+        self.assertTrue(allowed[0]["needs_review"])
+
+        not_allowed = _validate_mapping_batch(self.batch[:1], parsed, self.catalog_ids)
+        self.assertNotEqual(not_allowed[0]["match_type"], "conflict")
+
     def test_missing_tara_output_becomes_error_row(self):
         parsed = {"mappings": [
             {"tara_id": "T1", "target_csr_ids": ["CS-HW-001"], "match_type": "full", "confidence": 0.9},
@@ -223,6 +246,40 @@ class MappingPersistenceTests(unittest.TestCase):
         self.assertEqual(report["summary"]["gap_count"], 1)
         self.assertTrue(any(row["tara_req_id"] == "T3" for row in report["unmapped"]))
         self.assertEqual(report["tara_to_targets"]["T1"], ["CS-BOOT-001", "CS-HW-001"])
+
+    def test_tara_conflict_row_is_reported_and_exported(self):
+        version = get_active_catalog_version(self.db).version
+        self.db.add(TaraCsrMapping(
+            project_id=1,
+            domain_id=1,
+            run_id=1,
+            asset_id=1,
+            asset_name="ADCU",
+            tara_req_id="T9",
+            source_tara_ids="T9",
+            tara_text="量产件必须永久禁用调试口",
+            catalog_version=version,
+            target_csr_id="CS-HW-001",
+            match_type="conflict",
+            confidence=0.6,
+            rationale="互斥",
+            missing_aspect="",
+            conflict_note="目录允许授权后启用调试口，与必须禁用互斥",
+            needs_review=True,
+        ))
+        self.db.commit()
+
+        report = build_mapping_report_data(self.db, 1, 1)
+        self.assertEqual(report["summary"]["conflict_count"], 1)
+        self.assertEqual(len(report["conflicts"]), 1)
+        conflict = report["conflicts"][0]
+        self.assertEqual(conflict["tara_req_id"], "T9")
+        self.assertEqual(conflict["target_csr_id"], "CS-HW-001")
+        self.assertEqual(conflict["conflict_note"], "目录允许授权后启用调试口，与必须禁用互斥")
+        self.assertTrue(conflict["target_csr_text"])
+
+        statuses = {row["csr_id"]: row["mapping_status"] for row in report["csr_rows"]}
+        self.assertEqual(statuses["CS-HW-001"], "conflict")
 
 
 if __name__ == "__main__":

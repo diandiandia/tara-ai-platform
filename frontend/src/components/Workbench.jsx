@@ -15,6 +15,9 @@ import {
   exportMergedRequirements,
   fetchCustomerRequirements,
   fetchMergedRequirements,
+  fetchCsrMappingStatus,
+  importCsrCatalog,
+  runCsrMapping,
 } from '../stores/reqMergeStore';
 
 export default function Workbench({ setPage, setDomainId, setDiagramId, projectId }) {
@@ -209,8 +212,73 @@ export default function Workbench({ setPage, setDomainId, setDiagramId, projectI
     }
   };
 
+  // 固定 CSR 目录 / TARA→固定 CSR 映射：合并需求的前置条件
+  const [csrStatus, setCsrStatus] = useState(null);
+  const [csrCatalogImporting, setCsrCatalogImporting] = useState(false);
+  const [csrMappingRunning, setCsrMappingRunning] = useState(false);
+  const [csrMsg, setCsrMsg] = useState(null);
+  const csrCatalogFileRef = useRef(null);
+
+  const refreshCsrStatus = useCallback(async () => {
+    if (!activeDomain) {
+      setCsrStatus(null);
+      return;
+    }
+    try {
+      setCsrStatus(await fetchCsrMappingStatus(activeDomain.id));
+    } catch (err) {
+      setCsrStatus(null);
+    }
+  }, [activeDomain]);
+
+  useEffect(() => {
+    refreshCsrStatus();
+  }, [refreshCsrStatus, resultsReady]);
+
+  const handleCsrCatalogFileChange = async (event) => {
+    const file = event.target.files?.[0];
+    event.target.value = '';
+    if (!file) return;
+    setCsrCatalogImporting(true);
+    setCsrMsg(null);
+    try {
+      const res = await importCsrCatalog(file);
+      setCsrMsg({
+        type: 'success',
+        text: `${t("已导入固定 CSR 目录")}：${res.version}（${res.row_count} ${t("条")}${res.sheet_name ? `，${res.sheet_name}` : ''}）`,
+      });
+      await refreshCsrStatus();
+    } catch (err) {
+      setCsrMsg({ type: 'error', text: err?.response?.data?.detail || t("固定 CSR 目录导入失败") });
+    } finally {
+      setCsrCatalogImporting(false);
+    }
+  };
+
+  const handleRunCsrMapping = async () => {
+    if (!activeDomain) return;
+    setCsrMappingRunning(true);
+    setCsrMsg(null);
+    try {
+      const res = await runCsrMapping(activeDomain.id);
+      setCsrMsg({
+        type: 'success',
+        text: `${t("TARA→CSR 映射完成")}：${res.persisted_rows || 0} ${t("条")}`,
+      });
+      await refreshCsrStatus();
+    } catch (err) {
+      setCsrMsg({ type: 'error', text: err?.response?.data?.detail || t("CSR 映射失败") });
+    } finally {
+      setCsrMappingRunning(false);
+    }
+  };
+
   const handleMergeRequirements = async () => {
     if (!activeDomain) return;
+    if (!csrStatus?.ready) {
+      setMergeMsg({ type: 'error', text: t("请先导入固定 CSR 目录并执行 TARA→CSR 映射") });
+      return;
+    }
     setMerging(true);
     setMergeMsg(null);
     try {
@@ -1143,11 +1211,49 @@ export default function Workbench({ setPage, setDomainId, setDiagramId, projectI
               {resultsReady && (
               <div style={{ marginTop: '14px', paddingTop: '14px', borderTop: '1px solid var(--border-color)', flexShrink: 0 }}>
                 <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '16px', flexWrap: 'wrap' }}>
-                  <div style={{ fontSize: '12px', color: 'var(--text-secondary)' }}>
-                    {t("客户需求")}: <b>{customerReqCount}</b>
-                    {mergedCount > 0 && <> · {t("最终需求")}: <b>{mergedCount}</b></>}
+                  <div style={{ fontSize: '12px', color: 'var(--text-secondary)', display: 'flex', flexDirection: 'column', gap: '2px' }}>
+                    <span>
+                      {t("客户需求")}: <b>{customerReqCount}</b>
+                      {mergedCount > 0 && <> · {t("最终需求")}: <b>{mergedCount}</b></>}
+                    </span>
+                    <span style={{ color: csrStatus?.ready ? 'var(--success)' : '#e11d48' }}>
+                      {t("固定 CSR 目录")}: {csrStatus?.catalog_ready
+                        ? <b>{csrStatus.catalog_version}（{csrStatus.catalog_row_count} {t("条")}）</b>
+                        : t("未导入")}
+                      {' · '}
+                      {t("TARA→CSR 映射")}: {csrStatus?.mapping_ready
+                        ? <b>{csrStatus.mapping_rows} {t("条")}</b>
+                        : t("未执行")}
+                    </span>
                   </div>
                   <div style={{ display: 'flex', gap: '12px', alignItems: 'center' }}>
+                    <input
+                      ref={csrCatalogFileRef}
+                      type="file"
+                      accept=".xlsx,.xls"
+                      style={{ display: 'none' }}
+                      onChange={handleCsrCatalogFileChange}
+                    />
+                    <button
+                      onClick={() => csrCatalogFileRef.current?.click()}
+                      className="btn btn-secondary"
+                      disabled={csrCatalogImporting || csrMappingRunning || isProjectCompleted || activeDomain.status === 'running'}
+                      title={t("导入固定 CSR 目录 xlsx（列示例：需求编号 / 分类领域 / 需求描述）")}
+                      style={{ padding: '10px 20px' }}
+                    >
+                      <Upload size={16} />
+                      <span>{csrCatalogImporting ? t("导入中...") : t("导入固定 CSR 目录")}</span>
+                    </button>
+                    <button
+                      onClick={handleRunCsrMapping}
+                      className="btn btn-secondary"
+                      disabled={!csrStatus?.catalog_ready || csrMappingRunning || csrCatalogImporting || isProjectCompleted || activeDomain.status === 'running'}
+                      title={t("把本域控 TARA 需求映射到固定 CSR 目录（会调用大模型，可能耗时）")}
+                      style={{ padding: '10px 20px' }}
+                    >
+                      <Play size={16} />
+                      <span>{csrMappingRunning ? t("映射中...") : t("执行 TARA→CSR 映射")}</span>
+                    </button>
                     <input
                       ref={oemFileRef}
                       type="file"
@@ -1167,7 +1273,8 @@ export default function Workbench({ setPage, setDomainId, setDiagramId, projectI
                     <button
                       onClick={handleMergeRequirements}
                       className="btn btn-primary"
-                      disabled={merging || isProjectCompleted || activeDomain.status === 'running' || customerReqCount === 0}
+                      disabled={merging || isProjectCompleted || activeDomain.status === 'running' || customerReqCount === 0 || !csrStatus?.ready}
+                      title={csrStatus?.ready ? t("合并 OEM 需求与固定 CSR 目录") : t("请先导入固定 CSR 目录并执行 TARA→CSR 映射")}
                       style={{ padding: '10px 20px' }}
                     >
                       <Merge size={16} />
@@ -1184,16 +1291,16 @@ export default function Workbench({ setPage, setDomainId, setDiagramId, projectI
                     </button>
                   </div>
                 </div>
-                {mergeMsg && (
-                  <div style={{
+                {[csrMsg, mergeMsg].filter(Boolean).map((msg, index) => (
+                  <div key={`${msg.type}-${index}`} style={{
                     marginTop: '8px',
                     fontSize: '13px',
-                    color: mergeMsg.type === 'error' ? '#e11d48' : 'var(--success)',
+                    color: msg.type === 'error' ? '#e11d48' : 'var(--success)',
                     textAlign: 'right',
                   }}>
-                    {mergeMsg.text}
+                    {msg.text}
                   </div>
-                )}
+                ))}
               </div>
               )}
             </div>

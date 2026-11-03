@@ -182,6 +182,13 @@ def _catalog_payload(catalog: Sequence[dict]) -> List[dict]:
 
 
 def _mapping_prompt(source_label: str = "TARA", allow_conflict: bool = False) -> str:
+    conflict_rule = (
+        f"   - conflict：{source_label} 需求与目录 CSR 针对同一对象/动作/条件给出互斥要求"
+        "（例如一方要求“必须禁用调试口”，另一方要求“经授权可启用”）；"
+        "此时 target_csr_ids 必须包含冲突的 CSR，conflict_note 必须写明矛盾点。\n"
+        if allow_conflict
+        else ""
+    )
     return f"""你是汽车网络安全需求映射专家。下面给出一个固定的 CSR 目录和一批 {source_label} 信息安全需求。
 你的任务不是改写或生成 CSR，而是判断每条 {source_label} 需求能被目录中的哪些 CSR 覆盖。
 
@@ -192,8 +199,7 @@ def _mapping_prompt(source_label: str = "TARA", allow_conflict: bool = False) ->
    - full：目录 CSR 完整覆盖该 {source_label} 需求；
    - partial：只覆盖一部分，必须在 missing_aspect 写清缺什么；
    - gap：目录中没有能覆盖它的 CSR，target_csr_ids 必须为空数组；
-   - conflict：双方针对同一对象/动作/条件给出互斥要求（仅 OEM 映射允许）；此时 target_csr_ids 必须包含冲突的 CSR，conflict_note 必须写明矛盾点。
-4. 不同动作、不同保护对象、不同适用条件不能强行映射到同一条 CSR；不确定时用 partial 或 gap，不要硬凑。
+{conflict_rule}4. 不同动作、不同保护对象、不同适用条件不能强行映射到同一条 CSR；不确定时用 partial 或 gap，不要硬凑。
 5. 必须为输入中的每一条需求 ID（JSON 字段名 tara_id）返回且只返回一条记录；该 ID 必须原样返回。
 6. confidence 为 0 到 1 的小数；rationale 用一两句话说明依据。
 7. 只输出 JSON，不要输出 Markdown。
@@ -559,6 +565,7 @@ def persist_mappings(
             confidence=float(row.get("confidence") or 0.0),
             rationale=row.get("rationale") or "",
             missing_aspect=row.get("missing_aspect") or "",
+            conflict_note=row.get("conflict_note") or "",
             needs_review=bool(row.get("needs_review")),
         ))
     db.commit()
@@ -619,6 +626,9 @@ def build_mapping_report_data(
         if not matched:
             mapping_status = "catalog_unmapped"
             needs_review = False
+        elif "conflict" in statuses:
+            mapping_status = "conflict"
+            needs_review = True
         elif "partial" in statuses:
             mapping_status = "partial"
             needs_review = True
@@ -692,6 +702,8 @@ def build_mapping_report_data(
             "missing_aspect": row.missing_aspect or "",
             "needs_review": "Yes" if row.needs_review else "No",
             "tara_text": row.tara_text or "",
+            "conflict_note": row.conflict_note or "",
+            "target_csr_text": catalog_by_id.get(row.target_csr_id, {}).get("description", ""),
         }
         for row in mappings
     ]
@@ -710,6 +722,8 @@ def build_mapping_report_data(
         has_target = any(row.target_csr_id for row in tara_rows)
         if "error" in types:
             tara_status[tara_id] = "error"
+        elif "conflict" in types:
+            tara_status[tara_id] = "conflict"
         elif not has_target:
             tara_status[tara_id] = "gap"
         elif "partial" in types:
@@ -720,11 +734,14 @@ def build_mapping_report_data(
     summary = {
         "input_count": len(by_tara_rows),
         "mapping_rows": len(mappings),
-        "mapped_count": sum(1 for value in tara_status.values() if value in {"full", "partial"}),
+        "mapped_count": sum(
+            1 for value in tara_status.values() if value in {"full", "partial", "conflict"}
+        ),
         "full_count": sum(1 for value in tara_status.values() if value == "full"),
         "partial_count": sum(1 for value in tara_status.values() if value == "partial"),
         "gap_count": sum(1 for value in tara_status.values() if value == "gap"),
         "error_count": sum(1 for value in tara_status.values() if value == "error"),
+        "conflict_count": sum(1 for value in tara_status.values() if value == "conflict"),
         "target_covered_count": len(by_target),
         "catalog_count": len(catalog),
         "catalog_unmapped_count": sum(1 for row in csr_rows if row["mapping_status"] == "catalog_unmapped"),
@@ -738,6 +755,10 @@ def build_mapping_report_data(
     return {
         "csr_rows": csr_rows,
         "mapping_details": mapping_details,
+        "conflicts": [
+            detail for detail in mapping_details
+            if detail["match_type"] == "conflict"
+        ],
         "unmapped": unmapped,
         "summary": summary,
         "tara_to_targets": _build_tara_to_targets(

@@ -65,6 +65,62 @@ export async function fetchMergedRequirements(domainId) {
   return res.data;
 }
 
+// ---------------------------------------------------------------------------
+// 固定 CSR 目录 & TARA→固定 CSR 映射（合并需求的前置条件）
+// ---------------------------------------------------------------------------
+
+/** 查询当前生效的固定 CSR 目录 */
+export async function fetchCsrCatalog() {
+  const res = await axios.get(`${API_BASE}/csr-catalog`, { headers: getHeaders() });
+  return res.data;
+}
+
+/** 导入固定 CSR 目录 xlsx；相同内容会复用已有版本 */
+export async function importCsrCatalog(file, { sheetName = null, activate = true } = {}) {
+  const form = new FormData();
+  form.append('file', file);
+  if (sheetName) form.append('sheet_name', sheetName);
+  form.append('activate', activate ? 'true' : 'false');
+  const res = await axios.post(`${API_BASE}/csr-catalog/import`, form, { headers: getHeaders() });
+  return res.data;
+}
+
+/** 列出所有固定 CSR 目录版本 */
+export async function fetchCsrCatalogVersions() {
+  const res = await axios.get(`${API_BASE}/csr-catalog/versions`, { headers: getHeaders() });
+  return res.data;
+}
+
+/** 激活某个固定 CSR 目录版本 */
+export async function activateCsrCatalogVersion(versionId) {
+  const res = await axios.post(
+    `${API_BASE}/csr-catalog/versions/${versionId}/activate`,
+    null,
+    { headers: getHeaders() }
+  );
+  return res.data;
+}
+
+/** 合并前置状态：目录是否导入、当前 run 是否已有 TARA→固定 CSR 映射 */
+export async function fetchCsrMappingStatus(domainId) {
+  const res = await axios.get(`${API_BASE}/domains/${domainId}/csr-mapping/status`, {
+    headers: getHeaders(),
+  });
+  return res.data;
+}
+
+/** 执行 TARA→固定 CSR 映射（调用大模型，可能耗时数十秒到数分钟） */
+export async function runCsrMapping(domainId, { limit = null } = {}) {
+  const params = {};
+  if (limit) params.limit = limit;
+  const res = await axios.post(`${API_BASE}/domains/${domainId}/csr-mapping/run`, null, {
+    params,
+    headers: getHeaders(),
+    timeout: 0,
+  });
+  return res.data;
+}
+
 /** 下载最终合并需求 Excel（Merged_Requirements sheet） */
 export async function exportMergedRequirements(domainId) {
   const res = await axios.get(`${API_BASE}/reports/domains/${domainId}/export`, {

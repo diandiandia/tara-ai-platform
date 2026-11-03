@@ -585,7 +585,11 @@ def merge_oem_requirements_with_fixed_csrs(
     version = get_active_catalog_version(db)
     catalog = get_active_catalog(db)
     if version is None or not catalog:
-        raise ValueError("请先导入固定 CSR 目录")
+        raise ValueError(
+            "请先导入固定 CSR 目录：在工作台「固定 CSR 目录」处上传目录 xlsx"
+            "（列示例：需求编号 / 分类领域 / 需求描述），再点击「执行 TARA→CSR 映射」，"
+            "最后点击「合并需求」。"
+        )
 
     tara_rows = (
         db.query(TaraCsrMapping)
@@ -597,7 +601,10 @@ def merge_oem_requirements_with_fixed_csrs(
         .all()
     )
     if not tara_rows:
-        raise ValueError("该域控/run 还没有 TARA→固定 CSR 映射结果，请先执行映射")
+        raise ValueError(
+            "该域控/run 还没有 TARA→固定 CSR 映射结果：请先点击「执行 TARA→CSR 映射」，"
+            "映射完成后再点击「合并需求」。"
+        )
 
     settings_obj = db.query(SystemSettings).first()
     settings = None

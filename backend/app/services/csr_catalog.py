@@ -56,11 +56,28 @@ def parse_csr_catalog_xlsx(path: str, sheet_name: Optional[str] = None) -> dict:
 
     wb = load_workbook(path, data_only=True, read_only=True)
     try:
+        # 显式指定 sheet 时优先用它；否则在全部 sheet 中找第一个表头能识别出
+        # 「需求编号 + 需求描述」的 sheet，避免误用封面/变更记录页。
         if sheet_name and sheet_name in wb.sheetnames:
-            ws = wb[sheet_name]
+            candidates = [sheet_name]
         else:
-            ws = wb[wb.sheetnames[0]]
-            sheet_name = ws.title
+            candidates = list(wb.sheetnames)
+
+        ws = None
+        for title in candidates:
+            probe = wb[title]
+            probe_rows = [
+                list(row) for row in probe.iter_rows(values_only=True, max_row=3)
+            ]
+            header = [_clean(x) for x in (probe_rows[0] if probe_rows else [])]
+            columns = _find_columns(header)
+            if {"csr_id", "description"}.issubset(columns):
+                ws = probe
+                sheet_name = title
+                break
+        if ws is None:
+            sheet_name = sheet_name if sheet_name in wb.sheetnames else wb.sheetnames[0]
+            ws = wb[sheet_name]
 
         raw_rows = [list(row) for row in ws.iter_rows(values_only=True)]
     finally:

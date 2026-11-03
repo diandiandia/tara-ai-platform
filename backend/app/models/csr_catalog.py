@@ -96,5 +96,6 @@ class TaraCsrMapping(Base):
     confidence = Column(Float, nullable=False, default=0.0)
     rationale = Column(Text, nullable=True)
     missing_aspect = Column(Text, nullable=True)
+    conflict_note = Column(Text, nullable=True)  # TARA 需求与固定 CSR 互斥时的冲突说明
     needs_review = Column(Boolean, nullable=False, default=False)
     created_at = Column(DateTime, server_default=func.now())

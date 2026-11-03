@@ -122,6 +122,46 @@ def restore(backup_path):
     except Exception as e:
         print(f"❌ 恢复失败: {e}")
 
+def migrate():
+    """为已有数据库补齐模型新增的列（轻量幂等迁移）。
+
+    新装环境用 init-db 建全表即可；已有库在升级代码后执行本命令，
+    避免因为缺少新列（如 tara_csr_mapping.conflict_note）而报错。
+    """
+    from sqlalchemy import inspect, text
+
+    Base.metadata.create_all(bind=engine)
+    inspector = inspect(engine)
+    existing_tables = set(inspector.get_table_names())
+    added = 0
+    for table in Base.metadata.sorted_tables:
+        if table.name not in existing_tables:
+            continue
+        db_columns = {col["name"] for col in inspector.get_columns(table.name)}
+        for column in table.columns:
+            if column.name in db_columns or column.primary_key:
+                continue
+            if not column.nullable and column.server_default is None:
+                print(f"⚠️ 跳过 {table.name}.{column.name}（NOT NULL 且无默认值，需手工迁移）")
+                continue
+            ddl_type = column.type.compile(dialect=engine.dialect)
+            try:
+                with engine.begin() as conn:
+                    conn.execute(text(
+                        f'ALTER TABLE "{table.name}" ADD COLUMN "{column.name}" {ddl_type}'
+                    ))
+            except Exception as exc:  # noqa: BLE001 - report and continue
+                print(f"⚠️ {table.name}.{column.name} 迁移失败: {exc}")
+                continue
+            print(f"-> {table.name}.{column.name} 已补齐 ({ddl_type})")
+            added += 1
+
+    if added:
+        print(f"🎉 迁移完成，共补齐 {added} 个字段。")
+    else:
+        print("数据库结构已是最新，无需迁移。")
+
+
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="TARA AI Platform CLI 管理工具")
     subparsers = parser.add_subparsers(dest="command", help="子命令")
@@ -133,6 +173,9 @@ if __name__ == "__main__":
     parser_admin = subparsers.add_parser("create-admin", help="创建初始管理员账号")
     parser_admin.add_argument("--user", required=True, help="管理员用户名")
     parser_admin.add_argument("--pwd", required=True, help="管理员密码")
+
+    # migrate
+    subparsers.add_parser("migrate", help="为已有数据库补齐模型新增字段（幂等）")
 
     # backup
     subparsers.add_parser("backup", help="一键备份数据库与报告文件")
@@ -147,6 +190,8 @@ if __name__ == "__main__":
         init_db()
     elif args.command == "create-admin":
         create_admin(args.user, args.pwd)
+    elif args.command == "migrate":
+        migrate()
     elif args.command == "backup":
         backup()
     elif args.command == "restore":

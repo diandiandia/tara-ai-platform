@@ -10,7 +10,7 @@ from sqlalchemy.orm import Session
 from app.api.auth import get_current_user
 from app.api.project import check_project_active
 from app.core.database import get_db
-from app.models.csr_catalog import CsrCatalogVersion
+from app.models.csr_catalog import CsrCatalogVersion, TaraCsrMapping
 from app.models.domain import Domain
 from app.models.user import User
 from app.services.csr_catalog import (
@@ -171,6 +171,7 @@ def run_csr_mapping(
             settings,
             batch_size=batch_size,
             max_workers=max_workers,
+            allow_conflict=True,
         )
     except Exception as exc:
         raise HTTPException(status_code=500, detail=f"CSR 映射失败: {exc}")
@@ -196,6 +197,47 @@ def run_csr_mapping(
         "persisted_rows": saved,
         "summary": mapped["summary"],
         "rows": mapped["rows"] if not persist else [],
+    }
+
+
+@router.get("/domains/{domain_id}/csr-mapping/status")
+def csr_mapping_status(
+    domain_id: int,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """合并需求的前置条件：固定 CSR 目录是否已导入、当前 run 是否已有映射。"""
+    from app.models.tara_run import TaraRun
+
+    _get_domain(domain_id, db)
+    version = get_active_catalog_version(db)
+    run = (
+        db.query(TaraRun)
+        .filter(TaraRun.domain_id == domain_id, TaraRun.status == "completed")
+        .order_by(TaraRun.id.desc())
+        .first()
+    )
+    mapping_rows = 0
+    if version is not None and run is not None:
+        mapping_rows = (
+            db.query(TaraCsrMapping)
+            .filter(
+                TaraCsrMapping.domain_id == domain_id,
+                TaraCsrMapping.run_id == run.id,
+                TaraCsrMapping.catalog_version == version.version,
+            )
+            .count()
+        )
+    catalog_ready = bool(version is not None and version.row_count)
+    return {
+        "domain_id": domain_id,
+        "catalog_version": version.version if version else None,
+        "catalog_row_count": version.row_count if version else 0,
+        "catalog_ready": catalog_ready,
+        "run_id": run.id if run else None,
+        "mapping_rows": mapping_rows,
+        "mapping_ready": mapping_rows > 0,
+        "ready": bool(catalog_ready and mapping_rows > 0),
     }
 
 

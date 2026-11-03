@@ -93,6 +93,13 @@ def import_customer_requirements(
     if not parsed:
         raise HTTPException(status_code=400, detail="未从上传文件中解析到客户需求行")
 
+    # 同一需求编号可能因重复导入/多 sheet 被解析多次，按编号去重（保留最后一条），
+    # 否则下游 OEM 原子化与合并会拿到成倍的重复需求。
+    deduped = {}
+    for row in parsed:
+        deduped[row["external_id"]] = row
+    parsed = list(deduped.values())
+
     if replace:
         db.query(CustomerRequirement).filter(CustomerRequirement.project_id == project_id).delete(
             synchronize_session=False
