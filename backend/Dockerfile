@@ -7,6 +7,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     build-essential \
     libffi-dev \
     sqlite3 \
+    tzdata \
     && rm -rf /var/lib/apt/lists/*
 
 # Copy and install python requirements
