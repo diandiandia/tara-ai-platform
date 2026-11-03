@@ -147,6 +147,9 @@ echo -e "  ✓ 后端 Python 依赖包全部安装完成！"
 echo -e "  * 正在初始化 SQLite 数据库及数据表结构 (manage.py init-db)..."
 python manage.py init-db
 
+echo -e "  * 正在导入固定 CSR 目录 (backend/fixtures/csr_new.xlsx，已存在则跳过)..."
+python manage.py import-csr-catalog --if-missing || true
+
 echo -e "  * 正在创建/确认默认管理员账号 (admin / Admin123)..."
 python manage.py create-admin --user admin --pwd Admin123
 

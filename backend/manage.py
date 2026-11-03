@@ -162,6 +162,44 @@ def migrate():
         print("数据库结构已是最新，无需迁移。")
 
 
+FIXTURE_CATALOG = os.path.join(
+    os.path.dirname(os.path.abspath(__file__)), "fixtures", "csr_new.xlsx"
+)
+
+
+def import_csr_catalog_command(file_path, sheet_name=None, activate=True, if_missing=False):
+    """导入固定 CSR 目录 xlsx；相同内容会复用已有版本。"""
+    from app.services.csr_catalog import get_active_catalog_version, import_csr_catalog
+
+    if not file_path or not os.path.exists(file_path):
+        print(f"❌ 固定 CSR 目录文件不存在: {file_path}")
+        raise SystemExit(1)
+
+    db = SessionLocal()
+    try:
+        if if_missing:
+            active = get_active_catalog_version(db)
+            if active is not None:
+                print(
+                    f"固定 CSR 目录已存在（{active.version}，"
+                    f"{active.row_count} 条），跳过导入。"
+                )
+                return
+        try:
+            result = import_csr_catalog(
+                db, file_path, sheet_name=sheet_name, activate=activate
+            )
+        except Exception as exc:  # noqa: BLE001 - surface the reason and exit non-zero
+            print(f"❌ 固定 CSR 目录导入失败: {exc}")
+            raise SystemExit(1)
+        print(
+            f"✅ 固定 CSR 目录已导入: {result['version']} "
+            f"({result['row_count']} 条, sheet={result['sheet_name']}, active={result['active']})"
+        )
+    finally:
+        db.close()
+
+
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="TARA AI Platform CLI 管理工具")
     subparsers = parser.add_subparsers(dest="command", help="子命令")
@@ -176,6 +214,20 @@ if __name__ == "__main__":
 
     # migrate
     subparsers.add_parser("migrate", help="为已有数据库补齐模型新增字段（幂等）")
+
+    # import-csr-catalog
+    parser_catalog = subparsers.add_parser(
+        "import-csr-catalog", help="导入固定 CSR 目录 xlsx（同内容自动复用版本）"
+    )
+    parser_catalog.add_argument(
+        "--file", default=FIXTURE_CATALOG,
+        help="目录 xlsx 路径（默认 backend/fixtures/csr_new.xlsx）",
+    )
+    parser_catalog.add_argument("--sheet", default=None, help="指定 sheet（默认自动识别）")
+    parser_catalog.add_argument("--no-activate", action="store_true", help="只导入不激活")
+    parser_catalog.add_argument(
+        "--if-missing", action="store_true", help="已有生效目录时跳过"
+    )
 
     # backup
     subparsers.add_parser("backup", help="一键备份数据库与报告文件")
@@ -192,6 +244,10 @@ if __name__ == "__main__":
         create_admin(args.user, args.pwd)
     elif args.command == "migrate":
         migrate()
+    elif args.command == "import-csr-catalog":
+        import_csr_catalog_command(
+            args.file, args.sheet, not args.no_activate, args.if_missing
+        )
     elif args.command == "backup":
         backup()
     elif args.command == "restore":

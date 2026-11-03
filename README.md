@@ -72,6 +72,14 @@ chmod +x *.sh
 - 重启所有服务: `./restart.sh`
 - 快速拉起服务: `./start.sh`
 
+**固定 CSR 目录**：仓库自带 `backend/fixtures/csr_new.xlsx`（当前 119 条）。`./deploy.sh`、`./start.sh` 与容器启动时都会执行 `manage.py import-csr-catalog --if-missing` 自动导入；升级代码后如未生效，可手动执行：
+
+```bash
+cd backend && ./venv/bin/python manage.py import-csr-catalog --if-missing
+```
+
+如需更换目录：登录后在「系统配置 → 固定 CSR 目录」导入新的 xlsx（相同内容会复用版本），再重跑一次 TARA 分析以生成映射。
+
 ---
 
 ### 方式二：Docker Compose 启动 (推荐)
@@ -81,6 +89,7 @@ docker-compose up -d --build
 ```
 - **FastAPI 后端 API**: `http://localhost:8000`
 - **React 前端 Web 平台**: `http://localhost:3000`
+- 启动时会自动执行数据库迁移，并从 `backend/fixtures/csr_new.xlsx` 导入固定 CSR 目录（**已有生效目录则跳过**，不会覆盖你手工切换的版本）。
 
 ---
 

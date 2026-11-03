@@ -43,6 +43,9 @@ fi
 
 # 启动后端
 cd "$PROJECT_ROOT/backend"
+# 升级后补齐模型新增字段，并确保固定 CSR 目录存在（已存在则跳过）
+./venv/bin/python manage.py migrate
+./venv/bin/python manage.py import-csr-catalog --if-missing || true
 nohup ./venv/bin/python -m uvicorn app.main:app --host 0.0.0.0 --port 8000 > "$PROJECT_ROOT/logs/backend.log" 2>&1 &
 echo $! > "$PROJECT_ROOT/logs/backend.pid"
 echo -e "  ✓ 后端 API 已启动 (PID: $(cat "$PROJECT_ROOT/logs/backend.pid"))"
