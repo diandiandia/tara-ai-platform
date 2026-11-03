@@ -195,6 +195,8 @@ def _mapping_prompt(source_label: str = "TARA", allow_conflict: bool = False) ->
 【规则】
 1. 只能使用目录中存在的 csr_id，严禁编造、改写或新增 CSR。
 2. 一条 {source_label} 需求可以映射到 0 条、1 条或多条 CSR；多条 {source_label} 需求也可以映射到同一条 CSR。
+   当一条需求需要多条 CSR 才能完整覆盖时，target_csr_ids 返回这组 CSR，match_type 用 full（联合覆盖）；
+   只有确实缺少某个方面时才用 partial。source_text 是需求原文，判定时请结合原文理解上下文与代词。
 3. match_type 只能是：
    - full：目录 CSR 完整覆盖该 {source_label} 需求；
    - partial：只覆盖一部分，必须在 missing_aspect 写清缺什么；
@@ -381,6 +383,7 @@ def _call_mapping_batch(
                 "asset_description": item.get("asset_description") or "",
                 "title": item.get("title") or "",
                 "text": item.get("text") or "",
+                "source_text": item.get("source_text") or "",
                 "requirement_scope": item.get("requirement_scope") or "",
                 "owner": item.get("owner") or "",
                 "allocated_to": item.get("allocated_to") or "",

@@ -60,8 +60,12 @@ def _atomization_prompt() -> str:
 2. 复合句中出现“并/且/以及/同时”连接不同动作、不同对象或不同结果时，必须拆条。
 3. 不同动作必须分开：认证、授权、审计、拒绝、记录、告警、证据保留、资源限制、会话终止、数据遮蔽、数据排除、默认禁用与临时启用。
 4. 保留 OEM 原文的语言和含义；不得新增、改写、概括或遗漏；不要翻译。
-5. 每条原子的 source_customer_ids 必须来自输入中对应 OEM 需求的 external_id；不得编造。
-6. 输入中的每一个 external_id 必须至少出现在一条原子中。
+5. 每条原子的 statement 必须是完整陈述：要有明确的主体（谁）、对象（对什么）和动作/结果；
+   原文中的代词（其/该/它）必须替换为具体对象，例如“防止其被获取”必须写成
+   “防止密码文件被未授权获取”，不得输出这种没有对象的碎片。
+6. 拆分并列动作时，每条原子都要补全主体与对象，不能只保留“防止…”“应…”这类片段。
+7. 每条原子的 source_customer_ids 必须来自输入中对应 OEM 需求的 external_id；不得编造。
+8. 输入中的每一个 external_id 必须至少出现在一条原子中。
 7. 只输出 JSON，不要输出 Markdown。
 
 【输出 JSON】
@@ -91,6 +95,7 @@ def _fallback_atoms_for_requirements(customer_reqs: Sequence[dict]) -> List[dict
             "source_customer_ids": source_ids,
             "subject": item.get("subject") or "",
             "statement": statement,
+            "source_text": statement,
             "category": item.get("category") or "",
             "section": item.get("section") or "",
         })
@@ -99,6 +104,11 @@ def _fallback_atoms_for_requirements(customer_reqs: Sequence[dict]) -> List[dict
 
 def _validate_atoms(batch: Sequence[dict], parsed: dict) -> Tuple[List[dict], Set[str]]:
     input_ids = {str(item["external_id"]) for item in batch if item.get("external_id")}
+    text_by_id = {
+        str(item["external_id"]): str(item.get("text") or "")
+        for item in batch
+        if item.get("external_id")
+    }
     raw_atoms = parsed.get("atoms") or parsed.get("requirements") or []
     atoms: List[dict] = []
     covered: Set[str] = set()
@@ -113,10 +123,14 @@ def _validate_atoms(batch: Sequence[dict], parsed: dict) -> Tuple[List[dict], Se
         if not source_ids or not statement:
             continue
         covered.update(source_ids)
+        source_text = "；".join(
+            dict.fromkeys(text_by_id[sid] for sid in source_ids if text_by_id.get(sid))
+        )
         atoms.append({
             "source_customer_ids": source_ids,
             "subject": str(item.get("subject") or "").strip(),
             "statement": statement,
+            "source_text": source_text,
             "category": str(item.get("category") or "").strip(),
             "section": str(item.get("section") or "").strip(),
         })
@@ -193,6 +207,11 @@ def _dedupe_atoms(atoms: Sequence[dict]) -> List[dict]:
         if len(atom["statement"]) > len(matched["statement"]):
             matched["statement"] = atom["statement"]
             matched["subject"] = atom.get("subject") or matched.get("subject") or ""
+        source_text = atom.get("source_text") or ""
+        if source_text and source_text not in (matched.get("source_text") or ""):
+            matched["source_text"] = "；".join(
+                dict.fromkeys(filter(None, [matched.get("source_text"), source_text]))
+            )
     for atom in merged:
         atom["source_customer_ids"] = sorted(atom["source_customer_ids"])
         atom["atom_id"] = _content_hash(
@@ -242,6 +261,7 @@ def map_oem_atoms_to_catalog(
             "tara_req_id": atom["atom_id"],
             "source_tara_ids": list(atom["source_customer_ids"]),
             "text": atom["statement"],
+            "source_text": atom.get("source_text") or "",
             "title": atom.get("subject") or "",
             "asset_id": 0,
             "asset_name": "OEM",
@@ -279,11 +299,205 @@ def _tara_source_ids(row) -> List[str]:
     return ids
 
 
+def _coverage_verification_prompt() -> str:
+    return """你是汽车网络安全需求评审专家。下面给出若干条 OEM 信息安全需求、它们的原子需求，
+以及每个原子已映射到的固定 CSR（候选）。
+
+请判断：**这些候选 CSR 的联合**是否完整覆盖了该 OEM 需求（注意是联合覆盖，不是单条覆盖）。
+
+【判定标准】
+1. full：所有原子需求都能由候选 CSR 覆盖（可以是一条或多条联合），没有遗漏。
+2. partial：候选覆盖了大部分内容，但仍缺少某个具体方面；在 missing_aspect 写清缺什么。
+3. gap：候选为空，或候选与需求无关。
+4. target_csr_ids 只能从候选里选，不得引入候选之外的 ID；full 时至少给出一条。
+5. rationale 用一两句话说明依据。
+6. 只输出 JSON，不要输出 Markdown。
+
+【输出 JSON】
+{
+  "requirements": [
+    {
+      "requirement_id": "OEM-REQ-001",
+      "coverage": "full",
+      "target_csr_ids": ["CS-HW-001", "CS-SYS-010"],
+      "missing_aspect": "",
+      "rationale": "……"
+    }
+  ]
+}"""
+
+
+def _heuristic_requirement_coverage(
+    customer_reqs: Sequence[dict],
+    atoms: Sequence[dict],
+    oem_mapping: dict,
+) -> dict:
+    """Fallback when the LLM is unavailable: strict atom-level aggregation."""
+    rows_by_atom: Dict[str, List[dict]] = defaultdict(list)
+    for row in oem_mapping.get("rows") or []:
+        rows_by_atom[str(row.get("tara_req_id") or "")].append(row)
+
+    atoms_by_customer: Dict[str, List[dict]] = defaultdict(list)
+    for atom in atoms:
+        for cid in atom["source_customer_ids"]:
+            atoms_by_customer[cid].append(atom)
+
+    result = {}
+    for req in customer_reqs:
+        cid = str(req.get("external_id") or "")
+        if not cid:
+            continue
+        targets: List[str] = []
+        missing: List[str] = []
+        for atom in atoms_by_customer.get(cid, []):
+            for row in rows_by_atom.get(atom["atom_id"], []):
+                target = str(row.get("target_csr_id") or "").strip()
+                if target and target not in targets:
+                    targets.append(target)
+                gap = str(row.get("missing_aspect") or "").strip()
+                if gap and gap not in missing:
+                    missing.append(gap)
+        if not atoms_by_customer.get(cid):
+            coverage = "gap"
+        elif not targets:
+            coverage = "gap"
+        elif any(str(row.get("match_type")) == "conflict"
+                 for atom in atoms_by_customer.get(cid, [])
+                 for row in rows_by_atom.get(atom["atom_id"], [])):
+            coverage = "partial"
+        elif missing:
+            coverage = "partial"
+        else:
+            coverage = "full"
+        result[cid] = {
+            "coverage": coverage,
+            "target_csr_ids": targets,
+            "missing_aspect": "；".join(missing),
+            "rationale": "规则聚合（未启用大模型复核）",
+        }
+    return result
+
+
+def verify_oem_requirement_coverage(
+    customer_reqs: Sequence[dict],
+    atoms: Sequence[dict],
+    oem_mapping: dict,
+    catalog: Sequence[dict],
+    settings: Optional[dict],
+    batch_size: int = 8,
+) -> dict:
+    """Requirement-level check: can the mapped CSRs jointly cover each OEM requirement?
+
+    Atom-level mapping is deliberately allowed to be partial; this pass combines the
+    mapped CSRs per OEM requirement so a requirement covered by several CSRs is still
+    treated as covered (per the agreed rule).
+    """
+    if not settings:
+        return _heuristic_requirement_coverage(customer_reqs, atoms, oem_mapping)
+
+    catalog_by_id = {row["csr_id"]: row for row in catalog}
+    rows_by_atom: Dict[str, List[dict]] = defaultdict(list)
+    for row in oem_mapping.get("rows") or []:
+        rows_by_atom[str(row.get("tara_req_id") or "")].append(row)
+    atoms_by_customer: Dict[str, List[dict]] = defaultdict(list)
+    for atom in atoms:
+        for cid in atom["source_customer_ids"]:
+            atoms_by_customer[cid].append(atom)
+
+    items = []
+    for req in customer_reqs:
+        cid = str(req.get("external_id") or "")
+        if not cid:
+            continue
+        atom_items = []
+        candidates: List[str] = []
+        for atom in atoms_by_customer.get(cid, []):
+            atom_rows = rows_by_atom.get(atom["atom_id"], [])
+            targets = [
+                str(r.get("target_csr_id") or "") for r in atom_rows
+                if r.get("target_csr_id")
+            ]
+            for target in targets:
+                if target not in candidates:
+                    candidates.append(target)
+            atom_items.append({
+                "atom": atom["statement"],
+                "match_type": (atom_rows[0].get("match_type") if atom_rows else "gap"),
+                "target_csr_ids": targets,
+                "missing_aspect": "；".join(
+                    str(r.get("missing_aspect") or "").strip()
+                    for r in atom_rows if str(r.get("missing_aspect") or "").strip()
+                ),
+            })
+        items.append({
+            "requirement_id": cid,
+            "text": req.get("text") or "",
+            "atoms": atom_items,
+            "candidates": [
+                {
+                    "csr_id": cid2,
+                    "name": catalog_by_id.get(cid2, {}).get("name", ""),
+                    "description": catalog_by_id.get(cid2, {}).get("description", ""),
+                }
+                for cid2 in candidates
+            ],
+        })
+
+    result: Dict[str, dict] = {}
+    for start in range(0, len(items), batch_size):
+        batch = items[start:start + batch_size]
+        payload = {"requirements": batch}
+        try:
+            parsed = _call_llm_json(
+                settings, _coverage_verification_prompt(), payload, temperature=0.0
+            )
+        except Exception as exc:  # noqa: BLE001 - fall back per batch
+            print(f"[TARA-AI] OEM 需求级覆盖复核失败，使用规则兜底: {exc}")
+            fallback = _heuristic_requirement_coverage(
+                [{"external_id": item["requirement_id"], "text": item["text"]} for item in batch],
+                atoms,
+                oem_mapping,
+            )
+            result.update(fallback)
+            continue
+
+        by_id = {}
+        for entry in parsed.get("requirements") or []:
+            if isinstance(entry, dict):
+                rid = str(entry.get("requirement_id") or "").strip()
+                if rid:
+                    by_id[rid] = entry
+
+        for item in batch:
+            rid = item["requirement_id"]
+            entry = by_id.get(rid) or {}
+            coverage = str(entry.get("coverage") or "").strip().lower()
+            if coverage not in {"full", "partial", "gap"}:
+                coverage = "partial" if item["candidates"] else "gap"
+            candidate_ids = {c["csr_id"] for c in item["candidates"]}
+            targets = [
+                str(t).strip() for t in (entry.get("target_csr_ids") or [])
+                if str(t).strip() in candidate_ids or str(t).strip() in catalog_by_id
+            ]
+            if coverage == "full" and not targets:
+                coverage = "partial"
+            if not targets and coverage == "full":
+                coverage = "gap"
+            result[rid] = {
+                "coverage": coverage,
+                "target_csr_ids": targets,
+                "missing_aspect": str(entry.get("missing_aspect") or "").strip(),
+                "rationale": str(entry.get("rationale") or "").strip(),
+            }
+    return result
+
+
 def build_final_rows(
     catalog: Sequence[dict],
     tara_mapping_rows: Sequence,
     atoms: Sequence[dict],
     oem_mapping: dict,
+    requirement_coverage: Optional[dict] = None,
 ) -> Tuple[List[dict], List[dict], List[dict], dict]:
     """Build the final table: one row per fixed CSR, plus conflicts / OEM gaps.
 
@@ -327,6 +541,12 @@ def build_final_rows(
         elif target:
             oem_by_target[target].append((atom, row))
 
+    coverage_by_id = requirement_coverage or {}
+    covered_requirement_ids = {
+        cid for cid, info in coverage_by_id.items()
+        if str(info.get("coverage") or "").strip().lower() == "full"
+    }
+
     rows: List[dict] = []
     conflicts: List[dict] = []
     resolution_counts: Dict[str, int] = defaultdict(int)
@@ -347,7 +567,15 @@ def build_final_rows(
         )
 
         if has_oem:
-            all_full = all(str(row.get("match_type")) == "full" for _, row in oem_pairs)
+            if coverage_by_id:
+                # 需求级判定：该 CSR 关联的每条 OEM 需求若都已被（可能多条 CSR 联合）覆盖，
+                # 这一行就是 same；否则 partial。
+                oem_req_ids = {
+                    cid for atom, _row in oem_pairs for cid in atom["source_customer_ids"]
+                }
+                all_full = bool(oem_req_ids) and oem_req_ids <= covered_requirement_ids
+            else:
+                all_full = all(str(row.get("match_type")) == "full" for _, row in oem_pairs)
             resolution = "same" if all_full else "partial"
             needs_review = (
                 (not all_full)
@@ -449,6 +677,11 @@ def build_final_rows(
     # 有完整落点的原子已经作为来源写进对应的固定 CSR 行，不再重复。
     oem_unmapped: List[dict] = []
     for atom in atoms:
+        if coverage_by_id and atom["source_customer_ids"] and all(
+            cid in covered_requirement_ids for cid in atom["source_customer_ids"]
+        ):
+            # 需求级已判定为覆盖：即使单个原子是 partial，也不再列为未覆盖
+            continue
         atom_rows = oem_by_atom.get(atom["atom_id"], [])
         normal_rows = [row for row in atom_rows if str(row.get("match_type")) != "conflict"]
         conflict_rows = [row for row in atom_rows if str(row.get("match_type")) == "conflict"]
@@ -538,6 +771,16 @@ def build_final_rows(
         "oem_conflict_atom_count": sum(
             1 for item in oem_unmapped if item["status"] == "conflict"
         ),
+        "oem_requirement_count": len(coverage_by_id),
+        "oem_requirement_covered": len(covered_requirement_ids),
+        "oem_requirement_partial": sum(
+            1 for info in coverage_by_id.values()
+            if str(info.get("coverage") or "").strip().lower() == "partial"
+        ),
+        "oem_requirement_gap": sum(
+            1 for info in coverage_by_id.values()
+            if str(info.get("coverage") or "").strip().lower() == "gap"
+        ),
         "conflict_count": len(conflicts),
         "conflict_atom_count": len({item["oem_atom_id"] for item in conflicts}),
         "all_covered": (
@@ -601,11 +844,15 @@ def merge_oem_requirements_with_fixed_csrs(
         raise ValueError(f"OEM 原子化未覆盖客户需求: {atomized['missing_customer_ids']}")
 
     mapped = map_oem_atoms_to_catalog(atomized["atoms"], catalog, settings)
+    requirement_coverage = verify_oem_requirement_coverage(
+        customer_reqs, atomized["atoms"], mapped, catalog, settings
+    )
     rows, conflicts, oem_unmapped, report = build_final_rows(
         catalog,
         tara_rows,
         atomized["atoms"],
         mapped,
+        requirement_coverage=requirement_coverage,
     )
     report.update({
         "oem_input_count": atomized["input_count"],

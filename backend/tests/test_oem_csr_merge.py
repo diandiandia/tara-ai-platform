@@ -15,6 +15,7 @@ from app.models.project import Project
 from app.models.req_merge import MergedRequirement, MergedRequirementSource
 from app.models.tara_run import TaraRun
 from app.services.oem_csr_merge import (
+    _heuristic_requirement_coverage,
     atomize_oem_requirements,
     build_final_rows,
     collect_merge_conflict_rows,
@@ -22,6 +23,7 @@ from app.services.oem_csr_merge import (
     map_oem_atoms_to_catalog,
     persist_merge_conflicts,
     persist_oem_unmapped_requirements,
+    verify_oem_requirement_coverage,
 )
 from app.services.req_merge import persist_merged_requirements
 from app.api.report import collect_merged_requirement_rows
@@ -198,6 +200,72 @@ class FinalRowsTests(unittest.TestCase):
         finally:
             db.close()
             engine.dispose()
+
+    def test_combined_coverage_marks_csr_rows_as_same(self):
+        # 两条原子各自只被部分覆盖，但联合覆盖了同一条 OEM 需求
+        oem_mapping = {"rows": [
+            {"tara_req_id": "A1", "source_tara_ids": ["OEM1"], "target_csr_id": "CS-A", "match_type": "partial", "confidence": 0.8, "rationale": "part-a", "missing_aspect": "缺少方面1"},
+            {"tara_req_id": "A2", "source_tara_ids": ["OEM1"], "target_csr_id": "CS-B", "match_type": "partial", "confidence": 0.7, "rationale": "part-b", "missing_aspect": "缺少方面2"},
+        ]}
+        atoms = [
+            {"atom_id": "A1", "source_customer_ids": ["OEM1"], "subject": "S1", "statement": "OEM1 前半", "category": "C", "section": "S"},
+            {"atom_id": "A2", "source_customer_ids": ["OEM1"], "subject": "S2", "statement": "OEM1 后半", "category": "C", "section": "S"},
+        ]
+        coverage = {
+            "OEM1": {
+                "coverage": "full",
+                "target_csr_ids": ["CS-A", "CS-B"],
+                "missing_aspect": "",
+                "rationale": "联合覆盖",
+            }
+        }
+        rows, conflicts, oem_unmapped, report = build_final_rows(
+            _catalog(), _tara_rows(), atoms, oem_mapping, requirement_coverage=coverage
+        )
+        by_id = {row["final_id"]: row for row in rows}
+        self.assertEqual(by_id["FCSR-CS-A"]["resolution"], "same")
+        self.assertEqual(by_id["FCSR-CS-B"]["resolution"], "same")
+        self.assertEqual(oem_unmapped, [])
+        self.assertEqual(report["oem_requirement_covered"], 1)
+        self.assertEqual(report["oem_requirement_partial"], 0)
+        self.assertTrue(report["all_covered"])
+
+    def test_heuristic_coverage_and_llm_verification(self):
+        atoms = [
+            {"atom_id": "A1", "source_customer_ids": ["OEM1"], "subject": "S", "statement": "x"},
+            {"atom_id": "A3", "source_customer_ids": ["OEM3"], "subject": "S", "statement": "y"},
+        ]
+        oem_mapping = {"rows": [
+            {"tara_req_id": "A1", "target_csr_id": "CS-A", "match_type": "full", "missing_aspect": ""},
+            {"tara_req_id": "A3", "target_csr_id": "", "match_type": "gap", "missing_aspect": "目录缺失"},
+        ]}
+        customer_reqs = [
+            {"external_id": "OEM1", "text": "x"},
+            {"external_id": "OEM3", "text": "y"},
+        ]
+        heuristic = _heuristic_requirement_coverage(customer_reqs, atoms, oem_mapping)
+        self.assertEqual(heuristic["OEM1"]["coverage"], "full")
+        self.assertEqual(heuristic["OEM3"]["coverage"], "gap")
+
+        def fake_llm(settings, prompt, payload, temperature=None):
+            return {"requirements": [
+                {
+                    "requirement_id": item["requirement_id"],
+                    "coverage": "full" if item["requirement_id"] == "OEM1" else "gap",
+                    "target_csr_ids": item["candidates"] and ["CS-A"] or [],
+                    "missing_aspect": "" if item["requirement_id"] == "OEM1" else "目录缺失",
+                    "rationale": "ok",
+                }
+                for item in payload["requirements"]
+            ]}
+
+        with patch("app.services.oem_csr_merge._call_llm_json", side_effect=fake_llm):
+            result = verify_oem_requirement_coverage(
+                customer_reqs, atoms, oem_mapping, _catalog(), {"api_key": "x"}
+            )
+        self.assertEqual(result["OEM1"]["coverage"], "full")
+        self.assertEqual(result["OEM1"]["target_csr_ids"], ["CS-A"])
+        self.assertEqual(result["OEM3"]["coverage"], "gap")
 
     def test_oem_gaps_are_persisted_in_their_own_table(self):
         engine = create_engine("sqlite:///:memory:")
