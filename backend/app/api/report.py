@@ -1,8 +1,7 @@
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException
 from fastapi.responses import FileResponse
 from sqlalchemy.orm import Session
 from datetime import datetime
-import hashlib
 import os
 import re
 from typing import List
@@ -13,7 +12,6 @@ from app.core.database import get_db
 from app.api.auth import get_current_user
 from app.models.user import User
 from app.models.domain import Domain
-from app.models.project import Project
 from app.models.asset import Asset
 from app.models.tara_run import TaraRun
 from app.models.tara_step import TaraStep
@@ -543,11 +541,7 @@ def clean_major_category(domain_str: str) -> str:
 # -------------------------------------------------------------------------
 # ISO/SAE 21434 & UNECE R155 Concept-Phase Global CSR Synthesis Integration
 # -------------------------------------------------------------------------
-from app.services.csr_synthesis import (
-    DOMAIN_PREFIX_MAP,
-    MAJOR_ORDER,
-    get_or_synthesize_global_csrs
-)
+from app.services.csr_synthesis import get_or_synthesize_global_csrs
 
 def _apply_security_domain_correction(rows: list) -> list:
     """按控制机制纠正安全域，并为缺少功能分类的旧缓存补规则分类。"""

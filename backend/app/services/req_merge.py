@@ -14,7 +14,7 @@
 from __future__ import annotations
 
 import re
-from typing import List, Dict, Tuple, Set, Optional
+from typing import List
 
 import openpyxl
 
@@ -98,38 +98,6 @@ def preview_customer_excel(file_path: str, sheet_name: str = None) -> dict:
         "preview": preview,
         "row_count": max(ws.max_row - 1, 0),
     }
-
-
-def parse_tara_csr_excel(file_path: str, sheet_name: str = "TARA CSR") -> List[dict]:
-    """解析 TARA CSR sheet。"""
-    wb = openpyxl.load_workbook(file_path, data_only=True)
-    if sheet_name not in wb.sheetnames:
-        raise ValueError(f"未找到 TARA CSR sheet（期望 {sheet_name}）")
-
-    ws = wb[sheet_name]
-    headers = [str(c.value or "").strip() for c in ws[1]]
-    idx = _header_index(headers, ["Atomic CSR ID", "CSR ID", "需求编号"])
-    domain_idx = _header_index(headers, ["Security Domain", "安全域"])
-    cat_idx = _header_index(headers, ["Control Category", "控制分类", "需求分类"])
-    title_idx = _header_index(headers, ["Requirement Title", "需求标题", "标题"])
-    text_idx = _header_index(headers, ["Cybersecurity Requirement", "需求描述", "整合网络安全需求描述"])
-    src_idx = _header_index(headers, ["Source TARA CSR IDs", "Source TARA Raw IDs", "Source TARA", "追溯"])
-
-    rows = []
-    for r in range(2, ws.max_row + 1):
-        csr_id = _cell(ws, r, idx)
-        text = _cell(ws, r, text_idx)
-        if not csr_id or not text:
-            continue
-        rows.append({
-            "csr_id": csr_id,
-            "security_domain": _cell(ws, r, domain_idx),
-            "control_category": _cell(ws, r, cat_idx),
-            "title": _cell(ws, r, title_idx),
-            "requirement": text,
-            "source_raw_ids": _cell(ws, r, src_idx),
-        })
-    return rows
 
 
 def _cell(ws, row: int, col: int | None):

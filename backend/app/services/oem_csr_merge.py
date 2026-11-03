@@ -16,10 +16,9 @@ The free-form "17-category alignment" path is intentionally not used here.
 from __future__ import annotations
 
 import hashlib
-import json
 import re
 from collections import defaultdict
-from typing import Dict, Iterable, List, Optional, Sequence, Set, Tuple
+from typing import Dict, List, Optional, Sequence, Set, Tuple
 
 from app.services.csr_mapping import map_tara_requirements
 from app.services.csr_synthesis import _call_llm_json

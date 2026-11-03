@@ -4,7 +4,6 @@ import json
 import httpx
 import threading
 from concurrent.futures import ThreadPoolExecutor
-from celery import Celery
 from sqlalchemy.orm import Session
 from datetime import datetime
 
@@ -19,7 +18,7 @@ from app.models.tara_run import TaraRun
 from app.models.tara_step import TaraStep
 from app.models.system_settings import SystemSettings
 from pydantic import BaseModel, Field
-from typing import List, Optional, Dict, Any
+from typing import List, Optional, Any
 import uuid
 
 # SQLite Single-Writer Lock to prevent "database is locked" errors during concurrent commits

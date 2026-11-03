@@ -9,7 +9,7 @@ from app.models.user import User
 from app.models.domain import Domain
 from app.models.diagram import Diagram
 from app.schemas.diagram import DiagramUpdate, DiagramOut
-from app.api.project import check_domain_idle, check_project_active
+from app.api.project import check_domain_idle
 from pydantic import BaseModel, Field
 
 class ReasoningStepsSchema(BaseModel):

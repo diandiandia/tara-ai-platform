@@ -1,6 +1,6 @@
 from pydantic import BaseModel, Field, ConfigDict
 from datetime import datetime
-from typing import Optional, List
+from typing import Optional
 
 class ProjectCreate(BaseModel):
     name: str = Field(..., max_length=50, description="项目名称，最大50字符")

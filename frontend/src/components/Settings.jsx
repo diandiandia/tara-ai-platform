@@ -27,7 +27,7 @@ export default function Settings({ setPage }) {
   const loadCatalog = async () => {
     try {
       setCatalogInfo(await fetchCsrCatalog());
-    } catch (_) {
+    } catch {
       setCatalogInfo(null);
     }
   };

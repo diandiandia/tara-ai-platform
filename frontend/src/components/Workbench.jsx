@@ -220,7 +220,7 @@ export default function Workbench({ setPage, setDomainId, setDiagramId, projectI
     }
     try {
       setCsrStatus(await fetchCsrMappingStatus(activeDomain.id));
-    } catch (err) {
+    } catch {
       setCsrStatus(null);
     }
   }, [activeDomain]);

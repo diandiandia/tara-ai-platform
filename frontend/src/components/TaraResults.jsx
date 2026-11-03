@@ -167,26 +167,6 @@ const normalizeFeas = (val) => {
   return mapping[key] || val || 'Medium';
 };
 
-const inferSecurityDomain = (reqText) => {
-  const reqLower = String(reqText || '').toLowerCase();
-  if (reqLower.includes("ota") || reqLower.includes("update") || reqLower.includes("升级")) {
-    return "安全升级 / Secure Update";
-  }
-  if (reqLower.includes("secoc") || reqLower.includes("transmission") || reqLower.includes("通信") || reqLower.includes("message") || reqLower.includes("bus")) {
-    return "安全通信 / Secure Transmission";
-  }
-  if (reqLower.includes("crypt") || reqLower.includes("encrypt") || reqLower.includes("key") || reqLower.includes("signature") || reqLower.includes("sign") || reqLower.includes("verify") || reqLower.includes("hash") || reqLower.includes("算法") || reqLower.includes("密码") || reqLower.includes("秘钥") || reqLower.includes("密钥")) {
-    return "密码学与存储安全 / Cryptography & Storage Security";
-  }
-  if (reqLower.includes("diag") || reqLower.includes("diagnose") || reqLower.includes("诊断")) {
-    return "诊断安全 / Diagnostics Security";
-  }
-  if (reqLower.includes("access") || reqLower.includes("auth") || reqLower.includes("login") || reqLower.includes("permission") || reqLower.includes("访问") || reqLower.includes("授权") || reqLower.includes("身份")) {
-    return "访问控制 / Access Control";
-  }
-  return "通用安全 / General Security";
-};
-
 const sortAssetsByType = (list) => {
   const typeOrder = {
     "hardware": 1,
@@ -529,7 +509,7 @@ const compile5StagesForAsset = (assetId, assetRows) => {
   });
   
   let tIndex = 1;
-  for (const [threatKey, rowsForThreat] of threatMap.entries()) {
+  for (const rowsForThreat of threatMap.values()) {
     const firstRow = rowsForThreat[0];
     const dsObj = dscs.find(d => d.attribute === firstRow.attribute && d.damage_scenario === firstRow.damage_scenario) || dscs.find(d => d.attribute === firstRow.attribute) || {};
     const dsSn = dsObj.damage_scenario_sn || `DS_${firstRow.attribute}_1`;

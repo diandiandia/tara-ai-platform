@@ -16,7 +16,7 @@ from typing import Dict, Iterable, List, Optional, Sequence, Set, Tuple
 from sqlalchemy.orm import Session
 
 from app.models.asset import Asset
-from app.models.csr_catalog import CsrCatalogEntry, CsrCatalogVersion, TaraCsrMapping
+from app.models.csr_catalog import TaraCsrMapping
 from app.models.domain import Domain
 from app.models.tara_run import TaraRun
 from app.models.tara_step import TaraStep

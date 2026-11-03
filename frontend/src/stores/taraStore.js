@@ -300,7 +300,9 @@ export const useTaraStore = create((set, get) => ({
         try {
           const errData = await response.json();
           if (errData && errData.detail) errorMsg = errData.detail;
-        } catch (_) {}
+        } catch {
+          // Ignore JSON parse error and use default message
+        }
         throw new Error(errorMsg);
       }
 
@@ -317,7 +319,7 @@ export const useTaraStore = create((set, get) => ({
       if (starMatch) {
         try {
           filename = decodeURIComponent(starMatch[1].trim());
-        } catch (_) {
+        } catch {
           filename = '';
         }
       } else if (plainMatch) {

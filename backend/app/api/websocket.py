@@ -1,6 +1,5 @@
 from fastapi import APIRouter, WebSocket, WebSocketDisconnect, Query
 from typing import Dict, List, Tuple
-import json
 
 router = APIRouter(tags=["WebSocket 实时并发控制"])
 
