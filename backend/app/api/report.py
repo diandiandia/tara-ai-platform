@@ -772,6 +772,12 @@ def create_excel_report(domain: Domain, steps: List[TaraStep], assets: List[Asse
     else:
         csr_rows_pre = collect_csr_report_data(steps, assets, hash_to_global_map, db=db, domain=domain, force_recompute=force_recompute)
 
+    if has_csr and mapping_bundle is not None and not mapping_mode:
+        raise ValueError(
+            "当前生效的固定 CSR 目录还没有本 run 的 TARA 映射（可能刚切换了目录版本）："
+            "请重新执行 TARA 分析或映射后再导出。"
+        )
+
     if has_csr and not csr_rows_pre:
         raise ValueError(
             "CSR_Requirements 为空：请先导入固定 CSR 目录并执行「TARA→固定 CSR 映射」后再导出，"
