@@ -18,8 +18,10 @@ from app.services.oem_csr_merge import (
     atomize_oem_requirements,
     build_final_rows,
     collect_merge_conflict_rows,
+    collect_oem_unmapped_rows,
     map_oem_atoms_to_catalog,
     persist_merge_conflicts,
+    persist_oem_unmapped_requirements,
 )
 from app.services.req_merge import persist_merged_requirements
 from app.api.report import collect_merged_requirement_rows
@@ -118,33 +120,46 @@ class FinalRowsTests(unittest.TestCase):
         ]}
         return build_final_rows(_catalog(), _tara_rows(), _atoms(), oem_mapping)
 
-    def test_final_table_contains_all_six_resolutions(self):
-        rows, conflicts, report = self._rows()
+    def test_final_table_is_the_fixed_csr_list(self):
+        rows, conflicts, oem_unmapped, report = self._rows()
         by_id = {row["final_id"]: row for row in rows}
+        # 最终表 = 固定 CSR 目录，每个 CSR 一行
+        self.assertEqual(len(rows), 3)
+        self.assertEqual(set(by_id), {"FCSR-CS-A", "FCSR-CS-B", "FCSR-CS-C"})
         self.assertEqual(by_id["FCSR-CS-A"]["resolution"], "same")
         self.assertEqual(by_id["FCSR-CS-B"]["resolution"], "partial")
         self.assertEqual(by_id["FCSR-CS-C"]["resolution"], "catalog_only")
-        self.assertTrue(any(row["resolution"] == "customer_only" for row in rows))
-        self.assertTrue(any(row["resolution"] == "tara_gap" for row in rows))
+        self.assertEqual(by_id["FCSR-CS-A"]["source_tara_ids"], ["T1", "T2"])
+        self.assertEqual(by_id["FCSR-CS-A"]["source_catalog_csr_ids"], ["CS-A"])
+        # 没有完整落点的 OEM 原子单独列出：A2 部分覆盖、A3 未覆盖
+        self.assertEqual(
+            {item["oem_atom_id"]: item["status"] for item in oem_unmapped},
+            {"A2": "partial", "A3": "unmapped"},
+        )
+        self.assertEqual(report["oem_unmapped_count"], 2)
+        self.assertEqual(report["tara_gap_count"], 1)
         self.assertTrue(report["all_covered"])
         self.assertEqual(report["customer_missing_ids"], [])
         self.assertEqual(report["tara_missing_ids"], [])
-        self.assertEqual(by_id["FCSR-CS-A"]["source_tara_ids"], ["T1", "T2"])
-        self.assertEqual(by_id["FCSR-CS-A"]["source_catalog_csr_ids"], ["CS-A"])
 
     def test_conflict_is_separate_and_oem_row_stays_reviewable(self):
         oem_mapping = {"rows": [
             {"tara_req_id": "A1", "source_tara_ids": ["OEM1"], "target_csr_id": "CS-A", "match_type": "conflict", "confidence": 0.8, "rationale": "conflict", "conflict_note": "OEM 要求禁用，固定 CSR 允许授权启用"},
         ]}
-        rows, conflicts, report = build_final_rows(
+        rows, conflicts, oem_unmapped, report = build_final_rows(
             _catalog(), _tara_rows(), _atoms(), oem_mapping
         )
         self.assertEqual(len(conflicts), 1)
         self.assertEqual(conflicts[0]["catalog_csr_id"], "CS-A")
-        oem_rows = [row for row in rows if row["source_customer_ids"] == ["OEM1"]]
-        self.assertTrue(any(row["resolution"] == "customer_only" and row["needs_review"] for row in oem_rows))
         self.assertEqual(report["conflict_count"], 1)
-        self.assertTrue(any(row["resolution"] == "customer_only" for row in rows))
+        self.assertEqual(report["oem_conflict_atom_count"], 1)
+        conflict_gaps = [item for item in oem_unmapped if item["status"] == "conflict"]
+        self.assertEqual(len(conflict_gaps), 1)
+        self.assertEqual(conflict_gaps[0]["oem_atom_id"], "A1")
+        # 冲突不写进最终表；最终表仍然只包含固定 CSR 行（CS-A 来自 TARA 映射）
+        final_ids = {row["final_id"] for row in rows}
+        self.assertNotIn("FCSR-OEM-001", final_ids)
+        self.assertIn("FCSR-CS-A", final_ids)
 
     def test_conflicts_are_persisted_in_separate_table(self):
         engine = create_engine("sqlite:///:memory:")
@@ -184,6 +199,68 @@ class FinalRowsTests(unittest.TestCase):
             db.close()
             engine.dispose()
 
+    def test_oem_gaps_are_persisted_in_their_own_table(self):
+        engine = create_engine("sqlite:///:memory:")
+        Base.metadata.create_all(engine)
+        db = sessionmaker(bind=engine)()
+        try:
+            project = Project(name="OEM gap test")
+            db.add(project)
+            db.flush()
+            domain = Domain(name="ADCU", project_id=project.id)
+            db.add(domain)
+            db.flush()
+            run = TaraRun(domain_id=domain.id, status="completed")
+            db.add(run)
+            db.commit()
+
+            items = [
+                {
+                    "oem_atom_id": "A3",
+                    "source_customer_ids": ["OEM3"],
+                    "oem_text": "OEM 独有的安全需求",
+                    "category": "C",
+                    "status": "unmapped",
+                    "target_csr_ids": [],
+                    "missing_aspect": "目录缺少该项",
+                    "rationale": "no target",
+                    "conflict_note": "",
+                    "confidence": 0.4,
+                },
+                {
+                    "oem_atom_id": "A2",
+                    "source_customer_ids": ["OEM2"],
+                    "oem_text": "部分覆盖的需求",
+                    "category": "C",
+                    "status": "partial",
+                    "target_csr_ids": ["CS-B"],
+                    "missing_aspect": "缺少日志要求",
+                    "rationale": "partial",
+                    "conflict_note": "",
+                    "confidence": 0.7,
+                },
+            ]
+            saved = persist_oem_unmapped_requirements(
+                db, project.id, domain.id, run.id, items
+            )
+            self.assertEqual(saved, 2)
+            rows = collect_oem_unmapped_rows(db, domain.id, run.id)
+            self.assertEqual({row["oem_atom_id"] for row in rows}, {"A2", "A3"})
+            self.assertEqual(
+                {row["oem_atom_id"]: row["status"] for row in rows},
+                {"A2": "partial", "A3": "unmapped"},
+            )
+
+            # 重复执行应替换而不是累加
+            saved_again = persist_oem_unmapped_requirements(
+                db, project.id, domain.id, run.id, items[:1]
+            )
+            self.assertEqual(saved_again, 1)
+            self.assertEqual(len(collect_oem_unmapped_rows(db, domain.id, run.id)), 1)
+        finally:
+            db.close()
+            engine.dispose()
+
     def test_persistence_keeps_customer_catalog_and_tara_sources(self):
         engine = create_engine("sqlite:///:memory:")
         Base.metadata.create_all(engine)
@@ -199,7 +276,7 @@ class FinalRowsTests(unittest.TestCase):
             db.add(run)
             db.commit()
 
-            rows, _conflicts, _report = self._rows()
+            rows, _conflicts, _oem_unmapped, _report = self._rows()
             persisted = persist_merged_requirements(
                 db, project.id, domain.id, rows, tara_raw_map={}
             )

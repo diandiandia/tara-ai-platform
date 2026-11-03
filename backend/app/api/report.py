@@ -1372,6 +1372,59 @@ def create_excel_report(domain: Domain, steps: List[TaraStep], assets: List[Asse
             for c_idx, width in col_w_merged.items():
                 ws_merged.column_dimensions[openpyxl.utils.get_column_letter(c_idx)].width = width
 
+    # 导出 OEM_Unmapped：OEM 需求在固定 CSR 目录里没有完整落点的条目
+    if export_type in ("all", "merged") and db is not None:
+        from app.services.oem_csr_merge import collect_oem_unmapped_rows
+
+        run_id = getattr(steps[0], "run_id", None) if steps else None
+        unmapped_oem_rows = collect_oem_unmapped_rows(db, domain.id, run_id)
+        if unmapped_oem_rows:
+            ws_oem_gap = wb.create_sheet(title="OEM_Unmapped")
+            ws_oem_gap.views.sheetView[0].showGridLines = True
+            gap_headers = [
+                "OEM Atom ID", "OEM Req IDs / OEM需求编号",
+                "OEM Requirement / OEM需求原文", "Category / 分类",
+                "Status / 状态", "Mapped Fixed CSR IDs / 已映射固定CSR",
+                "Missing Aspect / 缺失方面", "Rationale / 判断依据",
+                "Confidence / 置信度", "Conflict Note / 冲突说明",
+            ]
+            status_labels = {
+                "unmapped": "未覆盖 / Unmapped",
+                "partial": "部分覆盖 / Partial",
+                "conflict": "冲突 / Conflict",
+            }
+            for col_idx, header in enumerate(gap_headers, 1):
+                cell = ws_oem_gap.cell(row=1, column=col_idx, value=header)
+                cell.fill = header_fill_r1
+                cell.font = header_font
+                cell.alignment = Alignment(horizontal="center", vertical="center", wrap_text=True)
+                cell.border = thin_border
+            ws_oem_gap.row_dimensions[1].height = 30
+            for row_idx, item in enumerate(unmapped_oem_rows, 2):
+                values = [
+                    item.get("oem_atom_id", ""),
+                    item.get("source_customer_ids", ""),
+                    item.get("oem_text", ""),
+                    item.get("category", ""),
+                    status_labels.get(item.get("status"), item.get("status", "")),
+                    item.get("target_csr_ids", ""),
+                    item.get("missing_aspect", ""),
+                    item.get("rationale", ""),
+                    item.get("confidence", ""),
+                    item.get("conflict_note", ""),
+                ]
+                for col_idx, value in enumerate(values, 1):
+                    cell = ws_oem_gap.cell(row=row_idx, column=col_idx, value=value)
+                    cell.font = cell_font
+                    cell.border = thin_border
+                    cell.alignment = Alignment(
+                        horizontal="center" if col_idx in (1, 2, 5, 9) else "left",
+                        vertical="center",
+                        wrap_text=True,
+                    )
+            for c_idx, width in {1: 18, 2: 26, 3: 60, 4: 24, 5: 20, 6: 28, 7: 40, 8: 45, 9: 10, 10: 50}.items():
+                ws_oem_gap.column_dimensions[openpyxl.utils.get_column_letter(c_idx)].width = width
+
     # 导出 Merge_Conflicts：OEM 与固定 CSR 的冲突，单独成表供人工裁决
     if export_type in ("all", "merged") and db is not None:
         from app.services.oem_csr_merge import collect_merge_conflict_rows

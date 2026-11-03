@@ -64,6 +64,38 @@ class MergedRequirementSource(Base):
     merged = relationship("MergedRequirement", back_populates="sources")
 
 
+class OemUnmappedRequirement(Base):
+    """OEM 原子需求在固定 CSR 目录中没有完整落点（缺口 / 部分覆盖 / 冲突）的记录。
+
+    最终需求表（MergedRequirement）只保留固定 CSR 目录的条目；OEM 专属或
+    覆盖不全的需求单独存这里，导出时单列 ``OEM_Unmapped``，避免把最终需求表
+    撑大，同时不丢 OEM 追溯。
+    """
+    __tablename__ = "oem_unmapped_requirements"
+    __table_args__ = (
+        UniqueConstraint(
+            "domain_id", "run_id", "oem_atom_id",
+            name="uq_oem_unmapped_atom",
+        ),
+    )
+
+    id = Column(Integer, primary_key=True, index=True)
+    project_id = Column(Integer, ForeignKey("projects.id", ondelete="CASCADE"), nullable=False, index=True)
+    domain_id = Column(Integer, ForeignKey("domains.id", ondelete="CASCADE"), nullable=False, index=True)
+    run_id = Column(Integer, ForeignKey("tara_runs.id", ondelete="CASCADE"), nullable=False, index=True)
+    oem_atom_id = Column(String(120), nullable=False)
+    source_customer_ids = Column(Text, nullable=True)
+    oem_text = Column(Text, nullable=True)
+    category = Column(String(200), nullable=True)
+    status = Column(String(50), nullable=False, default="unmapped")  # unmapped / partial / conflict
+    target_csr_ids = Column(Text, nullable=True)
+    missing_aspect = Column(Text, nullable=True)
+    rationale = Column(Text, nullable=True)
+    conflict_note = Column(Text, nullable=True)
+    confidence = Column(Float, nullable=False, default=0.0)
+    created_at = Column(DateTime, server_default=func.now())
+
+
 class MergeConflict(Base):
     """OEM requirement vs fixed CSR conflict, kept for human adjudication.
 

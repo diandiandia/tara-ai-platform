@@ -284,8 +284,14 @@ def build_final_rows(
     tara_mapping_rows: Sequence,
     atoms: Sequence[dict],
     oem_mapping: dict,
-) -> Tuple[List[dict], dict]:
-    """Build the final OEM + fixed-CSR table with explicit resolutions."""
+) -> Tuple[List[dict], List[dict], List[dict], dict]:
+    """Build the final table: one row per fixed CSR, plus conflicts / OEM gaps.
+
+    The fixed CSR catalog is the canonical requirement set (TARA requirements
+    are mapped onto it).  OEM atoms only enrich those rows; atoms that cannot
+    be fully placed are returned separately instead of being appended to the
+    final table.
+    """
     atom_by_id = {atom["atom_id"]: atom for atom in atoms}
     tara_by_target: Dict[str, List] = defaultdict(list)
     tara_gaps: Dict[str, dict] = {}
@@ -325,8 +331,6 @@ def build_final_rows(
     conflicts: List[dict] = []
     resolution_counts: Dict[str, int] = defaultdict(int)
     catalog_partial_count = 0
-    oem_partial_row_count = 0
-    oem_only_count = 0
 
     for entry in catalog:
         csr_id = entry["csr_id"]
@@ -441,9 +445,9 @@ def build_final_rows(
         if resolution == "partial":
             catalog_partial_count += 1
 
-    # OEM requirements that have no target, or only a partial target, must
-    # remain visible as OEM-specific rows (the fixed CSR does not fully cover them).
-    oem_seq = 0
+    # OEM 原子需求：没有完整落点（gap / partial / conflict）的单独列出。
+    # 有完整落点的原子已经作为来源写进对应的固定 CSR 行，不再重复。
+    oem_unmapped: List[dict] = []
     for atom in atoms:
         atom_rows = oem_by_atom.get(atom["atom_id"], [])
         normal_rows = [row for row in atom_rows if str(row.get("match_type")) != "conflict"]
@@ -456,87 +460,46 @@ def build_final_rows(
         has_partial = any(str(row.get("match_type")) == "partial" for row in normal_rows)
         has_error = any(str(row.get("match_type")) == "error" for row in normal_rows)
         has_conflict = bool(conflict_rows)
-        if has_target and not has_partial and not has_error and not has_conflict:
+        if has_target and not has_partial and not has_error:
+            # 完整落点（即使同时存在冲突）已进入最终需求表 / Merge_Conflicts
             continue
-        if has_target and not has_partial and not has_error and has_conflict:
-            # Normal target rows already carry the OEM source; the conflicting
-            # pair is recorded in Merge_Conflicts and is not duplicated here.
-            continue
-        oem_seq += 1
+        status = "conflict" if has_conflict else ("partial" if has_partial else "unmapped")
         missing = [
             str(row.get("missing_aspect") or "").strip()
             for row in normal_rows
             if str(row.get("missing_aspect") or "").strip()
+        ]
+        rationales = [
+            str(row.get("rationale") or "").strip()
+            for row in atom_rows
+            if str(row.get("rationale") or "").strip()
         ]
         conflict_notes = [
             str(row.get("conflict_note") or "").strip()
             for row in conflict_rows
             if str(row.get("conflict_note") or "").strip()
         ]
-        rows.append({
-            "final_id": f"FCSR-OEM-{oem_seq:03d}",
-            "requirement_title": atom.get("subject") or "OEM 专属需求 / OEM Specific Requirement",
-            "subject": atom.get("subject") or "系统 / System",
-            "requirement_text": atom["statement"],
-            "functional_category": atom.get("category") or "OEM 需求 / OEM Requirement",
-            "security_domain": atom.get("category") or "OEM 需求 / OEM Requirement",
-            "control_category": "OEM 客户需求 / Customer Requirement",
+        oem_unmapped.append({
+            "oem_atom_id": atom["atom_id"],
             "source_customer_ids": list(atom["source_customer_ids"]),
-            "source_tara_ids": [],
-            "source_catalog_csr_ids": targets,
-            "resolution": "customer_only" if not has_target else "partial",
-            "needs_review": has_partial or has_error or has_conflict,
-            "confidence": max(
-                [float(row.get("confidence") or 0.0) for row in atom_rows] or [1.0]
-            ),
-            "rationale": "",
+            "oem_text": atom["statement"],
+            "category": atom.get("category") or "",
+            "status": status,
+            "target_csr_ids": targets,
             "missing_aspect": "；".join(missing),
-            "conflict": has_conflict,
+            "rationale": "；".join(rationales),
             "conflict_note": "；".join(conflict_notes),
-            "additional_info": "；".join(
-                [x for x in (
-                    ([f"部分映射到: {', '.join(targets)}"] if targets else [])
-                    + missing
-                    + ([f"OEM冲突: {'；'.join(conflict_notes)}"] if conflict_notes else [])
-                ) if x]
+            "confidence": max(
+                [float(row.get("confidence") or 0.0) for row in atom_rows] or [0.0]
             ),
         })
-        resolution_counts[rows[-1]["resolution"]] += 1
-        oem_only_count += 1
-        if rows[-1]["resolution"] == "partial":
-            oem_partial_row_count += 1
-
-    # TARA requirements with no fixed CSR target are kept as TARA-specific rows.
-    tara_seq = 0
-    for gap in tara_gaps.values():
-        tara_seq += 1
-        rows.append({
-            "final_id": f"FCSR-TARA-{tara_seq:03d}",
-            "requirement_title": "TARA 专属需求 / TARA Specific Requirement",
-            "subject": "系统 / System",
-            "requirement_text": gap["tara_text"],
-            "functional_category": "TARA 目录缺口 / TARA Catalog Gap",
-            "security_domain": "TARA 目录缺口 / TARA Catalog Gap",
-            "control_category": "固定 CSR 目录未覆盖 / Not Covered by Fixed CSR",
-            "source_customer_ids": [],
-            "source_tara_ids": gap["source_tara_ids"],
-            "source_catalog_csr_ids": [],
-            "resolution": "tara_gap",
-            "needs_review": True,
-            "confidence": 0.0,
-            "rationale": gap.get("rationale") or "",
-            "missing_aspect": gap.get("missing_aspect") or "",
-            "conflict": False,
-            "conflict_note": "",
-            "additional_info": "；".join(
-                [x for x in (gap.get("rationale"), gap.get("missing_aspect")) if x]
-            ),
-        })
-        resolution_counts["tara_gap"] += 1
 
     input_customer_ids = {sid for atom in atoms for sid in atom["source_customer_ids"]}
     customer_covered = {
         sid for row in rows for sid in row["source_customer_ids"]
+    }
+    customer_unmapped_ids = {
+        sid for item in oem_unmapped for sid in item["source_customer_ids"]
     }
     input_tara_ids = {
         sid for row in tara_mapping_rows for sid in _tara_source_ids(row)
@@ -544,29 +507,45 @@ def build_final_rows(
     tara_covered = {
         sid for row in rows for sid in row["source_tara_ids"]
     }
+    tara_gap_ids = {
+        sid for gap in tara_gaps.values() for sid in gap["source_tara_ids"]
+    }
     report = {
         "customer_input_count": len(input_customer_ids),
         "customer_covered_count": len(input_customer_ids & customer_covered),
-        "customer_missing_ids": sorted(input_customer_ids - customer_covered),
+        "customer_unmapped_count": len(input_customer_ids & customer_unmapped_ids),
+        "customer_missing_ids": sorted(
+            input_customer_ids - customer_covered - customer_unmapped_ids
+        ),
         "tara_input_count": len(input_tara_ids),
         "tara_covered_count": len(input_tara_ids & tara_covered),
-        "tara_missing_ids": sorted(input_tara_ids - tara_covered),
+        "tara_missing_ids": sorted(input_tara_ids - tara_covered - tara_gap_ids),
         "catalog_count": len(catalog),
         "final_row_count": len(rows),
         "same_count": resolution_counts["same"],
         "partial_count": resolution_counts["partial"],
         "catalog_partial_count": catalog_partial_count,
-        "oem_partial_row_count": oem_partial_row_count,
-        "oem_specific_count": oem_only_count,
         "tara_only_count": resolution_counts["tara_only"],
         "catalog_only_count": resolution_counts["catalog_only"],
-        "customer_only_count": resolution_counts["customer_only"],
-        "tara_gap_count": resolution_counts["tara_gap"],
+        "tara_gap_count": len(tara_gaps),
+        "oem_unmapped_count": len(oem_unmapped),
+        "oem_unmapped_atom_count": sum(
+            1 for item in oem_unmapped if item["status"] == "unmapped"
+        ),
+        "oem_partial_atom_count": sum(
+            1 for item in oem_unmapped if item["status"] == "partial"
+        ),
+        "oem_conflict_atom_count": sum(
+            1 for item in oem_unmapped if item["status"] == "conflict"
+        ),
         "conflict_count": len(conflicts),
         "conflict_atom_count": len({item["oem_atom_id"] for item in conflicts}),
-        "all_covered": not (input_customer_ids - customer_covered) and not (input_tara_ids - tara_covered),
+        "all_covered": (
+            not (input_customer_ids - customer_covered - customer_unmapped_ids)
+            and not (input_tara_ids - tara_covered - tara_gap_ids)
+        ),
     }
-    return rows, conflicts, report
+    return rows, conflicts, oem_unmapped, report
 
 
 def merge_oem_requirements_with_fixed_csrs(
@@ -576,7 +555,7 @@ def merge_oem_requirements_with_fixed_csrs(
     customer_reqs: Sequence[dict],
     domain,
     run,
-) -> Tuple[List[dict], List[dict], dict]:
+) -> Tuple[List[dict], List[dict], List[dict], dict]:
     """Full OEM + fixed-CSR merge pipeline for the API."""
     from app.models.csr_catalog import TaraCsrMapping
     from app.models.system_settings import SystemSettings
@@ -586,9 +565,9 @@ def merge_oem_requirements_with_fixed_csrs(
     catalog = get_active_catalog(db)
     if version is None or not catalog:
         raise ValueError(
-            "请先导入固定 CSR 目录：在工作台「固定 CSR 目录」处上传目录 xlsx"
-            "（列示例：需求编号 / 分类领域 / 需求描述），再点击「执行 TARA→CSR 映射」，"
-            "最后点击「合并需求」。"
+            "尚未导入固定 CSR 目录：请在「系统配置 → 固定 CSR 目录」导入目录 xlsx"
+            "（列示例：需求编号 / 分类领域 / 需求描述）。TARA 分析结束时会自动"
+            "映射到该目录，之后即可合并需求。"
         )
 
     tara_rows = (
@@ -602,8 +581,8 @@ def merge_oem_requirements_with_fixed_csrs(
     )
     if not tara_rows:
         raise ValueError(
-            "该域控/run 还没有 TARA→固定 CSR 映射结果：请先点击「执行 TARA→CSR 映射」，"
-            "映射完成后再点击「合并需求」。"
+            "该域控/run 还没有 TARA→固定 CSR 映射结果：请重新执行一次 TARA 分析"
+            "（映射会在分析结束后自动完成），再合并需求。"
         )
 
     settings_obj = db.query(SystemSettings).first()
@@ -622,7 +601,7 @@ def merge_oem_requirements_with_fixed_csrs(
         raise ValueError(f"OEM 原子化未覆盖客户需求: {atomized['missing_customer_ids']}")
 
     mapped = map_oem_atoms_to_catalog(atomized["atoms"], catalog, settings)
-    rows, conflicts, report = build_final_rows(
+    rows, conflicts, oem_unmapped, report = build_final_rows(
         catalog,
         tara_rows,
         atomized["atoms"],
@@ -641,7 +620,7 @@ def merge_oem_requirements_with_fixed_csrs(
     })
     if not report["all_covered"]:
         raise ValueError(f"最终合并追溯断裂: {report}")
-    return rows, conflicts, report
+    return rows, conflicts, oem_unmapped, report
 
 
 def persist_merge_conflicts(
@@ -684,6 +663,79 @@ def persist_merge_conflicts(
         ))
     db.commit()
     return len(seen)
+
+
+def persist_oem_unmapped_requirements(
+    db,
+    project_id: int,
+    domain_id: int,
+    run_id: int,
+    items: Sequence[dict],
+    replace: bool = True,
+) -> int:
+    """Persist OEM atoms without a full fixed-CSR landing (separate table)."""
+    from app.models.req_merge import OemUnmappedRequirement
+
+    if replace:
+        db.query(OemUnmappedRequirement).filter(
+            OemUnmappedRequirement.domain_id == domain_id,
+            OemUnmappedRequirement.run_id == run_id,
+        ).delete(synchronize_session=False)
+
+    seen: Set[str] = set()
+    for item in items:
+        atom_id = item.get("oem_atom_id") or ""
+        if not atom_id or atom_id in seen:
+            continue
+        seen.add(atom_id)
+        db.add(OemUnmappedRequirement(
+            project_id=project_id,
+            domain_id=domain_id,
+            run_id=run_id,
+            oem_atom_id=atom_id,
+            source_customer_ids="; ".join(item.get("source_customer_ids") or []),
+            oem_text=item.get("oem_text") or "",
+            category=item.get("category") or "",
+            status=item.get("status") or "unmapped",
+            target_csr_ids="; ".join(item.get("target_csr_ids") or []),
+            missing_aspect=item.get("missing_aspect") or "",
+            rationale=item.get("rationale") or "",
+            conflict_note=item.get("conflict_note") or "",
+            confidence=float(item.get("confidence") or 0.0),
+        ))
+    db.commit()
+    return len(seen)
+
+
+def collect_oem_unmapped_rows(
+    db, domain_id: int, run_id: Optional[int] = None
+) -> List[dict]:
+    """Return OEM atoms without a full landing for exports/API."""
+    from app.models.req_merge import OemUnmappedRequirement
+
+    query = db.query(OemUnmappedRequirement).filter(
+        OemUnmappedRequirement.domain_id == domain_id
+    )
+    if run_id is not None:
+        query = query.filter(OemUnmappedRequirement.run_id == run_id)
+    rows = query.order_by(OemUnmappedRequirement.id).all()
+    return [
+        {
+            "id": row.id,
+            "run_id": row.run_id,
+            "oem_atom_id": row.oem_atom_id,
+            "source_customer_ids": row.source_customer_ids or "",
+            "oem_text": row.oem_text or "",
+            "category": row.category or "",
+            "status": row.status or "unmapped",
+            "target_csr_ids": row.target_csr_ids or "",
+            "missing_aspect": row.missing_aspect or "",
+            "rationale": row.rationale or "",
+            "conflict_note": row.conflict_note or "",
+            "confidence": row.confidence,
+        }
+        for row in rows
+    ]
 
 
 def collect_merge_conflict_rows(db, domain_id: int, run_id: Optional[int] = None) -> List[dict]:

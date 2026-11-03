@@ -20,6 +20,7 @@ from app.services.oem_csr_merge import (
     collect_merge_conflict_rows,
     merge_oem_requirements_with_fixed_csrs,
     persist_merge_conflicts,
+    persist_oem_unmapped_requirements,
 )
 
 router = APIRouter(tags=["客户需求与 TARA 需求合并"])
@@ -194,7 +195,7 @@ def synthesize_merged_requirements(
         print("[TARA-AI] 固定 CSR 模式忽略上传的 TARA CSR 文件，使用已入库的固定 CSR 映射结果")
 
     try:
-        merged, conflicts, report = merge_oem_requirements_with_fixed_csrs(
+        merged, conflicts, oem_unmapped, report = merge_oem_requirements_with_fixed_csrs(
             db,
             domain.project_id,
             domain_id,
@@ -213,6 +214,14 @@ def synthesize_merged_requirements(
             conflicts,
             replace=True,
         )
+        persisted_unmapped = persist_oem_unmapped_requirements(
+            db,
+            domain.project_id,
+            domain_id,
+            last_run.id,
+            oem_unmapped,
+            replace=True,
+        )
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc))
     except Exception as exc:
@@ -224,6 +233,7 @@ def synthesize_merged_requirements(
         "run_id": last_run.id,
         "merged_count": len(persisted),
         "conflict_count": persisted_conflicts,
+        "oem_unmapped_count": persisted_unmapped,
         "coverage": report,
         "source_mode": "fixed_csr_mapping",
     }
