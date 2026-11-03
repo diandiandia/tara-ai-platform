@@ -35,7 +35,7 @@ def _content_hash_id(prefix: str, text: str) -> str:
 
 
 def extract_subject(text: str) -> str:
-    """从需求文本中提取【主体】/ [Subject] 段，作为「责任主体」的确定性兜底。"""
+    """从需求文本中提取责任主体。兼容【主体】标签与自然语言主语语法。"""
     if not text:
         return ""
     m = re.search(r'【主体】([^【】]*)', str(text))
@@ -44,6 +44,18 @@ def extract_subject(text: str) -> str:
     m = re.search(r'\[Subject\]\s*([^\[]*)', str(text), re.IGNORECASE)
     if m and m.group(1).strip():
         return m.group(1).strip().rstrip(";；").strip()
+    # 自然语言提取：提取“应/不得/禁止/严禁/必须”或“shall/must”前面的主语
+    clean_t = re.sub(r'【[^】]*】|\[[^\]]*\]', '', str(text)).strip()
+    m_action = re.match(r'^(.*?)(?:应|不得|禁止|严禁|必须)', clean_t)
+    if m_action and m_action.group(1).strip():
+        cand = m_action.group(1).strip().rstrip("，,：: ")
+        if len(cand) <= 30:
+            return cand
+    m_en = re.match(r'^(.*?)\b(?:shall|must|should)\b', clean_t, re.IGNORECASE)
+    if m_en and m_en.group(1).strip():
+        cand = m_en.group(1).strip().rstrip("，,：: ")
+        if len(cand) <= 40:
+            return cand
     return ""
 
 
@@ -52,28 +64,23 @@ def extract_subject_and_clauses(text: str) -> List[Tuple[str, str, str]]:
     Step 1 基础函数：将复合网络安全需求拆解为单一控制动作的原子项。
     保留责任主体，并按动作动词切分复合子句。
     返回列表: [(subject, clause_text, formatted_atom_text), ...]
+    输出语句自然通顺，严禁附加【主体】【要求】标签。
     """
     if not text or text == "N/A":
         return []
 
-    subj = ""
+    subj = extract_subject(text)
     req_body = str(text).strip()
-
-    # 提取【主体】或 [Subject]
-    subj_match = re.search(r'【主体】\s*([^【】;；]+?)(?:；|;|【要求】|$)', req_body)
-    if subj_match:
-        subj = subj_match.group(1).strip()
 
     req_match = re.search(r'【要求】\s*(.*)', req_body, re.DOTALL)
     if req_match:
         req_body = req_match.group(1).strip()
-    elif not subj:
-        en_subj_match = re.search(r'\[Subject\]\s*([^\[\];；]+?)(?:；|;|\[Requirement\]|$)', req_body, re.IGNORECASE)
-        if en_subj_match:
-            subj = en_subj_match.group(1).strip()
+    else:
         en_req_match = re.search(r'\[Requirement\]\s*(.*)', req_body, re.IGNORECASE | re.DOTALL)
         if en_req_match:
             req_body = en_req_match.group(1).strip()
+        elif subj and req_body.startswith(subj):
+            req_body = req_body[len(subj):].lstrip("，,：: ")
 
     # 按标点切分候选子句
     raw_clauses = re.split(r'[；;\n。]+', req_body)
@@ -106,13 +113,165 @@ def extract_subject_and_clauses(text: str) -> List[Tuple[str, str, str]]:
         cl_clean = re.sub(r'^[（(]\d+[）)]\s*', '', cl).strip()
         if not cl_clean:
             continue
-        if subj and not cl_clean.startswith("【主体】"):
-            formatted = f"【主体】{subj}；【要求】{cl_clean}"
+        if subj and not cl_clean.startswith(subj):
+            if cl_clean.startswith(("应", "不得", "必须", "禁止", "严禁")):
+                formatted = f"{subj}{cl_clean}"
+            elif cl_clean.lower().startswith(("shall", "must", "should", "cannot", "may not")):
+                formatted = f"{subj} {cl_clean}"
+            else:
+                formatted = f"{subj}应{cl_clean}"
         else:
             formatted = cl_clean
         formatted_atoms.append((subj, cl_clean, formatted))
 
     return formatted_atoms or [(subj, req_body, str(text))]
+
+
+def clean_requirement_text(text: str) -> str:
+    """
+    清理网络安全需求文本中的所有结构化标签（包括【主体】/【要求】/【范围】/【验证方法】/【验收准则】/【待确认】
+    以及英文 [Subject]/[Requirement]/[Scope] 等），将文本还原为自然通顺的规范语句。
+    """
+    if not text or not isinstance(text, str):
+        return text
+    t = text.strip()
+    parts = t.split(" / ")
+    if len(parts) == 2:
+        return f"{_clean_single_req(parts[0], is_en=False)} / {_clean_single_req(parts[1], is_en=True)}"
+    return _clean_single_req(t, is_en=False)
+
+
+def _clean_single_req(t: str, is_en: bool = False) -> str:
+    t = t.strip()
+    if is_en:
+        en_tags = ["Scope", "Verification method", "Acceptance criteria", "Open issue", "Open confirmation"]
+        for tag in en_tags:
+            t = re.sub(r'\[\s*' + re.escape(tag) + r'\s*\][^\[]*', '', t, flags=re.IGNORECASE)
+        m = re.search(r'\[Subject\]\s*([^\[\];；]+?)(?:；|;)?\s*\[Requirement\]\s*(.*)', t, flags=re.IGNORECASE | re.DOTALL)
+        if m:
+            subj = m.group(1).strip()
+            body = m.group(2).strip()
+            if body.lower().startswith(('shall', 'must', 'should', 'cannot', 'may not')):
+                t = f"{subj} {body[0].lower()}{body[1:]}"
+            else:
+                t = f"{subj} shall {body[0].lower()}{body[1:]}"
+        else:
+            t = re.sub(r'\[[^\]]+\]', '', t)
+    else:
+        cn_tags = ["范围", "验证方法", "验收准则", "待确认"]
+        for tag in cn_tags:
+            t = re.sub(r'【\s*' + re.escape(tag) + r'\s*】[^【]*', '', t)
+        m = re.search(r'【主体】\s*([^【】;；]+?)(?:；|;)?\s*【要求】\s*(.*)', t, flags=re.DOTALL)
+        if m:
+            subj = m.group(1).strip()
+            body = m.group(2).strip()
+            if body.startswith(('应', '不得', '必须', '禁止', '严禁')):
+                t = f"{subj}{body}"
+            else:
+                t = f"{subj}应{body}"
+        else:
+            t = re.sub(r'【[^】]+】', '', t)
+
+    t = re.sub(r'[ \t]{2,}', ' ', t)
+    t = re.sub(r'\s*[;；]+\s*[;；]', '；', t)
+    t = re.sub(r'^\s*[/;；]\s*|\s*[/;；]\s*$', '', t)
+    return t.strip()
+
+
+def clean_goal_text(text: str) -> str:
+    """清理并组织网络安全目标 (Goal)，移除【保护对象】【安全属性】【目标】【成功判据】等方括号标签，输出通顺语句。"""
+    if not text or not isinstance(text, str):
+        return text
+    parts = str(text).strip().split(" / ")
+    if len(parts) == 2:
+        return f"{_clean_single_goal(parts[0], False)} / {_clean_single_goal(parts[1], True)}"
+    return _clean_single_goal(str(text).strip(), False)
+
+
+def _clean_single_goal(t: str, is_en: bool) -> str:
+    t = t.strip()
+    if not is_en:
+        m_goal = re.search(r'【目标】\s*([^【】]+)', t)
+        m_crit = re.search(r'【成功判据】\s*([^【】]+)', t)
+        if m_goal:
+            res = m_goal.group(1).strip().rstrip('；;。')
+            if m_crit:
+                crit = m_crit.group(1).strip().rstrip('；;。')
+                res += f'；{crit}'
+            return res + '。'
+        return re.sub(r'【[^】]+】', '', t).strip()
+    else:
+        m_goal = re.search(r'\[Goal\]\s*([^\[\]]+)', t, re.IGNORECASE)
+        m_crit = re.search(r'\[Success Criteria\]\s*([^\[\]]+)', t, re.IGNORECASE)
+        if m_goal:
+            res = m_goal.group(1).strip().rstrip(';.')
+            if m_crit:
+                crit = m_crit.group(1).strip().rstrip(';.')
+                res += f'; {crit}'
+            return res + '.'
+        return re.sub(r'\[[^\]]+\]', '', t).strip()
+
+
+def clean_control_text(text: str) -> str:
+    """清理并组织网络安全控制措施 (Control)，移除【控制类型】【实现类型】【控制目标】【作用点】【依赖/交互】等方括号标签，输出通顺语句。"""
+    if not text or not isinstance(text, str):
+        return text
+    parts = str(text).strip().split(" / ")
+    if len(parts) == 2:
+        return f"{_clean_single_ctrl(parts[0], False)} / {_clean_single_ctrl(parts[1], True)}"
+    return _clean_single_ctrl(str(text).strip(), False)
+
+
+def _clean_single_ctrl(t: str, is_en: bool) -> str:
+    t = t.strip()
+    if not is_en:
+        m_dep = re.search(r'【依赖/交互】\s*([^【】]+)', t)
+        m_obj = re.search(r'【控制目标】\s*([^【】]+)', t)
+        if m_dep:
+            return m_dep.group(1).strip()
+        if m_obj:
+            return m_obj.group(1).strip()
+        return re.sub(r'【[^】]+】', '', t).strip()
+    else:
+        m_dep = re.search(r'\[Dependency/Interaction\]\s*([^\[\]]+)', t, re.IGNORECASE)
+        m_obj = re.search(r'\[Control Objective\]\s*([^\[\]]+)', t, re.IGNORECASE)
+        if m_dep:
+            return m_dep.group(1).strip()
+        if m_obj:
+            return m_obj.group(1).strip()
+        return re.sub(r'\[[^\]]+\]', '', t).strip()
+
+
+def clean_claim_text(text: str) -> str:
+    """清理并组织网络安全声明 (Claim)，移除【Claim 类型】【声明】【剩余风险】【依据】【适用条件】等方括号标签，输出通顺语句。"""
+    if not text or not isinstance(text, str):
+        return text
+    parts = str(text).strip().split(" / ")
+    if len(parts) == 2:
+        return f"{_clean_single_claim(parts[0], False)} / {_clean_single_claim(parts[1], True)}"
+    return _clean_single_claim(str(text).strip(), False)
+
+
+def _clean_single_claim(t: str, is_en: bool) -> str:
+    t = t.strip()
+    if not is_en:
+        m_state = re.search(r'【声明】\s*([^【】]+)', t)
+        if m_state:
+            res = m_state.group(1).strip().rstrip('；;。')
+            m_cond = re.search(r'【适用条件】\s*([^【】]+)', t)
+            if m_cond:
+                res += f'；适用条件：{m_cond.group(1).strip().rstrip("；;。")}'
+            return res + '。'
+        return re.sub(r'【[^】]+】', '', t).strip()
+    else:
+        m_state = re.search(r'\[Statement\]\s*([^\[\]]+)', t, re.IGNORECASE)
+        if m_state:
+            res = m_state.group(1).strip().rstrip(';.')
+            m_cond = re.search(r'\[Conditions\]\s*([^\[\]]+)', t, re.IGNORECASE)
+            if m_cond:
+                res += f'; Conditions: {m_cond.group(1).strip().rstrip(";.")}'
+            return res + '.'
+        return re.sub(r'\[[^\]]+\]', '', t).strip()
 
 
 def get_asset_sn(asset) -> str:

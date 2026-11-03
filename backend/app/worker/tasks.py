@@ -43,31 +43,157 @@ def generate_content_id(prefix: str, content: str) -> str:
 
 def clean_requirement_text(text: str) -> str:
     """
-    清理网络安全需求文本中不需要的字段标签，仅保留【主体】/【要求】（及英文 [Subject]/[Requirement]）。
-    移除：【范围】【验证方法】【验收准则】【待确认】 与 [Scope]/[Verification method]/[Acceptance criteria]/[Open issue]。
-    这些信息已单独保存在结构化字段 requirement_scope / verification_method / acceptance_criteria / open_issue 中，此处从正文移除。
+    清理网络安全需求文本中的所有结构化标签（包括【主体】/【要求】/【范围】/【验证方法】/【验收准则】/【待确认】
+    以及英文 [Subject]/[Requirement]/[Scope] 等），将文本还原为自然通顺的规范语句。
     """
     if not text or not isinstance(text, str):
         return text
     import re
+    t = text.strip()
+    parts = t.split(" / ")
+    if len(parts) == 2:
+        return f"{_clean_single_req(parts[0], is_en=False)} / {_clean_single_req(parts[1], is_en=True)}"
+    return _clean_single_req(t, is_en=False)
 
-    # 中文标签（全角【】）：移除范围/验证方法/验收准则/待确认。
-    # 值遇到下一个【/[ 或 “/ ”+括号（整体中英文分界）时停止，避免吃掉中英文分隔符 “ / ”。
-    cn_remove_tags = ["范围", "验证方法", "验收准则", "待确认"]
-    for tag in cn_remove_tags:
-        text = re.sub(r'【' + re.escape(tag) + r'】[^【\[]*?(?=\s*/\s*[\[【]|[\[【]|$)', '', text)
 
-    # 英文标签（半角 [] 或全角【】均兼容）：移除 Scope/Verification method/Acceptance criteria/Open issue。
-    en_remove_tags = ["Scope", "Verification method", "Acceptance criteria", "Open issue"]
-    for tag in en_remove_tags:
-        text = re.sub(r'[\[【]' + re.escape(tag) + r'[\]】][^\[【]*', '', text, flags=re.IGNORECASE)
+def _clean_single_req(t: str, is_en: bool = False) -> str:
+    import re
+    t = t.strip()
+    if is_en:
+        en_tags = ["Scope", "Verification method", "Acceptance criteria", "Open issue", "Open confirmation"]
+        for tag in en_tags:
+            t = re.sub(r'\[\s*' + re.escape(tag) + r'\s*\][^\[]*', '', t, flags=re.IGNORECASE)
+        m = re.search(r'\[Subject\]\s*([^\[\];；]+?)(?:；|;)?\s*\[Requirement\]\s*(.*)', t, flags=re.IGNORECASE | re.DOTALL)
+        if m:
+            subj = m.group(1).strip()
+            body = m.group(2).strip()
+            if body.lower().startswith(('shall', 'must', 'should', 'cannot', 'may not')):
+                t = f"{subj} {body[0].lower()}{body[1:]}"
+            else:
+                t = f"{subj} shall {body[0].lower()}{body[1:]}"
+        else:
+            t = re.sub(r'\[[^\]]+\]', '', t)
+    else:
+        cn_tags = ["范围", "验证方法", "验收准则", "待确认"]
+        for tag in cn_tags:
+            t = re.sub(r'【\s*' + re.escape(tag) + r'\s*】[^【]*', '', t)
+        m = re.search(r'【主体】\s*([^【】;；]+?)(?:；|;)?\s*【要求】\s*(.*)', t, flags=re.DOTALL)
+        if m:
+            subj = m.group(1).strip()
+            body = m.group(2).strip()
+            if body.startswith(('应', '不得', '必须', '禁止', '严禁')):
+                t = f"{subj}{body}"
+            else:
+                t = f"{subj}应{body}"
+        else:
+            t = re.sub(r'【[^】]+】', '', t)
 
-    # 清理残留分隔符与空白
-    text = re.sub(r'[ \t]{2,}', ' ', text)
-    text = re.sub(r'\s*;+\s*;', ';', text)
-    text = re.sub(r'^\s*[/;]\s*|\s*[/;]\s*$', '', text)
-    text = text.strip()
-    return text
+    t = re.sub(r'[ \t]{2,}', ' ', t)
+    t = re.sub(r'\s*[;；]+\s*[;；]', '；', t)
+    t = re.sub(r'^\s*[/;；]\s*|\s*[/;；]\s*$', '', t)
+    return t.strip()
+
+
+def clean_goal_text(text: str) -> str:
+    """清理并组织网络安全目标 (Goal)，移除【保护对象】【安全属性】【目标】【成功判据】等方括号标签，输出通顺语句。"""
+    if not text or not isinstance(text, str):
+        return text
+    import re
+    parts = str(text).strip().split(" / ")
+    if len(parts) == 2:
+        return f"{_clean_single_goal(parts[0], False)} / {_clean_single_goal(parts[1], True)}"
+    return _clean_single_goal(str(text).strip(), False)
+
+
+def _clean_single_goal(t: str, is_en: bool) -> str:
+    import re
+    t = t.strip()
+    if not is_en:
+        m_goal = re.search(r'【目标】\s*([^【】]+)', t)
+        m_crit = re.search(r'【成功判据】\s*([^【】]+)', t)
+        if m_goal:
+            res = m_goal.group(1).strip().rstrip('；;。')
+            if m_crit:
+                crit = m_crit.group(1).strip().rstrip('；;。')
+                res += f'；{crit}'
+            return res + '。'
+        return re.sub(r'【[^】]+】', '', t).strip()
+    else:
+        m_goal = re.search(r'\[Goal\]\s*([^\[\]]+)', t, re.IGNORECASE)
+        m_crit = re.search(r'\[Success Criteria\]\s*([^\[\]]+)', t, re.IGNORECASE)
+        if m_goal:
+            res = m_goal.group(1).strip().rstrip(';.')
+            if m_crit:
+                crit = m_crit.group(1).strip().rstrip(';.')
+                res += f'; {crit}'
+            return res + '.'
+        return re.sub(r'\[[^\]]+\]', '', t).strip()
+
+
+def clean_control_text(text: str) -> str:
+    """清理并组织网络安全控制措施 (Control)，移除【控制类型】【实现类型】【控制目标】【作用点】【依赖/交互】等方括号标签，输出通顺语句。"""
+    if not text or not isinstance(text, str):
+        return text
+    import re
+    parts = str(text).strip().split(" / ")
+    if len(parts) == 2:
+        return f"{_clean_single_ctrl(parts[0], False)} / {_clean_single_ctrl(parts[1], True)}"
+    return _clean_single_ctrl(str(text).strip(), False)
+
+
+def _clean_single_ctrl(t: str, is_en: bool) -> str:
+    import re
+    t = t.strip()
+    if not is_en:
+        m_dep = re.search(r'【依赖/交互】\s*([^【】]+)', t)
+        m_obj = re.search(r'【控制目标】\s*([^【】]+)', t)
+        if m_dep:
+            return m_dep.group(1).strip()
+        if m_obj:
+            return m_obj.group(1).strip()
+        return re.sub(r'【[^】]+】', '', t).strip()
+    else:
+        m_dep = re.search(r'\[Dependency/Interaction\]\s*([^\[\]]+)', t, re.IGNORECASE)
+        m_obj = re.search(r'\[Control Objective\]\s*([^\[\]]+)', t, re.IGNORECASE)
+        if m_dep:
+            return m_dep.group(1).strip()
+        if m_obj:
+            return m_obj.group(1).strip()
+        return re.sub(r'\[[^\]]+\]', '', t).strip()
+
+
+def clean_claim_text(text: str) -> str:
+    """清理并组织网络安全声明 (Claim)，移除【Claim 类型】【声明】【剩余风险】【依据】【适用条件】等方括号标签，输出通顺语句。"""
+    if not text or not isinstance(text, str):
+        return text
+    import re
+    parts = str(text).strip().split(" / ")
+    if len(parts) == 2:
+        return f"{_clean_single_claim(parts[0], False)} / {_clean_single_claim(parts[1], True)}"
+    return _clean_single_claim(str(text).strip(), False)
+
+
+def _clean_single_claim(t: str, is_en: bool) -> str:
+    import re
+    t = t.strip()
+    if not is_en:
+        m_state = re.search(r'【声明】\s*([^【】]+)', t)
+        if m_state:
+            res = m_state.group(1).strip().rstrip('；;。')
+            m_cond = re.search(r'【适用条件】\s*([^【】]+)', t)
+            if m_cond:
+                res += f'；适用条件：{m_cond.group(1).strip().rstrip("；;。")}'
+            return res + '。'
+        return re.sub(r'【[^】]+】', '', t).strip()
+    else:
+        m_state = re.search(r'\[Statement\]\s*([^\[\]]+)', t, re.IGNORECASE)
+        if m_state:
+            res = m_state.group(1).strip().rstrip(';.')
+            m_cond = re.search(r'\[Conditions\]\s*([^\[\]]+)', t, re.IGNORECASE)
+            if m_cond:
+                res += f'; Conditions: {m_cond.group(1).strip().rstrip(";.")}'
+            return res + '.'
+        return re.sub(r'\[[^\]]+\]', '', t).strip()
 
 def enforce_stage5_source_coverage(requirements: list, summarized_csrs: list, asset: Asset) -> list:
     """
@@ -1692,9 +1818,12 @@ def tara_ai_analysis_call(db: Session, stage: str, asset: Asset, prev_stages: di
                     "   - Control：包含 cybersecurity_control_id 并以 CSO-001, CSO-002 等顺序编号格式编写，与中英文对照的 cybersecurity_control；并分别填写 control_type（预防/检测/纠正）、implementation_type（技术/操作）、control_objective（控制目标）、control_point（作用点：资产/接口/生命周期阶段）、dependent_functions、dependent_controls、interaction_description、applicable_lifecycle；不要写具体协议/算法/产品型号；\n"
                     "   - Allocated to Device：只有 Requirement 由 target_domain_controller 或其 item.components 中的组件实现时填 'yes'；由运行环境、其他域控/ECU、其他 item、供应商、后台或流程实现时填 'no'；信息不足时填 'no' 并在 open_issue 说明，禁止默认 yes；\n"
                     "   - Requirement：包含 cybersecurity_requirement_id 并以 CSR-001, CSR-002 等顺序编号格式编写，与中英文对照的 cybersecurity_requirement；并填写 requirement_scope（item / operational_environment / other_item）、owner、allocated_to、allocation_type、requirement_type（product/process/supplier）、verification_method、acceptance_criteria、source_ids、goal_ids、control_ids、rationale；每条 Requirement 只能有一个保护对象、一个行为、一个可验证结果，多个独立“应/不应/不得”必须拆成多条；技术中立，即使输入包含具体协议/算法/端口/数值，输出也必须抽象为能力要求，不得原样保留；\n"
-                    "   - TARA 表文本列格式：cybersecurity_claim 用【Claim 类型】【声明】【剩余风险】【依据】【适用条件】【有效期】【批准角色】【证据】【待确认】组织；cybersecurity_goal 用【保护对象】【安全属性】【目标】【成功判据】组织；cybersecurity_control 用【控制类型】【实现类型】【控制目标】【作用点】【依赖/交互】组织；cybersecurity_requirement 必须严格使用【主体】...【要求】... 组织（英文侧对应 [Subject] ... [Requirement] ...），两个标签缺一不可；结构化字段仍按上面字段填写；\n"
-                    "   - 【强制】requirements 与 summarized_requirements 是两个独立数组：requirements 是逐条结构化原始需求（每条都必须带【主体】【要求】标签），summarized_requirements 是归纳合并后的纯文本；严禁把 summarized_requirements 的文本直接复制/复用为 requirements 的 cybersecurity_requirement；\n"
-                    "   - 输出前自检：逐条检查 requirements 的 cybersecurity_requirement 是否同时包含【主体】与【要求】（英文 [Subject] 与 [Requirement]）；任一条缺失必须先修正再输出，不得遗漏；\n"
+                    "   - 文本列编写规范：严禁使用【主体】【要求】【保护对象】【目标】【控制类型】【声明】或 [Subject][Requirement] 等任何生硬的方括号标签拼凑语句！所有文本字段（cybersecurity_goal, cybersecurity_claim, cybersecurity_control, cybersecurity_requirement）均必须输出为语义通顺、规范自然的完整工程句子（采用“中文描述 / English translation”双语对照）：\n"
+                    "     * cybersecurity_goal（安全目标）：自然表述对保护对象的安全属性防护目标与预期达成的结果，语言通顺连贯，不要用方括号标签；\n"
+                    "     * cybersecurity_control（控制措施）：自然表述在具体作用点上采取的技术机制、调用依赖与防护控制动作，语言通顺连贯；\n"
+                    "     * cybersecurity_claim（风险声明）：针对剩余风险接受或转移，以通畅连贯的工程声明表述风险内容、接受依据、前提条件与复核要求；\n"
+                    "     * cybersecurity_requirement（网络安全需求）：以“<责任主体> 应/不得/必须 <具体行为与控制指标>”的自然规范语法编写，严禁添加【主体】【要求】等任何方括号标签；例如：“ADCU调试代理应在任何调试会话建立前对调试主机执行身份认证，未通过认证的会话不得建立。 / ADCU debug agent shall authenticate the debug host before establishing any debug session; a session shall not be established without successful authentication.”；\n"
+                    "   - 【强制】requirements 与 summarized_requirements 是两个独立数组：requirements 是逐条结构化原始需求，summarized_requirements 是归纳合并后的汇总需求；严禁把两者文本直接混淆复制；所有需求文本均严禁携带【主体】【要求】等方括号标签；\n"
                     "3. 编制合并后安全需求 (summarized_requirements 归纳与合并规则)：\n"
                     "   - 针对所有 allocated_to_device 为 'yes' 的原始网络安全要求进行系统性归纳与合并去重：\n"
                     "     * 原子化边界：一条 CSR = 一个保护对象 + 一个控制目标 + 一个可验证结果；\n"
@@ -1746,11 +1875,11 @@ def tara_ai_analysis_call(db: Session, stage: str, asset: Asset, prev_stages: di
                 if matched_dec:
                     treatment = matched_dec.get("risk_treatment", "Reduce")
                     item_change = matched_dec.get("item_change", "")
-                    cybersecurity_goal = matched_dec.get("cybersecurity_goal", "")
+                    cybersecurity_goal = clean_goal_text(matched_dec.get("cybersecurity_goal", ""))
                     security_property = matched_dec.get("security_property", "")
                     goal_asset = matched_dec.get("goal_asset", "")
                     success_criteria = matched_dec.get("success_criteria", "")
-                    cybersecurity_claim = matched_dec.get("cybersecurity_claim", "")
+                    cybersecurity_claim = clean_claim_text(matched_dec.get("cybersecurity_claim", ""))
                     claim_type = matched_dec.get("claim_type", "")
                     residual_risk = matched_dec.get("residual_risk", "")
                     claim_justification = matched_dec.get("claim_justification", "")
@@ -1927,7 +2056,7 @@ def tara_ai_analysis_call(db: Session, stage: str, asset: Asset, prev_stages: di
                     if rd.get("risk_treatment") == "Reduce":
                         raw_reqs = rd.get("_raw_requirements", [])
                         for req in raw_reqs:
-                            ctrl_text = req.get("cybersecurity_control", "")
+                            ctrl_text = clean_control_text(req.get("cybersecurity_control", ""))
                             req_text = clean_requirement_text(req.get("cybersecurity_requirement", ""))
                             requirements.append({
                                 "threat_id": rd["threat_id"],
@@ -1973,7 +2102,7 @@ def tara_ai_analysis_call(db: Session, stage: str, asset: Asset, prev_stages: di
                         "title": item.get("title", ""),
                         "sub_title": item.get("sub_title", ""),
                         "security_domain": item.get("security_domain", "通用安全 / General Security"),
-                        "cybersecurity_requirement": item.get("cybersecurity_requirement", ""),
+                        "cybersecurity_requirement": sum_req_text,
                         "verification_method": item.get("verification_method", ""),
                         "requirement_type": item.get("requirement_type", "product"),
                         "rationale": item.get("rationale", ""),
@@ -2006,9 +2135,8 @@ def tara_ai_analysis_call(db: Session, stage: str, asset: Asset, prev_stages: di
                     "   - Control：包含 cybersecurity_control_id 并以 CSO-001, CSO-002 等顺序编号格式编写，与中英文对照的 cybersecurity_control；并分别填写 control_type（预防/检测/纠正）、implementation_type（技术/操作）、control_objective（控制目标）、control_point（作用点：资产/接口/生命周期阶段）、dependent_functions、dependent_controls、interaction_description、applicable_lifecycle；不要写具体协议/算法/产品型号；\n"
                     "   - Allocated to Device：只有 Requirement 由 target_domain_controller 或其 item.components 中的组件实现时填 'yes'；由运行环境、其他域控/ECU、其他 item、供应商、后台或流程实现时填 'no'；信息不足时填 'no' 并在 open_issue 说明，禁止默认 yes；\n"
                     "   - Requirement：包含 cybersecurity_requirement_id 并以 CSR-001, CSR-002 等顺序编号格式编写，与中英文对照的 cybersecurity_requirement；并填写 requirement_scope（item / operational_environment / other_item）、owner、allocated_to、allocation_type、requirement_type（product/process/supplier）、verification_method、acceptance_criteria、source_ids、goal_ids、control_ids、rationale；每条 Requirement 只能有一个保护对象、一个行为、一个可验证结果，多个独立“应/不应/不得”必须拆成多条；技术中立，即使输入包含具体协议/算法/端口/数值，输出也必须抽象为能力要求，不得原样保留；\n"
-                    "   - TARA 表文本列格式：cybersecurity_requirement 必须严格使用【主体】...【要求】... 组织（英文侧对应 [Subject] ... [Requirement] ...），两个标签缺一不可；\n"
-                    "   - 【强制】requirements 与 summarized_requirements 是两个独立数组：requirements 是逐条结构化原始需求（每条都必须带【主体】【要求】标签），summarized_requirements 是归纳合并后的纯文本；严禁把 summarized_requirements 的文本直接复制/复用为 requirements 的 cybersecurity_requirement；\n"
-                    "   - 输出前自检：逐条检查 requirements 的 cybersecurity_requirement 是否同时包含【主体】与【要求】（英文 [Subject] 与 [Requirement]）；任一条缺失必须先修正再输出，不得遗漏；\n"
+                    "   - 需求文本编写规范：严禁使用【主体】【要求】或 [Subject][Requirement] 等任何生硬的方括号标签拼凑文本！cybersecurity_requirement 必须以“<责任主体> 应/不得/必须 <具体行为与控制指标>”的自然规范语法编写（双语对照格式为“中文描述 / English translation”），保持语句专业连贯通顺；例如：“ADCU调试代理应在任何调试会话建立前对调试主机执行身份认证，未通过认证的会话不得建立。 / ADCU debug agent shall authenticate the debug host before establishing any debug session; a session shall not be established without successful authentication.”；\n"
+                    "   - 【强制】requirements 与 summarized_requirements 是两个独立数组：requirements 是逐条结构化原始需求，summarized_requirements 是归纳合并后的汇总需求；严禁把两者文本直接混淆复制；所有需求文本均严禁携带【主体】【要求】等方括号标签；\n"
                     "2. 编制合并后安全需求 (summarized_requirements 归纳与合并规则)：\n"
                     "   - 针对所有 allocated_to_device 为 'yes' 的原始网络安全要求进行系统性归纳与合并去重：\n"
                     "     * 原子化边界：一条 CSR = 一个保护对象 + 一个控制目标 + 一个可验证结果；\n"
@@ -2027,7 +2155,7 @@ def tara_ai_analysis_call(db: Session, stage: str, asset: Asset, prev_stages: di
                 
                 requirements = []
                 for req in ai_res.get("requirements", []):
-                    ctrl_text = req.get("cybersecurity_control", "")
+                    ctrl_text = clean_control_text(req.get("cybersecurity_control", ""))
                     req_text = clean_requirement_text(req.get("cybersecurity_requirement", ""))
                     requirements.append({
                         "threat_id": req.get("threat_id", "TS_Integrity_1"),
@@ -2072,7 +2200,7 @@ def tara_ai_analysis_call(db: Session, stage: str, asset: Asset, prev_stages: di
                         "title": item.get("title", ""),
                         "sub_title": item.get("sub_title", ""),
                         "security_domain": item.get("security_domain", "通用安全 / General Security"),
-                        "cybersecurity_requirement": item.get("cybersecurity_requirement", ""),
+                        "cybersecurity_requirement": sum_req_text,
                         "verification_method": item.get("verification_method", ""),
                         "requirement_type": item.get("requirement_type", "product"),
                         "rationale": item.get("rationale", ""),

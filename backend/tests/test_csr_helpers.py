@@ -11,6 +11,10 @@ from app.services.csr_synthesis import (
     get_csr_traceability_maps,
     semantic_tokens,
     _jaccard,
+    clean_requirement_text,
+    clean_goal_text,
+    clean_control_text,
+    clean_claim_text,
 )
 
 
@@ -23,6 +27,9 @@ class CsrHelperTests(unittest.TestCase):
         self.assertIn("过滤", atoms[0][1])
         self.assertEqual(atoms[1][0], "CAN收发器")
         self.assertIn("校验", atoms[1][1])
+        # Atoms should be natural fluent sentences without 【】
+        self.assertNotIn("【主体】", atoms[0][2])
+        self.assertNotIn("【要求】", atoms[0][2])
 
     def test_extract_subject(self):
         text = "【主体】安全网关；【要求】应阻止未知源IP的报文转发。"
@@ -30,6 +37,32 @@ class CsrHelperTests(unittest.TestCase):
 
         en_text = "[Subject] HSM; [Requirement] Shall store root keys securely."
         self.assertEqual(extract_subject(en_text), "HSM")
+
+        # Natural language without brackets
+        natural_text = "ADCU调试代理应在任何调试会话建立前对调试主机执行身份认证"
+        self.assertEqual(extract_subject(natural_text), "ADCU调试代理")
+
+    def test_clean_requirement_and_fluency(self):
+        raw_csr = "【主体】ADCU调试代理【要求】应在任何调试会话建立前对调试主机执行身份认证，未通过认证的会话不得建立。 / [Subject] ADCU debug agent [Requirement] shall authenticate the debug host before establishing any debug session; a session shall not be established without successful authentication."
+        cleaned = clean_requirement_text(raw_csr)
+        self.assertNotIn("【", cleaned)
+        self.assertNotIn("】", cleaned)
+        self.assertNotIn("[Subject]", cleaned)
+        self.assertTrue(cleaned.startswith("ADCU调试代理应在"))
+        self.assertIn("ADCU debug agent shall", cleaned)
+
+    def test_clean_goal_and_control_and_claim(self):
+        raw_goal = "【保护对象】调试接口【安全属性】真实性【目标】确保只有合法调试工具能够建立调试会话【成功判据】未认证会话被拒绝并记录 / [Protected Asset] Debug interface [Goal] Ensure only legitimate tools connect [Success Criteria] Unauthenticated rejected."
+        cg = clean_goal_text(raw_goal)
+        self.assertNotIn("【", cg)
+        self.assertNotIn("】", cg)
+        self.assertIn("确保只有合法调试工具能够建立调试会话", cg)
+
+        raw_ctrl = "【控制类型】预防【实现类型】技术【控制目标】验证调试主机身份【作用点】调试接口【依赖/交互】调试代理在会话前调用认证能力 / [Dependency/Interaction] Agent invokes auth"
+        cc = clean_control_text(raw_ctrl)
+        self.assertNotIn("【", cc)
+        self.assertNotIn("】", cc)
+        self.assertEqual(cc, "调试代理在会话前调用认证能力 / Agent invokes auth")
 
     def test_semantic_tokens_and_jaccard(self):
         t1 = semantic_tokens("控制器应支持固件完整性校验与防回滚")

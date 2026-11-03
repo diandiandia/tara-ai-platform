@@ -52,7 +52,11 @@ def get_asset_sn(asset) -> str:
 
 from app.services.csr_synthesis import (
     build_id_maps,
-    get_csr_traceability_maps
+    get_csr_traceability_maps,
+    clean_goal_text,
+    clean_control_text,
+    clean_claim_text,
+    clean_requirement_text,
 )
 
 def collect_report_data(steps: List[TaraStep], assets: List[Asset], desensitize: bool, hash_to_global_map: dict = None, mapping_only: bool = False) -> List[dict]:
@@ -750,6 +754,14 @@ def create_excel_report(domain: Domain, steps: List[TaraStep], assets: List[Asse
         for row_data in rows:
             for col_idx, key in enumerate(keys, 1):
                 val = row_data.get(key, "")
+                if val and key == "cybersecurity_goal":
+                    val = clean_goal_text(val)
+                elif val and key == "cybersecurity_control":
+                    val = clean_control_text(val)
+                elif val and key == "cybersecurity_claim":
+                    val = clean_claim_text(val)
+                elif val and key == "cybersecurity_requirement":
+                    val = clean_requirement_text(val)
                 cell = ws.cell(row=current_row, column=col_idx, value=val)
                 cell.font = cell_font
                 cell.border = thin_border
