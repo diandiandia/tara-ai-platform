@@ -309,7 +309,27 @@ export const useTaraStore = create((set, get) => ({
       const link = document.createElement('a');
       link.href = downloadUrl;
       
-      const filename = `TARA_Report_${domainId}_${exportType}_${desensitize ? 'desensitized' : 'full'}.xlsx`;
+      // 优先使用后端返回的文件名（内含 YYYYmmdd_HHMMSS 时间戳），保证下载名与服务器产物一致
+      const contentDisposition = response.headers.get('content-disposition') || '';
+      const starMatch = /filename\*=utf-8''([^;]+)/i.exec(contentDisposition);
+      const plainMatch = /filename="?([^";]+)"?/i.exec(contentDisposition);
+      let filename = '';
+      if (starMatch) {
+        try {
+          filename = decodeURIComponent(starMatch[1].trim());
+        } catch (_) {
+          filename = '';
+        }
+      } else if (plainMatch) {
+        filename = plainMatch[1].trim();
+      }
+      if (!filename) {
+        const now = new Date();
+        const pad = (n) => String(n).padStart(2, '0');
+        const stamp = `${now.getFullYear()}${pad(now.getMonth() + 1)}${pad(now.getDate())}`
+          + `_${pad(now.getHours())}${pad(now.getMinutes())}${pad(now.getSeconds())}`;
+        filename = `TARA_Report_${domainId}_${exportType}_${desensitize ? 'desensitized' : 'full'}_${stamp}.xlsx`;
+      }
       link.setAttribute('download', filename);
       document.body.appendChild(link);
       link.click();

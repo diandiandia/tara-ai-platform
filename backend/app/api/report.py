@@ -771,7 +771,13 @@ def create_excel_report(domain: Domain, steps: List[TaraStep], assets: List[Asse
         hash_to_global_map.update(mapping_bundle.get("tara_to_targets") or {})
     else:
         csr_rows_pre = collect_csr_report_data(steps, assets, hash_to_global_map, db=db, domain=domain, force_recompute=force_recompute)
-    
+
+    if has_csr and not csr_rows_pre:
+        raise ValueError(
+            "CSR_Requirements 为空：请先导入固定 CSR 目录并执行「TARA→固定 CSR 映射」后再导出，"
+            "否则没有可追溯的映射结果可写。"
+        )
+
     # 导出 TARA Sheet
     if has_tara:
         ws = default_ws
@@ -984,6 +990,7 @@ def create_excel_report(domain: Domain, steps: List[TaraStep], assets: List[Asse
             ("Full Match Count / 完整覆盖数", summary.get("full_count", 0)),
             ("Partial Match Count / 部分覆盖数", summary.get("partial_count", 0)),
             ("Gap Count / 无匹配数", summary.get("gap_count", 0)),
+            ("Conflict Count / 冲突数", summary.get("conflict_count", 0)),
             ("Error Count / 映射错误数", summary.get("error_count", 0)),
             ("Target CSR Covered / 被引用CSR数", summary.get("target_covered_count", 0)),
             ("Catalog Rows Without TARA / 未被TARA引用目录数", summary.get("catalog_unmapped_count", 0)),
@@ -1079,6 +1086,49 @@ def create_excel_report(domain: Domain, steps: List[TaraStep], assets: List[Asse
                     )
             for c_idx, width in {1: 22, 2: 24, 3: 22, 4: 12, 5: 10, 6: 50, 7: 40, 8: 60}.items():
                 ws_unmapped.column_dimensions[openpyxl.utils.get_column_letter(c_idx)].width = width
+
+        # 导出 TARA_CSR_Conflicts：TARA 需求与固定 CSR 互斥、无法合并的条目
+        conflict_details = mapping_bundle.get("conflicts") or []
+        ws_conf = wb.create_sheet(title="TARA_CSR_Conflicts")
+        ws_conf.views.sheetView[0].showGridLines = True
+        conflict_headers = [
+            "TARA Requirement ID / TARA需求ID", "Source TARA IDs / 原始TARA ID",
+            "Asset / 资产", "TARA Requirement Text / TARA需求原文",
+            "Fixed CSR ID / 固定CSR编号", "Fixed CSR Name / 固定CSR名称",
+            "Fixed CSR Text / 固定CSR原文", "Confidence / 置信度",
+            "Conflict Note / 冲突说明", "Needs Review / 待复核",
+        ]
+        for col_idx, header in enumerate(conflict_headers, 1):
+            cell = ws_conf.cell(row=1, column=col_idx, value=header)
+            cell.fill = header_fill_r1
+            cell.font = header_font
+            cell.alignment = Alignment(horizontal="center", vertical="center", wrap_text=True)
+            cell.border = thin_border
+        ws_conf.row_dimensions[1].height = 30
+        for row_idx, detail in enumerate(conflict_details, 2):
+            values = [
+                detail.get("tara_req_id", ""),
+                detail.get("source_tara_ids", ""),
+                detail.get("asset_name", ""),
+                detail.get("tara_text", ""),
+                detail.get("target_csr_id", ""),
+                detail.get("target_csr_name", ""),
+                detail.get("target_csr_text", ""),
+                detail.get("confidence", ""),
+                detail.get("conflict_note", ""),
+                detail.get("needs_review", ""),
+            ]
+            for col_idx, value in enumerate(values, 1):
+                cell = ws_conf.cell(row=row_idx, column=col_idx, value=value)
+                cell.font = cell_font
+                cell.border = thin_border
+                cell.alignment = Alignment(
+                    horizontal="center" if col_idx in (1, 5, 8, 10) else "left",
+                    vertical="center",
+                    wrap_text=True,
+                )
+        for c_idx, width in {1: 22, 2: 24, 3: 22, 4: 65, 5: 18, 6: 32, 7: 65, 8: 10, 9: 55, 10: 12}.items():
+            ws_conf.column_dimensions[openpyxl.utils.get_column_letter(c_idx)].width = width
 
     # 导出 Traceability_Matrix Sheet (全景双向追溯矩阵)
     if has_tara and has_csr:
@@ -1359,7 +1409,8 @@ def create_excel_report(domain: Domain, steps: List[TaraStep], assets: List[Asse
             for c_idx, width in {1: 12, 2: 24, 3: 18, 4: 55, 5: 16, 6: 30, 7: 55, 8: 10, 9: 45, 10: 55, 11: 12}.items():
                 ws_conf.column_dimensions[openpyxl.utils.get_column_letter(c_idx)].width = width
 
-    filename_suffix = f"{export_type}_{'desensitized' if desensitize else 'full'}"
+    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+    filename_suffix = f"{export_type}_{'desensitized' if desensitize else 'full'}_{timestamp}"
     file_path = os.path.join(EXPORTS_DIR, f"TARA_Report_{domain.id}_{filename_suffix}.xlsx")
     wb.save(file_path)
     return file_path
@@ -1409,19 +1460,23 @@ def export_report(
         if get_active_catalog_version(db) is None:
             raise HTTPException(status_code=400, detail="尚未导入固定 CSR 目录，无法使用 mapping 导出。")
 
-    file_path = create_excel_report(
-        domain,
-        steps,
-        assets,
-        is_desensitized,
-        export_type_lower,
-        db=db,
-        force_recompute=force_recompute,
-        csr_source=csr_source_lower,
-    )
+    try:
+        file_path = create_excel_report(
+            domain,
+            steps,
+            assets,
+            is_desensitized,
+            export_type_lower,
+            db=db,
+            force_recompute=force_recompute,
+            csr_source=csr_source_lower,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
     media_type = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
-    filename = f"TARA_Report_{domain.name}_{export_type_lower}_{'desensitized' if is_desensitized else 'full'}.xlsx"
-        
+    # 与磁盘产物同名（含 YYYYmmdd_HHMMSS 时间戳），避免重复导出互相覆盖。
+    filename = os.path.basename(file_path)
+
     return FileResponse(
         path=file_path,
         media_type=media_type,
