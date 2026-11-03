@@ -1169,22 +1169,7 @@ export default function Workbench({ setPage, setDomainId, setDiagramId, projectI
               {/* 最终需求合并：仅当 TARA 分析结果就绪时显示（没有 TARA 结果就不显示 OEM 合并功能） */}
               {resultsReady && (
               <div style={{ marginTop: '14px', paddingTop: '14px', borderTop: '1px solid var(--border-color)', flexShrink: 0 }}>
-                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '16px', flexWrap: 'wrap' }}>
-                  <div style={{ fontSize: '12px', color: 'var(--text-secondary)', display: 'flex', flexDirection: 'column', gap: '2px' }}>
-                    <span>
-                      {t("客户需求")}: <b>{customerReqCount}</b>
-                      {mergedCount > 0 && <> · {t("最终需求")}: <b>{mergedCount}</b></>}
-                    </span>
-                    <span style={{ color: csrStatus?.ready ? 'var(--success)' : '#e11d48' }}>
-                      {t("固定 CSR 目录")}: {csrStatus?.catalog_ready
-                        ? <b>{csrStatus.catalog_version}（{csrStatus.catalog_row_count} {t("条")}）</b>
-                        : <>{t("未导入")} · {t("请到系统配置导入")}</>}
-                      {' · '}
-                      {t("TARA→CSR 映射")}: {csrStatus?.mapping_ready
-                        ? <b>{csrStatus.mapping_rows} {t("条")}</b>
-                        : t("未执行")}
-                    </span>
-                  </div>
+                <div style={{ display: 'flex', justifyContent: 'flex-end', alignItems: 'center', gap: '16px', flexWrap: 'wrap' }}>
                   <div style={{ display: 'flex', gap: '12px', alignItems: 'center' }}>
                     <input
                       ref={oemFileRef}
