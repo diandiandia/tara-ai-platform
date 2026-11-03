@@ -2282,14 +2282,19 @@ def run_tara_analysis(self, domain_id: int, run_record_id: int, force: bool = Fa
             db.close()
             return {"status": "cancelled"}
             
-        # 4. 执行基于 UNECE R155 Annex 5 引导的项目级全局安全需求综合提炼
+        # 4. TARA 需求 → 固定 CSR 目录映射（跑批结束自动执行；目录未导入或
+        #    映射失败只记录日志，不阻断本次 TARA 跑批）
         try:
-            from app.services.csr_synthesis import get_or_synthesize_global_csrs
-            steps = db.query(TaraStep).filter(TaraStep.run_id == run_record_id).all()
-            assets = db.query(Asset).filter(Asset.domain_id == domain_id).all()
-            get_or_synthesize_global_csrs(db, domain, steps, assets)
-        except Exception as synth_err:
-            print(f"[TARA-AI] 警告: 项目级全局需求提炼任务执行异常: {synth_err}")
+            from app.services.csr_mapping import map_domain_run_to_fixed_catalog
+
+            mapping_result = map_domain_run_to_fixed_catalog(db, domain, run)
+            print(
+                "[TARA-AI] 固定 CSR 自动映射: "
+                f"{mapping_result.get('status')} "
+                f"rows={mapping_result.get('persisted_rows', 0)}"
+            )
+        except Exception as mapping_err:
+            print(f"[TARA-AI] 警告: TARA→固定 CSR 自动映射异常: {mapping_err}")
 
         run.status = "completed"
         run.completed_at = datetime.now()

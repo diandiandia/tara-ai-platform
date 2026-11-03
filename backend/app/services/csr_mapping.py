@@ -572,6 +572,57 @@ def persist_mappings(
     return len(seen)
 
 
+def map_domain_run_to_fixed_catalog(
+    db: Session,
+    domain: Domain,
+    run: TaraRun,
+    batch_size: int = DEFAULT_BATCH_SIZE,
+    max_workers: int = 4,
+    allow_conflict: bool = True,
+) -> dict:
+    """Map one finished TARA run onto the active fixed CSR catalog and persist.
+
+    Used automatically at the end of a TARA run.  Returns a small status dict
+    instead of raising when a prerequisite is missing, so a TARA run is never
+    failed just because the catalog / LLM is not ready.
+    """
+    version = get_active_catalog_version(db)
+    catalog = get_active_catalog(db)
+    if version is None or not catalog:
+        return {"status": "skipped", "reason": "no_active_catalog", "persisted_rows": 0}
+
+    settings = _settings_from_db(db)
+    if not settings:
+        return {"status": "skipped", "reason": "no_llm_settings", "persisted_rows": 0}
+
+    collected = collect_tara_requirements(db, domain.id, run_id=run.id)
+    if not collected["requirements"]:
+        return {"status": "skipped", "reason": "no_requirements", "persisted_rows": 0}
+
+    mapped = map_tara_requirements(
+        collected["requirements"],
+        catalog,
+        settings,
+        batch_size=batch_size,
+        max_workers=max_workers,
+        allow_conflict=allow_conflict,
+    )
+    saved = persist_mappings(
+        db,
+        collected["domain"],
+        collected["run"],
+        mapped["rows"],
+        catalog_version=version.version,
+        replace=True,
+    )
+    return {
+        "status": "completed",
+        "catalog_version": version.version,
+        "persisted_rows": saved,
+        "summary": mapped["summary"],
+    }
+
+
 def _mapping_rows(db: Session, domain_id: int, run_id: int) -> List[TaraCsrMapping]:
     return (
         db.query(TaraCsrMapping)

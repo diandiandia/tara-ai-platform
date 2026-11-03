@@ -1,8 +1,9 @@
 import { useI18n } from '../stores/i18nStore';
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { useTaraStore } from '../stores/taraStore';
 import { useAuthStore } from '../stores/authStore';
-import { ArrowLeft, ShieldAlert, Save, Key, Globe, Layers, AlertCircle, CheckCircle2 } from 'lucide-react';
+import { fetchCsrCatalog, importCsrCatalog } from '../stores/reqMergeStore';
+import { ArrowLeft, ShieldAlert, Save, Key, Globe, Layers, AlertCircle, CheckCircle2, Upload } from 'lucide-react';
 
 export default function Settings({ setPage }) {
   const { t, language } = useI18n();
@@ -17,6 +18,40 @@ export default function Settings({ setPage }) {
   const [testing, setTesting] = useState(false);
   const [saveSuccess, setSaveSuccess] = useState(false);
 
+  // 固定 CSR 目录（全局、一次性导入；TARA 跑批结束会自动映射到该目录）
+  const [catalogInfo, setCatalogInfo] = useState(null);
+  const [catalogImporting, setCatalogImporting] = useState(false);
+  const [catalogMsg, setCatalogMsg] = useState(null);
+  const catalogFileRef = useRef(null);
+
+  const loadCatalog = async () => {
+    try {
+      setCatalogInfo(await fetchCsrCatalog());
+    } catch (_) {
+      setCatalogInfo(null);
+    }
+  };
+
+  const handleCatalogFileChange = async (event) => {
+    const file = event.target.files?.[0];
+    event.target.value = '';
+    if (!file) return;
+    setCatalogImporting(true);
+    setCatalogMsg(null);
+    try {
+      const res = await importCsrCatalog(file);
+      setCatalogMsg({
+        type: 'success',
+        text: `${t("已导入固定 CSR 目录")}：${res.version}（${res.row_count} ${t("条")}${res.sheet_name ? `，${res.sheet_name}` : ''}）`,
+      });
+      await loadCatalog();
+    } catch (err) {
+      setCatalogMsg({ type: 'error', text: err?.response?.data?.detail || t("固定 CSR 目录导入失败") });
+    } finally {
+      setCatalogImporting(false);
+    }
+  };
+
   useEffect(() => {
     const loadSettings = async () => {
       const data = await fetchSettings();
@@ -27,6 +62,7 @@ export default function Settings({ setPage }) {
       }
     };
     loadSettings();
+    loadCatalog();
   }, [fetchSettings]);
 
   const handleSave = async (e) => {
@@ -263,6 +299,59 @@ export default function Settings({ setPage }) {
           )}
         </div>
       </form>
+      {/* 固定 CSR 目录：全局一次性导入，TARA 跑批结束自动映射 */}
+      <div className="glass" style={{ padding: '32px', marginTop: '24px' }}>
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: '16px', flexWrap: 'wrap' }}>
+          <div>
+            <h3 style={{ margin: 0, fontSize: '16px', fontWeight: '600' }}>{t("固定 CSR 目录")}</h3>
+            <p style={{ color: 'var(--text-secondary)', fontSize: '13px', marginTop: '6px', marginBottom: 0 }}>
+              {t("TARA 分析结束后会自动把本域控的 TARA 需求映射到该目录，并写入导出的 CSR_Requirements / TARA_CSR_Conflicts。")}
+            </p>
+          </div>
+          <div style={{ display: 'flex', gap: '12px', alignItems: 'center' }}>
+            <input
+              ref={catalogFileRef}
+              type="file"
+              accept=".xlsx,.xls"
+              style={{ display: 'none' }}
+              onChange={handleCatalogFileChange}
+            />
+            <button
+              type="button"
+              onClick={() => catalogFileRef.current?.click()}
+              className="btn btn-secondary"
+              disabled={!isEditable || catalogImporting}
+              title={!isEditable ? t("仅管理员可导入固定 CSR 目录") : t("导入固定 CSR 目录 xlsx（列示例：需求编号 / 分类领域 / 需求描述）")}
+            >
+              <Upload size={16} />
+              <span>{catalogImporting ? t("导入中...") : t("导入固定 CSR 目录")}</span>
+            </button>
+          </div>
+        </div>
+
+        <div style={{ marginTop: '16px', fontSize: '13px', color: 'var(--text-secondary)' }}>
+          {catalogInfo?.version ? (
+            <>
+              {t("当前版本")}: <b>{catalogInfo.version}</b> · {t("目录条数")}: <b>{catalogInfo.row_count}</b>
+              {catalogInfo.source_file && <> · {catalogInfo.source_file}</>}
+            </>
+          ) : (
+            <span style={{ color: '#e11d48' }}>
+              {t("尚未导入固定 CSR 目录，TARA 跑批完成后将无法自动映射。")}
+            </span>
+          )}
+        </div>
+
+        {catalogMsg && (
+          <div style={{
+            marginTop: '12px',
+            fontSize: '13px',
+            color: catalogMsg.type === 'error' ? '#e11d48' : 'var(--success)',
+          }}>
+            {catalogMsg.text}
+          </div>
+        )}
+      </div>
     </div>
   );
 }

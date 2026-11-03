@@ -12,9 +12,12 @@ sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")
 
 import app.models  # noqa: F401 - register all tables
 from app.core.database import Base
+from app.models.asset import Asset
 from app.models.csr_catalog import CsrCatalogEntry, CsrCatalogVersion, TaraCsrMapping
 from app.models.domain import Domain
+from app.models.system_settings import SystemSettings
 from app.models.tara_run import TaraRun
+from app.models.tara_step import TaraStep
 from app.services.csr_catalog import (
     get_active_catalog,
     get_active_catalog_version,
@@ -24,6 +27,7 @@ from app.services.csr_catalog import (
 from app.services.csr_mapping import (
     _validate_mapping_batch,
     build_mapping_report_data,
+    map_domain_run_to_fixed_catalog,
     map_tara_requirements,
     persist_mappings,
 )
@@ -280,6 +284,89 @@ class MappingPersistenceTests(unittest.TestCase):
 
         statuses = {row["csr_id"]: row["mapping_status"] for row in report["csr_rows"]}
         self.assertEqual(statuses["CS-HW-001"], "conflict")
+
+
+class AutoMappingTests(unittest.TestCase):
+    """TARA 跑批结束时自动执行的映射：无目录/无大模型时跳过，正常时落库。"""
+
+    def setUp(self):
+        self.engine = create_engine("sqlite:///:memory:")
+        Base.metadata.create_all(self.engine)
+        self.db = sessionmaker(bind=self.engine)()
+        self.domain = Domain(id=1, project_id=1, name="ADCU", status="completed", progress=100)
+        self.run = TaraRun(id=1, domain_id=1, status="completed", progress=100)
+        self.db.add_all([self.domain, self.run])
+        self.db.add(Asset(
+            id=1, domain_id=1, name="ADCU", asset_type="hardware", status="confirmed",
+        ))
+        self.db.add(TaraStep(
+            run_id=1,
+            asset_id=1,
+            stage="stage5",
+            status="completed",
+            input_hash="hash",
+            analysis_result={"final_output": {"requirements": [{
+                "cybersecurity_requirement_id": "T1",
+                "cybersecurity_requirement": "调试接口应在量产阶段禁用",
+                "source_requirement_ids": ["R1"],
+            }]}},
+        ))
+        self.db.commit()
+        self.catalog_path = _catalog_workbook([
+            ["CS-HW-001", "硬件与物理安全", "调试接口封堵", "量产件应封闭调试接口"],
+        ])
+
+    def tearDown(self):
+        self.db.close()
+        self.engine.dispose()
+        os.unlink(self.catalog_path)
+
+    def test_skips_when_no_catalog(self):
+        result = map_domain_run_to_fixed_catalog(self.db, self.domain, self.run)
+        self.assertEqual(result["status"], "skipped")
+        self.assertEqual(result["reason"], "no_active_catalog")
+        self.assertEqual(self.db.query(TaraCsrMapping).count(), 0)
+
+    def test_skips_when_no_llm_settings(self):
+        import_csr_catalog(self.db, self.catalog_path)
+        result = map_domain_run_to_fixed_catalog(self.db, self.domain, self.run)
+        self.assertEqual(result["status"], "skipped")
+        self.assertEqual(result["reason"], "no_llm_settings")
+
+    def test_maps_run_and_persists_rows(self):
+        import_csr_catalog(self.db, self.catalog_path)
+        self.db.add(SystemSettings(
+            api_base_url="http://fake", api_key="test", model_name="fake",
+        ))
+        self.db.commit()
+
+        prompts = []
+
+        def fake_llm(settings, prompt, payload, temperature=None):
+            prompts.append(prompt)
+            return {"mappings": [
+                {
+                    "tara_id": requirement["tara_id"],
+                    "target_csr_ids": ["CS-HW-001"],
+                    "match_type": "full",
+                    "confidence": 0.9,
+                    "rationale": "cover",
+                }
+                for requirement in payload["requirements"]
+            ]}
+
+        with patch("app.services.csr_mapping._call_llm_json", side_effect=fake_llm):
+            result = map_domain_run_to_fixed_catalog(self.db, self.domain, self.run)
+
+        self.assertEqual(result["status"], "completed")
+        self.assertGreaterEqual(result["persisted_rows"], 1)
+        self.assertEqual(self.db.query(TaraCsrMapping).count(), result["persisted_rows"])
+        self.assertEqual(result["summary"]["full_count"], 1)
+        # 自动映射开启冲突识别
+        self.assertIn("conflict", prompts[0])
+        report = build_mapping_report_data(self.db, 1, 1)
+        self.assertEqual(report["summary"]["full_count"], 1)
+        self.assertEqual(report["summary"]["conflict_count"], 0)
 
 
 if __name__ == "__main__":
