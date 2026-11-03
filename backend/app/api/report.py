@@ -746,9 +746,11 @@ def create_excel_report(domain: Domain, steps: List[TaraStep], assets: List[Asse
         bottom=Side(style='thin', color='D1D5DB')
     )
 
-    has_tara = export_type in ["all", "tara"]
-    has_csr = export_type in ["all", "csr"]
-    has_assets = export_type in ["all", "assets"]
+    # all: 全量报告（含 OEM 合并结果）
+    # tara_csr: TARA 阶段报告 = 资产 + TARA + 固定 CSR 映射（不含 OEM 合并）
+    has_tara = export_type in ["all", "tara", "tara_csr"]
+    has_csr = export_type in ["all", "csr", "tara_csr"]
+    has_assets = export_type in ["all", "assets", "tara_csr"]
 
     # 提前收集合并后安全需求的映射字典
     hash_to_global_map = {}
@@ -982,7 +984,7 @@ def create_excel_report(domain: Domain, steps: List[TaraStep], assets: List[Asse
             ws_cov.column_dimensions[openpyxl.utils.get_column_letter(c_idx)].width = width
 
     # 导出固定 CSR 目录映射明细（TARA -> 固定 CSR，多对多）
-    if mapping_mode and mapping_bundle:
+    if mapping_mode and mapping_bundle and export_type in ("all", "tara", "csr", "tara_csr"):
         summary = mapping_bundle.get("summary") or {}
         ws_map_sum = wb.create_sheet(title="CSR_Mapping_Summary")
         ws_map_sum.views.sheetView[0].showGridLines = True
@@ -1508,8 +1510,11 @@ def export_report(
     
     export_type_lower = export_type.lower().strip()
         
-    if export_type_lower not in ["all", "tara", "csr", "merged"]:
-        raise HTTPException(status_code=400, detail="不支持的导出类型，可选值: all, tara, csr, merged。")
+    if export_type_lower not in ["all", "tara", "csr", "merged", "tara_csr"]:
+        raise HTTPException(
+            status_code=400,
+            detail="不支持的导出类型，可选值: all, tara, csr, merged, tara_csr。",
+        )
 
     csr_source_lower = str(csr_source or "auto").strip().lower()
     if csr_source_lower not in ["auto", "mapping"]:

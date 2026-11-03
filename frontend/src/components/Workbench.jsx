@@ -104,7 +104,7 @@ export default function Workbench({ setPage, setDomainId, setDiagramId, projectI
     if (!activeDomain) return;
     setExportingTara(true);
     try {
-      await exportReport(activeDomain.id, false, 'all');
+      await exportReport(activeDomain.id, false, 'tara_csr');
     } finally {
       setExportingTara(false);
     }

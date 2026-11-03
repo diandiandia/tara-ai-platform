@@ -2,8 +2,8 @@ import { useI18n } from '../stores/i18nStore';
 import { useEffect, useState } from 'react';
 import { useTaraStore } from '../stores/taraStore';
 import { 
-  ArrowLeft, CheckSquare, ShieldAlert, Edit3, 
-  Download, Plus, BookOpen, Layers, Save, Trash2, X, ChevronLeft, ChevronRight
+  ArrowLeft, ShieldAlert, Edit3, 
+  Download, Plus, Layers, Save, Trash2, X, ChevronLeft, ChevronRight
 } from 'lucide-react';
 
 // --- MAPPING AND CALCULATION HELPER FUNCTIONS (ISO 21434) ---
@@ -167,19 +167,6 @@ const normalizeFeas = (val) => {
   return mapping[key] || val || 'Medium';
 };
 
-const getAssetSn = (asset) => {
-  const prefixMap = {
-    "hardware": "H",
-    "software": "S",
-    "data": "D",
-    "communication": "C"
-  };
-  const t = String(asset.asset_type || '').toLowerCase().trim();
-  const prefix = prefixMap[t] || "A";
-  const idStr = String(asset.id).padStart(3, '0');
-  return `${prefix}-001_${idStr}`;
-};
-
 const inferSecurityDomain = (reqText) => {
   const reqLower = String(reqText || '').toLowerCase();
   if (reqLower.includes("ota") || reqLower.includes("update") || reqLower.includes("升级")) {
@@ -219,216 +206,6 @@ const sortAssetsByType = (list) => {
   });
 };
 
-const cleanMajorCategory = (domainStr) => {
-  const s = String(domainStr || '').toLowerCase().trim();
-  if (s.includes("hardware") || s.includes("硬件")) {
-    return "硬件安全 / Hardware Security";
-  }
-  if (s.includes("system") || s.includes("系统")) {
-    return "系统安全 / System Security";
-  }
-  if (s.includes("crypt") || s.includes("key") || s.includes("密码") || s.includes("密钥")) {
-    return "密码安全与密钥管理 / Cryptography & Key Management";
-  }
-  if (s.includes("app") || s.includes("应用")) {
-    return "应用安全 / Application Security";
-  }
-  if (s.includes("data") || s.includes("privacy") || s.includes("数据") || s.includes("隐私")) {
-    return "数据安全与隐私保护 / Data Security & Privacy";
-  }
-  if (s.includes("monitor") || s.includes("防护") || s.includes("监控") || s.includes("test") || s.includes("测试") || s.includes("respond") || s.includes("响应")) {
-    return "安全监控、测试与响应 / Security Monitoring, Testing & Response";
-  }
-  if (s.includes("comm") || s.includes("通信") || s.includes("通讯") || s.includes("transmission")) {
-    return "通信安全 / Communication Security";
-  }
-  if (s.includes("dev") || s.includes("ops") || s.includes("开发") || s.includes("运维") || s.includes("生产") || s.includes("supply") || s.includes("chain") || s.includes("供应链")) {
-    return "安全开发、供应链与运维 / Secure Development, Supply Chain & Operations";
-  }
-  return "通用安全与其它 / General & Other Security";
-};
-
-const collectCsrReportData = (steps, assetsList) => {
-  const stepsByAsset = {};
-  steps.forEach(step => {
-    if (!stepsByAsset[step.asset_id]) {
-      stepsByAsset[step.asset_id] = {};
-    }
-    stepsByAsset[step.asset_id][step.stage] = step;
-  });
-
-  const sortedAssets = sortAssetsByType(assetsList);
-
-  // 1. Generate reqMap from all steps first (djb2 content hashing logic)
-  const reqSet = new Set();
-  sortedAssets.forEach(asset => {
-    const assetSteps = stepsByAsset[asset.id];
-    if (!assetSteps) return;
-
-    const stage5Out = assetSteps['stage5']?.analysis_result?.final_output || {};
-    let summarizedCsrs = stage5Out.summarized_csrs || [];
-
-    if (summarizedCsrs.length === 0) {
-      const requirements = stage5Out.requirements || [];
-      requirements.forEach(req => {
-        const rq = String(req.cybersecurity_requirement || '').trim();
-        if (rq && rq !== 'N/A') reqSet.add(rq);
-      });
-    } else {
-      summarizedCsrs.forEach(csr => {
-        const rq = String(csr.cybersecurity_requirement || '').trim();
-        if (rq && rq !== 'N/A') reqSet.add(rq);
-      });
-    }
-  });
-
-  const sortedReqs = Array.from(reqSet).sort();
-  const reqMap = new Map(sortedReqs.map((r, i) => [r, `CSR-${String(i + 1).padStart(4, '0')}`]));
-
-  // 2. Gather all CSRs
-  const allCsrs = [];
-  sortedAssets.forEach(asset => {
-    const assetSteps = stepsByAsset[asset.id];
-    if (!assetSteps) return;
-
-    const stage5Out = assetSteps['stage5']?.analysis_result?.final_output || {};
-    let summarizedCsrs = stage5Out.summarized_csrs || [];
-
-    if (summarizedCsrs.length === 0) {
-      const requirements = stage5Out.requirements || [];
-      const deviceReqs = requirements;
-
-      const seenReqTexts = new Set();
-      summarizedCsrs = [];
-      deviceReqs.forEach(req => {
-        const reqText = req.cybersecurity_requirement || '';
-        if (!reqText || seenReqTexts.has(reqText)) return;
-        seenReqTexts.add(reqText);
-
-        const mappedId = reqMap.get(reqText.trim()) || `CSR-0000`;
-
-        summarizedCsrs.push({
-          cybersecurity_requirement_id: mappedId,
-          csr_id: mappedId,
-          title: req.title || `针对 ${asset.name} 的安全要求 / Security requirement for ${asset.name}`,
-          sub_title: req.sub_title || `安全防护 / Cybersecurity Protection`,
-          security_domain: req.security_domain,
-          cybersecurity_requirement: reqText
-        });
-      });
-    }
-
-    summarizedCsrs.forEach(csr => {
-      allCsrs.push({
-        asset: asset,
-        csr: csr
-      });
-    });
-  });
-
-  // 3. Perform global grouping and merging
-  const mergedMap = new Map();
-  allCsrs.forEach(item => {
-    const reqText = String(item.csr.cybersecurity_requirement || '').trim();
-    if (!reqText || reqText === 'N/A') return;
-
-    const rawDomain = String(item.csr.security_domain || '').trim();
-    let majorCat, subCat;
-    if (rawDomain.includes("->")) {
-      const parts = rawDomain.split("->");
-      majorCat = cleanMajorCategory(parts[0]);
-      subCat = parts[1].trim();
-    } else {
-      majorCat = cleanMajorCategory(rawDomain);
-      subCat = String(item.csr.sub_title || item.csr.sub_category || "通用防护 / General Protection").trim();
-    }
-    const normText = reqText.replace(/\s+/g, ' ');
-    const key = `${majorCat}::${normText}`;
-
-    if (!mergedMap.has(key)) {
-      mergedMap.set(key, {
-        majorCategory: majorCat,
-        subCategory: subCat,
-        requirementText: reqText,
-        title: item.csr.title || `安全要求 / Security Requirement`,
-        assets: [],
-        origCsrIds: new Set()
-      });
-    }
-
-    const entry = mergedMap.get(key);
-    
-    // Update subcategory if it is currently generic but we have a better one
-    if ((entry.subCategory === "安全防护 / Cybersecurity Protection" || entry.subCategory === "通用防护 / General Protection") && 
-        (subCat !== "安全防护 / Cybersecurity Protection" && subCat !== "通用防护 / General Protection")) {
-      entry.subCategory = subCat;
-    }
-
-    // Add asset
-    const assetSn = getAssetSn(item.asset);
-    if (!entry.assets.some(a => a.sn === assetSn)) {
-      entry.assets.push({ sn: assetSn, name: item.asset.name });
-    }
-
-    // Add raw CSR ID
-    const rawCsrId = reqMap.get(reqText) || item.csr.csr_id || item.csr.cybersecurity_requirement_id || 'N/A';
-    if (rawCsrId !== 'N/A') {
-      entry.origCsrIds.add(rawCsrId);
-    }
-  });
-
-  // 4. Generate sorted rows
-  const majorOrder = {
-    "硬件安全 / Hardware Security": 1,
-    "系统安全 / System Security": 2,
-    "密码安全与密钥管理 / Cryptography & Key Management": 3,
-    "应用安全 / Application Security": 4,
-    "数据安全与隐私保护 / Data Security & Privacy": 5,
-    "安全监控、测试与响应 / Security Monitoring, Testing & Response": 6,
-    "通信安全 / Communication Security": 7,
-    "安全开发、供应链与运维 / Secure Development, Supply Chain & Operations": 8
-  };
-
-  const sortedKeys = Array.from(mergedMap.keys()).sort((a, b) => {
-    const entryA = mergedMap.get(a);
-    const entryB = mergedMap.get(b);
-    const orderA = majorOrder[entryA.majorCategory] || 99;
-    const orderB = majorOrder[entryB.majorCategory] || 99;
-    if (orderA !== orderB) return orderA - orderB;
-    if (entryA.subCategory !== entryB.subCategory) {
-      return entryA.subCategory.localeCompare(entryB.subCategory, 'zh');
-    }
-    return entryA.requirementText.localeCompare(entryB.requirementText, 'zh');
-  });
-
-  const rows = [];
-  let csrNum = 1;
-  sortedKeys.forEach(key => {
-    const entry = mergedMap.get(key);
-    const sortedAssets = entry.assets.sort((a, b) => a.sn.localeCompare(b.sn));
-    const assetSnStr = sortedAssets.map(a => a.sn).join(", ");
-    const assetNameStr = sortedAssets.map(a => a.name).join(", ");
-    const origIdsStr = Array.from(entry.origCsrIds).sort().join(", ");
-
-    const padNum = String(csrNum).padStart(4, '0');
-    const globalCsrId = `CSR_SUM_${String(csrNum).padStart(3, '0')}`;
-
-    rows.push({
-      number: `CSR_${padNum}`,
-      csr_id: globalCsrId,
-      security_domain: entry.majorCategory,
-      sub_category: entry.subCategory,
-      asset_sn: assetSnStr,
-      asset_name: assetNameStr,
-      title: entry.title,
-      cybersecurity_requirement: entry.requirementText,
-      source_tara_requirements: origIdsStr
-    });
-    csrNum++;
-  });
-
-  return rows;
-};
 
 const computeContentHashId = (prefix, text) => {
   // Simple content-based hash using djb2 + fnv1a for collision resistance
@@ -911,8 +688,6 @@ export default function TaraResults({ setPage, domainId }) {
     clearError
   } = useTaraStore();
 
-  const [activeTab, setActiveTab] = useState('review'); // 'review' or 'matrix'
-
   // Excel layout flat rows
   const [taraRows, setTaraRows] = useState([]);
   const updateTaraRows = (updater) => {
@@ -926,14 +701,7 @@ export default function TaraResults({ setPage, domainId }) {
 
   // Pagination states
   const [currentPage, setCurrentPage] = useState(1);
-  const [matrixCurrentPage, setMatrixCurrentPage] = useState(1);
   const itemsPerPage = 10;
-
-  useEffect(() => {
-    setTimeout(() => {
-      setMatrixCurrentPage(1);
-    }, 0);
-  }, [activeTab, domainId]);
 
   // Export States
   const [exportDesensitize, setExportDesensitize] = useState(false);
@@ -1206,7 +974,7 @@ export default function TaraResults({ setPage, domainId }) {
 
   const handleExportClick = async () => {
     setExporting(true);
-    const success = await exportReport(domainId, exportDesensitize);
+    const success = await exportReport(domainId, exportDesensitize, 'tara_csr');
     setExporting(false);
     if (success) {
       alert(t('报告导出成功！文件已保存。'));
@@ -1225,13 +993,6 @@ export default function TaraResults({ setPage, domainId }) {
   const indexOfLastItem = currentPage * itemsPerPage;
   const indexOfFirstItem = indexOfLastItem - itemsPerPage;
   const currentRows = taraRows.slice(indexOfFirstItem, indexOfLastItem);
-
-  const matrixRows = collectCsrReportData(taraResults, assets);
-  const matrixTotalPages = Math.ceil(matrixRows.length / itemsPerPage);
-  const matrixPaginatedRows = matrixRows.slice(
-    (matrixCurrentPage - 1) * itemsPerPage,
-    matrixCurrentPage * itemsPerPage
-  );
 
   return (
     <div className="dashboard-container" style={{ maxWidth: 'none', width: '100%' }}>
@@ -1252,18 +1013,16 @@ export default function TaraResults({ setPage, domainId }) {
           </div>
         </div>
 
-        {activeTab === 'review' && (
-          <div style={{ display: 'flex', gap: '12px' }}>
-            <button
-              onClick={handleAddRow}
-              className="btn btn-secondary"
-              style={{ border: '1px dashed var(--border-glow)' }}
-            >
-              <Plus size={16} />
-              <span>{t("手动添加评估行")}</span>
-            </button>
-          </div>
-        )}
+        <div style={{ display: 'flex', gap: '12px' }}>
+          <button
+            onClick={handleAddRow}
+            className="btn btn-secondary"
+            style={{ border: '1px dashed var(--border-glow)' }}
+          >
+            <Plus size={16} />
+            <span>{t("手动添加评估行")}</span>
+          </button>
+        </div>
       </div>
 
       {error && (
@@ -1287,51 +1046,6 @@ export default function TaraResults({ setPage, domainId }) {
         </div>
       )}
 
-      {/* Main Tabs */}
-      <div style={{ display: 'flex', gap: '16px', borderBottom: '1px solid var(--border-color)', marginBottom: '24px', paddingBottom: '1px' }}>
-        <button
-          onClick={() => setActiveTab('review')}
-          style={{
-            background: 'none',
-            border: 'none',
-            color: activeTab === 'review' ? 'var(--primary)' : 'var(--text-secondary)',
-            fontSize: '15px',
-            fontWeight: '600',
-            padding: '12px 20px',
-            cursor: 'pointer',
-            borderBottom: activeTab === 'review' ? '2px solid var(--primary)' : '2px solid transparent',
-            marginBottom: '-1px',
-            display: 'flex',
-            alignItems: 'center',
-            gap: '8px'
-          }}
-        >
-          <CheckSquare size={16} />
-          <span>{t("TARA 评估详情表")}</span>
-        </button>
-
-        <button
-          onClick={() => setActiveTab('matrix')}
-          style={{
-            background: 'none',
-            border: 'none',
-            color: activeTab === 'matrix' ? 'var(--primary)' : 'var(--text-secondary)',
-            fontSize: '15px',
-            fontWeight: '600',
-            padding: '12px 20px',
-            cursor: 'pointer',
-            borderBottom: activeTab === 'matrix' ? '2px solid var(--primary)' : '2px solid transparent',
-            marginBottom: '-1px',
-            display: 'flex',
-            alignItems: 'center',
-            gap: '8px'
-          }}
-        >
-          <BookOpen size={16} />
-          <span>{t("项目级安全控制要求矩阵")}</span>
-        </button>
-      </div>
-
       {loading && taraRows.length === 0 ? (
         <div style={{ display: 'flex', alignItems: 'center', gap: '12px', padding: '45px 0' }}>
           <div className="spinner"></div>
@@ -1345,7 +1059,7 @@ export default function TaraResults({ setPage, domainId }) {
             {t("该子系统域控尚未生成分析步骤数据。您可以在工作台点击“启动 TARA 分析”派发异步任务，或者使用右上角“手动添加评估行”直接在下方填写。")}
           </p>
         </div>
-      ) : activeTab === 'review' ? (
+      ) : (
         <div style={{ display: 'flex', flexDirection: 'column', gap: '24px' }}>
           
           {/* Report Export Panel */}
@@ -1943,87 +1657,6 @@ export default function TaraResults({ setPage, domainId }) {
             </div>
           )}
 
-        </div>
-      ) : (
-        /* Project-level requirement matrix */
-        <div style={{ display: 'flex', flexDirection: 'column' }}>
-          <div className="table-container" style={{ overflowX: 'auto', border: '1px solid var(--border-color)', borderRadius: '8px', background: 'var(--bg-card)' }}>
-            <table className="custom-table" style={{ width: '100%', borderCollapse: 'collapse', fontSize: '11px' }}>
-              <thead>
-                <tr style={{ background: 'rgba(15, 23, 42, 0.05)', borderBottom: '1px solid var(--border-color)' }}>
-                  <th style={{ minWidth: '130px', padding: '10px' }}>{t("Security Domain")}</th>
-                  <th style={{ minWidth: '130px', padding: '10px' }}>{t("Sub-category")}</th>
-                  <th style={{ minWidth: '80px', padding: '10px' }}>{t("Asset SN")}</th>
-                  <th style={{ minWidth: '100px', padding: '10px' }}>{t("Asset Name")}</th>
-                  <th style={{ minWidth: '150px', padding: '10px' }}>{t("Requirement Title")}</th>
-                  <th style={{ minWidth: '220px', padding: '10px' }}>{t("Cybersecurity Requirement")}</th>
-                </tr>
-              </thead>
-              <tbody>
-                {matrixPaginatedRows.map((row, idx) => (
-                  <tr key={idx} style={{ borderBottom: '1px solid var(--border-color)', height: '40px' }}>
-                    <td style={{ padding: '8px' }}>{row.security_domain}</td>
-                    <td style={{ padding: '8px' }}>{row.sub_category}</td>
-                    <td style={{ padding: '8px', textAlign: 'center' }}>{row.asset_sn}</td>
-                    <td style={{ padding: '8px', fontWeight: '500' }}>{row.asset_name}</td>
-                    <td style={{ padding: '8px' }}>{row.title}</td>
-                    <td style={{ padding: '8px', whiteSpace: 'pre-line', wordBreak: 'break-all' }}>{row.cybersecurity_requirement}</td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-
-          {/* Matrix Pagination Controls */}
-          {matrixTotalPages > 1 && (
-            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginTop: '16px' }}>
-              <div style={{ fontSize: '12px', color: 'var(--text-secondary)' }}>
-                {t("共")} {matrixRows.length} {t("条记录，当前第")} {matrixCurrentPage} / {matrixTotalPages} {t("页")}
-              </div>
-              <div style={{ display: 'flex', gap: '8px', alignItems: 'center' }}>
-                <button
-                  onClick={() => setMatrixCurrentPage(prev => Math.max(prev - 1, 1))}
-                  disabled={matrixCurrentPage === 1}
-                  className="btn btn-secondary"
-                  style={{ padding: '6px 12px', display: 'flex', alignItems: 'center', gap: '4px' }}
-                >
-                  <ChevronLeft size={14} />
-                  <span>{t("上一页")}</span>
-                </button>
-
-                <div style={{ display: 'flex', gap: '4px' }}>
-                  {Array.from({ length: matrixTotalPages }, (_, i) => i + 1).map(page => (
-                    <button
-                      key={page}
-                      onClick={() => setMatrixCurrentPage(page)}
-                      style={{
-                        padding: '6px 10px',
-                        border: '1px solid var(--border-color)',
-                        borderRadius: '4px',
-                        background: matrixCurrentPage === page ? 'var(--primary)' : 'var(--bg-card)',
-                        color: matrixCurrentPage === page ? '#fff' : 'var(--text-primary)',
-                        cursor: 'pointer',
-                        fontSize: '12px',
-                        fontWeight: '600'
-                      }}
-                    >
-                      {page}
-                    </button>
-                  ))}
-                </div>
-
-                <button
-                  onClick={() => setMatrixCurrentPage(prev => Math.min(prev + 1, matrixTotalPages))}
-                  disabled={matrixCurrentPage === matrixTotalPages}
-                  className="btn btn-secondary"
-                  style={{ padding: '6px 12px', display: 'flex', alignItems: 'center', gap: '4px' }}
-                >
-                  <span>{t("下一页")}</span>
-                  <ChevronRight size={14} />
-                </button>
-              </div>
-            </div>
-          )}
         </div>
       )}
     </div>
