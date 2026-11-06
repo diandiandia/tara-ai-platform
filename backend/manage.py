@@ -123,7 +123,7 @@ def restore(backup_path):
         print(f"❌ 恢复失败: {e}")
 
 def migrate():
-    """为已有数据库补齐模型新增的列（轻量幂等迁移）。
+    """为已有数据库补齐模型新增的列和 TARA 步骤索引（轻量幂等迁移）。
 
     新装环境用 init-db 建全表即可；已有库在升级代码后执行本命令，
     避免因为缺少新列（如 tara_csr_mapping.conflict_note）而报错。
@@ -156,10 +156,14 @@ def migrate():
             print(f"-> {table.name}.{column.name} 已补齐 ({ddl_type})")
             added += 1
 
+    # create_all 不会补齐已存在表上的新索引。
+    for index in TaraStep.__table__.indexes:
+        index.create(bind=engine, checkfirst=True)
+
     if added:
         print(f"🎉 迁移完成，共补齐 {added} 个字段。")
     else:
-        print("数据库结构已是最新，无需迁移。")
+        print("数据库字段已是最新，TARA 步骤索引已检查补齐。")
 
 
 FIXTURE_CATALOG = os.path.join(

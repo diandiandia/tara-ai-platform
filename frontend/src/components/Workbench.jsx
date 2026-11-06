@@ -35,7 +35,9 @@ export default function Workbench({ setPage, setDomainId, setDiagramId, projectI
     diagrams, 
     fetchDiagrams, 
     createDiagram, 
-    deleteDiagram 
+    deleteDiagram,
+    diagramMutationError,
+    deletingDiagramIds
   } = useCanvasStore();
 
   const { 
@@ -66,6 +68,8 @@ export default function Workbench({ setPage, setDomainId, setDiagramId, projectI
   const [showDfdModal, setShowDfdModal] = useState(false);
   const [newDfdTitle, setNewDfdTitle] = useState('');
   const [dfdModalError, setDfdModalError] = useState('');
+  const [creatingDfd, setCreatingDfd] = useState(false);
+  const creatingDfdRef = useRef(false);
 
   // Manual Asset Modal State
   const [showAddAssetModal, setShowAddAssetModal] = useState(false);
@@ -345,6 +349,7 @@ export default function Workbench({ setPage, setDomainId, setDiagramId, projectI
 
   const handleCreateDfdSubmit = async (e) => {
     e.preventDefault();
+    if (creatingDfdRef.current) return;
     setDfdModalError('');
 
     if (!newDfdTitle.trim()) {
@@ -356,19 +361,26 @@ export default function Workbench({ setPage, setDomainId, setDiagramId, projectI
       return;
     }
 
-    const diagram = await createDiagram(activeDomain.id, newDfdTitle.trim());
-    if (diagram) {
-      setShowDfdModal(false);
-      setNewDfdTitle('');
-      // Refresh the list from the server so it reflects the correct order and
-      // any concurrent changes, but skip the costly full-snapshot prefetch:
-      // the newly created diagram has an empty snapshot, and every other
-      // diagram was already mirrored when the workbench mounted.
-      fetchDiagrams(activeDomain.id, { skipPrefetch: true });
-    } else {
-      // createDiagram caught an error and stored it in canvasStore.error
-      const latestError = useCanvasStore.getState().error;
-      setDfdModalError(latestError || t('创建功能图失败'));
+    creatingDfdRef.current = true;
+    setCreatingDfd(true);
+    try {
+      const diagram = await createDiagram(activeDomain.id, newDfdTitle.trim());
+      if (diagram) {
+        setShowDfdModal(false);
+        setNewDfdTitle('');
+        // Refresh the list from the server so it reflects the correct order and
+        // any concurrent changes, but skip the costly full-snapshot prefetch:
+        // the newly created diagram has an empty snapshot, and every other
+        // diagram was already mirrored when the workbench mounted.
+        fetchDiagrams(activeDomain.id, { skipPrefetch: true });
+      } else {
+        // createDiagram caught an error and stored it in canvasStore.error
+        const latestError = useCanvasStore.getState().error;
+        setDfdModalError(latestError || t('创建功能图失败'));
+      }
+    } finally {
+      creatingDfdRef.current = false;
+      setCreatingDfd(false);
     }
   };
 
@@ -383,8 +395,10 @@ export default function Workbench({ setPage, setDomainId, setDiagramId, projectI
   const handleDeleteDfdClick = async (e, diagId, title) => {
     e.stopPropagation();
     if (activeDomain.status === 'running') return;
+    if (deletingDiagramIds.includes(diagId)) return;
     if (window.confirm(t('确定要删除功能图 "') + title + t('" 吗？该画布提取出的资产也将级联清除。'))) {
-      await deleteDiagram(diagId);
+      const deleted = await deleteDiagram(diagId);
+      if (!deleted) return;
       // Skip the costly full-snapshot prefetch – the workbench already has
       // the up-to-date diagram list from the initial mount. Reloading every
       // remaining snapshot here just blocks the UI with no benefit.
@@ -910,6 +924,11 @@ export default function Workbench({ setPage, setDomainId, setDiagramId, projectI
               </div>
 
               <div style={{ overflowY: 'auto', flexGrow: 1, minHeight: 0, paddingRight: '4px' }}>
+                {diagramMutationError && (
+                  <div role="alert" style={{ color: 'var(--accent)', marginBottom: '12px', fontSize: '13px' }}>
+                    {t(diagramMutationError)}
+                  </div>
+                )}
                 {diagrams.length === 0 ? (
                   <div className="glass" style={{ padding: '36px', textAlign: 'center', borderStyle: 'dashed', color: 'var(--text-secondary)' }}>
                     {t("暂无功能数据流图，请点击右上角“新建 DFD 画布”进行绘制。")}
@@ -921,6 +940,7 @@ export default function Workbench({ setPage, setDomainId, setDiagramId, projectI
                         key={diag.id}
                         className="glass-interactive"
                         onClick={() => {
+                          if (deletingDiagramIds.includes(diag.id)) return;
                           setDomainId(activeDomain.id);
                           setDiagramId(diag.id);
                           setPage('dfd-editor');
@@ -938,7 +958,11 @@ export default function Workbench({ setPage, setDomainId, setDiagramId, projectI
                           <span style={{ fontSize: '14px', fontWeight: '600', color: 'var(--text-primary)' }}>
                             {diag.title}
                           </span>
-                          {!isProjectCompleted && activeDomain.status !== 'running' && (
+                          {deletingDiagramIds.includes(diag.id) ? (
+                            <span role="status" style={{ fontSize: '12px', color: 'var(--text-secondary)' }}>
+                              {t("正在删除...")}
+                            </span>
+                          ) : !isProjectCompleted && activeDomain.status !== 'running' && (
                             <Trash2
                               size={14}
                               onClick={(e) => handleDeleteDfdClick(e, diag.id, diag.title)}
@@ -1564,14 +1588,16 @@ export default function Workbench({ setPage, setDomainId, setDiagramId, projectI
                   type="button"
                   onClick={() => setShowDfdModal(false)}
                   className="btn btn-secondary"
+                  disabled={creatingDfd}
                 >
                   {t("取消")}
                 </button>
                 <button
                   type="submit"
                   className="btn btn-primary"
+                  disabled={creatingDfd}
                 >
-                  {t("确认创建")}
+                  {creatingDfd ? t("正在创建...") : t("确认创建")}
                 </button>
               </div>
             </form>

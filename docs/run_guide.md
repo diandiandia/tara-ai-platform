@@ -37,6 +37,46 @@ chmod +x *.sh
 ./start.sh    # 快速启动服务（无需重复构建）
 ```
 
+### Step 2.3: 排查新建、删除画布无响应
+
+如果日志出现 `address already in use`，表示新的后端进程无法绑定 8000，
+不代表占用端口的旧后端也已退出。不要同时使用 Systemd、手动 Uvicorn 和
+Docker 启动同一个端口。部署脚本在检测到 `tara-backend.service` 后会沿用
+Systemd，不再额外启动后台进程。
+
+先在实际部署服务器上查看：
+
+```bash
+sudo ss -ltnp 'sport = :8000'
+sudo systemctl status tara-backend.service --no-pager
+sudo systemctl show tara-backend.service -p MainPID -p ExecStart --no-pager
+sudo journalctl -u tara-backend.service -n 50 --no-pager
+```
+
+核对监听 PID 与服务 MainPID；如果不一致，确认监听进程的启动来源和工作目录，
+通过其对应的管理方式停止重复实例，再启动需要保留的服务。不要按进程名批量杀进程。
+监听端口的旧实例可能仍在提供请求，因此仅看重启失败的日志无法确定某次删除的错误。
+
+升级后，在后端的实际数据库配置环境中执行：
+
+```bash
+cd backend
+./venv/bin/python manage.py migrate
+```
+
+该命令会给已有 `tara_steps` 表补齐 `asset_id` 索引，避免删除画布时，
+级联查询资产历史分析步骤反复扫描整表；它不会删除分析数据。
+前端需重新构建并部署。新建、删除请求等待上限为 30 秒，
+删除失败原因会保留在 DFD 列表上方。请求超时不能证明服务器没有执行，
+尤其是新建超时后，应先刷新列表确认，避免再次创建重复画布。
+
+DFD 请求回归测试：
+
+```bash
+cd frontend
+node --experimental-vm-modules --test tests/canvasStore.test.mjs
+```
+
 ---
 
 ## 3. 手动分步部署与本地开发模式 (可选)
@@ -178,4 +218,3 @@ docker compose ps
     ```bash
     docker compose down
     ```
-

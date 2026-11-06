@@ -180,6 +180,11 @@ cd "$PROJECT_ROOT"
 # ------------------------------------------------------------------------------
 echo -e "\n${BLUE}[5/6] 启动后台服务进程 (关掉终端也能常驻运行)...${NC}"
 
+if command -v systemctl > /dev/null 2>&1 && \
+    systemctl list-unit-files --no-pager tara-backend.service 2>/dev/null | grep -q '^tara-backend.service'; then
+    echo -e "  * 已检测到 Systemd 托管服务，使用同一管理方式启动，避免重复占用端口..."
+    $SUDO systemctl start tara-backend.service tara-celery.service tara-frontend.service
+else
 # 1. 启动 FastAPI 后端服务 (端口 8000)
 cd "$PROJECT_ROOT/backend"
 nohup ./venv/bin/python -m uvicorn app.main:app --host 0.0.0.0 --port 8000 > "$PROJECT_ROOT/logs/backend.log" 2>&1 &
@@ -196,6 +201,7 @@ cd "$PROJECT_ROOT/frontend"
 nohup npm run preview -- --host 0.0.0.0 --port 3000 > "$PROJECT_ROOT/logs/frontend.log" 2>&1 &
 echo $! > "$PROJECT_ROOT/logs/frontend.pid"
 echo -e "  ✓ 前端生产反代服务已启动 (PID: $(cat "$PROJECT_ROOT/logs/frontend.pid"), 监听 0.0.0.0:3000)"
+fi
 
 cd "$PROJECT_ROOT"
 

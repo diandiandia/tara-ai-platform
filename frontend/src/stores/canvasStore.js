@@ -111,10 +111,9 @@ export const useCanvasStore = create((set, get) => {
   // previous sweep when the user switches domain mid-flight.
   let prefetchToken = 0;
   let prefetchController = null;
-  // Guards duplicate deleteDiagram calls for the same diagram ID.
-  // Module-level so the lock is guaranteed to clear on a full page refresh,
-  // unlike Zustand state which may persist across SPA navigations.
-  let deletingDiagramId = null;
+  let listRequestSeq = 0;
+  // Keep each delete locked until its request settles, including across navigation.
+  const deletingDiagramIds = new Set();
 
   return {
     diagrams: [],
@@ -127,6 +126,8 @@ export const useCanvasStore = create((set, get) => {
     ws: null,
     loading: false,
     error: null,
+    diagramMutationError: null,
+    deletingDiagramIds: [],
     isOffline: !navigator.onLine,
     isSaving: false,
     savePending: false,
@@ -148,9 +149,11 @@ export const useCanvasStore = create((set, get) => {
 
     fetchDiagrams: async (domainId, opts = {}) => {
       const { skipPrefetch = false } = opts;
+      const requestSeq = ++listRequestSeq;
       set({ loading: true, error: null });
       try {
-        const response = await axios.get(`${API_BASE}/diagrams/domain/${domainId}`, { headers: getHeaders() });
+        const response = await axios.get(`${API_BASE}/diagrams/domain/${domainId}`, { headers: getHeaders(), timeout: 30000 });
+        if (requestSeq !== listRequestSeq) return;
         set({ diagrams: response.data, loading: false });
         // Warm the browser cache in the background so opening any canvas from
         // the list is instant instead of waiting on a cold network round-trip.
@@ -158,6 +161,7 @@ export const useCanvasStore = create((set, get) => {
           get().prefetchDiagrams(response.data);
         }
       } catch (err) {
+        if (requestSeq !== listRequestSeq) return;
         set({ error: err.response?.data?.detail || '获取功能图列表失败', loading: false });
       }
     },
@@ -213,48 +217,56 @@ export const useCanvasStore = create((set, get) => {
     },
 
     createDiagram: async (domainId, title) => {
-      set({ loading: true, error: null });
+      set({ loading: true, error: null, diagramMutationError: null });
       try {
         const response = await axios.post(
           `${API_BASE}/diagrams?domain_id=${domainId}&title=${encodeURIComponent(title)}`,
           {},
-          { headers: getHeaders() }
+          { headers: getHeaders(), timeout: 30000 }
         );
+        listRequestSeq += 1;
         set((state) => ({
           diagrams: [...state.diagrams, toMeta(response.data)],
           loading: false
         }));
         return response.data;
       } catch (err) {
-        set({ error: err.response?.data?.detail || '创建功能图失败', loading: false });
+        const message = err.response?.data?.detail || (
+          err.code === 'ECONNABORTED'
+            ? '创建请求超时：服务器可能已创建画布，请先刷新列表确认，勿连续重试。'
+            : '创建功能图失败，请检查后端服务或网络。'
+        );
+        set({ error: message, diagramMutationError: message, loading: false });
         return null;
       }
     },
 
     deleteDiagram: async (diagramId) => {
-      // Guard against duplicate calls (e.g. from a component that rapidly
-      // re-mounts while the confirm dialog was open, or from click-event
-      // propagation quirks). The first caller wins; concurrent callers skip.
-      // Uses a module-level variable so the lock is guaranteed to clear on a
-      // full page refresh, unlike Zustand state which may persist across SPA
-      // navigations inside the same tab.
-      if (deletingDiagramId === diagramId) return false;
-      deletingDiagramId = diagramId;
-      set({ loading: true, error: null });
+      // A pending request still owns its guard when another canvas is opened.
+      if (deletingDiagramIds.has(diagramId)) return false;
+      deletingDiagramIds.add(diagramId);
+      set({ loading: true, error: null, diagramMutationError: null, deletingDiagramIds: [...deletingDiagramIds] });
       try {
-        await axios.delete(`${API_BASE}/diagrams/${diagramId}`, { headers: getHeaders() });
+        await axios.delete(`${API_BASE}/diagrams/${diagramId}`, { headers: getHeaders(), timeout: 30000 });
+        listRequestSeq += 1;
         removeCache(diagramId);
         set((state) => ({
           diagrams: state.diagrams.filter((d) => d.id !== diagramId),
           currentDiagram: state.currentDiagram?.id === diagramId ? null : state.currentDiagram,
           loading: false
         }));
-        deletingDiagramId = null;
         return true;
       } catch (err) {
-        set({ error: err.response?.data?.detail || '删除功能图失败', loading: false });
-        deletingDiagramId = null;
+        const message = err.response?.data?.detail || (
+          err.code === 'ECONNABORTED'
+            ? '删除请求超时：请刷新列表确认删除结果，并检查后端服务。'
+            : '删除功能图失败，请检查后端服务或网络。'
+        );
+        set({ error: message, diagramMutationError: message, loading: false });
         return false;
+      } finally {
+        deletingDiagramIds.delete(diagramId);
+        set({ deletingDiagramIds: [...deletingDiagramIds] });
       }
     },
 
@@ -451,10 +463,6 @@ export const useCanvasStore = create((set, get) => {
         clearTimeout(saveTimeout);
         saveTimeout = null;
       }
-
-      // Release any stale delete guard – a previous async delete may have
-      // been interrupted by the navigation that just closed this diagram.
-      deletingDiagramId = null;
 
       set({
         currentDiagram: null,
