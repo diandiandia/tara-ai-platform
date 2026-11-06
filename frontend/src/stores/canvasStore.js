@@ -24,11 +24,15 @@ const readCache = (diagramId) => {
   }
 };
 
+// Returns false when the browser refused the write (quota exceeded / storage
+// disabled). Callers that mirror data speculatively use this to stop early
+// instead of downloading more payloads that cannot be stored anyway.
 const writeCache = (diagramId, payload) => {
   try {
     localStorage.setItem(`${CACHE_PREFIX}${diagramId}`, JSON.stringify({ ...payload, updatedAt: Date.now() }));
+    return true;
   } catch {
-    // Quota exceeded or storage disabled: the cache is best-effort only
+    return false;
   }
 };
 
@@ -55,6 +59,9 @@ export const useCanvasStore = create((set, get) => {
   // Incremented whenever a diagram session is closed, so in-flight saves
   // cannot restore currentDiagram after the editor has been left.
   let sessionSeq = 0;
+  // Only one prefetch sweep runs at a time; bumping the token abandons the
+  // previous sweep when the user switches domain mid-flight.
+  let prefetchToken = 0;
 
   return {
     diagrams: [],
@@ -91,8 +98,58 @@ export const useCanvasStore = create((set, get) => {
       try {
         const response = await axios.get(`${API_BASE}/diagrams/domain/${domainId}`, { headers: getHeaders() });
         set({ diagrams: response.data, loading: false });
+        // Warm the browser cache in the background so opening any canvas from
+        // the list is instant instead of waiting on a cold network round-trip.
+        get().prefetchDiagrams(response.data);
       } catch (err) {
         set({ error: err.response?.data?.detail || '获取功能图列表失败', loading: false });
+      }
+    },
+
+    // Mirrors every diagram snapshot of the active domain into localStorage.
+    // Runs sequentially and yields between items so the workbench stays
+    // responsive, and stops as soon as the browser refuses a write (quota).
+    prefetchDiagrams: async (list) => {
+      const items = Array.isArray(list) ? list : get().diagrams;
+      if (!items.length) return;
+
+      const token = ++prefetchToken;
+
+      for (const meta of items) {
+        if (token !== prefetchToken) return;
+        if (!meta || !meta.id) continue;
+
+        // Never touch the canvas the user is editing right now.
+        if (get().currentDiagram?.id === meta.id) continue;
+
+        const cached = readCache(meta.id);
+        // Unsaved local edits must win over any server copy.
+        if (cached?.dirty) continue;
+        // Already mirrored at this version: nothing to download.
+        if (cached?.snapshot && cached.versionNo === meta.version_no) continue;
+
+        try {
+          const response = await axios.get(`${API_BASE}/diagrams/${meta.id}`, { headers: getHeaders() });
+          if (token !== prefetchToken) return;
+          if (get().currentDiagram?.id === meta.id) continue;
+
+          const fresh = response.data;
+          const stored = writeCache(fresh.id, {
+            versionNo: fresh.version_no,
+            snapshot: fresh.snapshot_json,
+            serverSnapshot: fresh.snapshot_json,
+            dirty: false,
+            title: fresh.title,
+            domainId: fresh.domain_id
+          });
+          // Out of storage: further downloads would be wasted.
+          if (!stored) return;
+        } catch {
+          // Best effort. A failed prefetch only means the next open is a cold
+          // start, which the loader already handles.
+        }
+
+        await new Promise((resolve) => setTimeout(resolve, 0));
       }
     },
 
