@@ -379,6 +379,11 @@ const NODE_TYPES_MAP = {
   interface: CustomDfdNode
 };
 
+// Identifies the editor instance that currently owns the canvas session. Exit →
+// immediate re-entry reuses the live session, so a cleanup left over from the
+// previous instance must not tear it down once its pending save settles.
+let editorOwnerToken = 0;
+
 export default function DfdEditor(props) {
   return (
     <ReactFlowProvider>
@@ -449,15 +454,23 @@ function DfdEditorCanvas({ setPage, diagramId }) {
 
   // Sync state between zustand store and reactflow local state
   useEffect(() => {
-    if (diagramId && user) {
-      const activeDiag = useCanvasStore.getState().currentDiagram;
-      if (activeDiag && activeDiag.id === diagramId) {
-        return;
-      }
+    if (!diagramId || !user) {
+      return;
+    }
+
+    // This instance now owns the session. The cleanup of a previous instance
+    // (e.g. the one that unmounted when the user clicked "返回工作台") may still
+    // be flushing a save and must not close the canvas once it settles.
+    editorOwnerToken += 1;
+    const ownerToken = editorOwnerToken;
+
+    const activeDiag = useCanvasStore.getState().currentDiagram;
+    if (!activeDiag || activeDiag.id !== diagramId) {
       // Always load the authoritative snapshot from the server; the local
       // diagrams list may be stale or not loaded yet.
       openDiagramById(diagramId, user.username);
     }
+
     return () => {
       // Flush any pending debounced edit and save before tearing down the session
       if (syncTimeoutRef.current) {
@@ -469,7 +482,7 @@ function DfdEditorCanvas({ setPage, diagramId }) {
 
       if (!dirtyRef.current && !store.dirty) {
         // Nothing pending locally and nothing unsaved in the store
-        store.closeDiagram();
+        if (ownerToken === editorOwnerToken) store.closeDiagram();
         return;
       }
 
@@ -484,6 +497,10 @@ function DfdEditorCanvas({ setPage, diagramId }) {
       // session is only torn down after the save settles. The sessionId guard
       // prevents a stale cleanup from closing a newly opened diagram.
       store.flushSave().finally(() => {
+        // Another editor instance mounted onto this diagram in the meantime
+        // (exit followed by an immediate re-entry): the session is still live
+        // and belongs to it now, so closing it here would blank the canvas.
+        if (ownerToken !== editorOwnerToken) return;
         const s = useCanvasStore.getState();
         if (s.sessionId === startSessionId) {
           s.closeDiagram();

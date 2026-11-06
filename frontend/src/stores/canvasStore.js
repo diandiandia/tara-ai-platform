@@ -54,6 +54,22 @@ const toMeta = (diagram) => ({
   updated_at: diagram.updated_at
 });
 
+// Compares two snapshots by content instead of by string: the server may
+// serialize the JSON differently (key order, spacing) from what the client sent,
+// so a raw string comparison would report a conflict that does not exist.
+const snapshotMatches = (a, b) => {
+  if (a === b) return true;
+  if (!a || !b) return false;
+  try {
+    const left = JSON.parse(a);
+    const right = JSON.parse(b);
+    return JSON.stringify(left.nodes || []) === JSON.stringify(right.nodes || [])
+      && JSON.stringify(left.edges || []) === JSON.stringify(right.edges || []);
+  } catch {
+    return false;
+  }
+};
+
 export const useCanvasStore = create((set, get) => {
   let saveTimeout = null;
   // Incremented whenever a diagram session is closed, so in-flight saves
@@ -340,8 +356,16 @@ export const useCanvasStore = create((set, get) => {
 
       // Cold start: no cache yet, the full snapshot is unavoidable.
       set({ loading: true, error: null });
+      const startSessionId = get().sessionId;
       try {
         const response = await axios.get(`${API_BASE}/diagrams/${diagramId}`, { headers: getHeaders() });
+        // The user may have left the editor while this request was in flight.
+        // Reopening now would resurrect a closed session and overwrite the edits
+        // made on the canvas with the server copy.
+        if (get().sessionId !== startSessionId) {
+          set({ loading: false });
+          return;
+        }
         const fresh = response.data;
         await get().openDiagram(fresh, username);
         set((state) => ({
@@ -433,8 +457,6 @@ export const useCanvasStore = create((set, get) => {
       const diag = get().currentDiagram;
       if (!diag || get().isReadOnly) return;
 
-      const seq = sessionSeq;
-
       if (get().isSaving) {
         set({ savePending: true });
         return;
@@ -477,17 +499,23 @@ export const useCanvasStore = create((set, get) => {
             },
             { headers: getHeaders() }
           );
-          // Save successful, update local version_no and keep the diagrams list in sync
-          // Edits made while this request was in flight are still unsaved, so the
-          // dirty flag must only be cleared when the payload matches the store.
-          const stillDirty = JSON.stringify({ nodes: get().nodes, edges: get().edges }) !== snapshot_json;
+          // Save successful, update local version_no and keep the diagrams list in sync.
+          // The version number is a server-side fact that must be recorded even
+          // when the session changed while the request was in flight (leaving
+          // and re-entering the editor): dropping it would leave the local
+          // counter behind and make every later save fail with 409. It is only
+          // skipped when another diagram has been opened meanwhile, otherwise
+          // this diagram's version would leak into that one.
+          const sameDiagram = get().currentDiagram?.id === diag.id;
+          const stillDirty = sameDiagram
+            && JSON.stringify({ nodes: get().nodes, edges: get().edges }) !== snapshot_json;
           set((state) => ({
-            versionNo: seq === sessionSeq ? response.data.version_no : state.versionNo,
-            currentDiagram: seq === sessionSeq ? response.data : state.currentDiagram,
-            serverSnapshot: seq === sessionSeq ? response.data.snapshot_json : state.serverSnapshot,
+            versionNo: sameDiagram ? response.data.version_no : state.versionNo,
+            currentDiagram: sameDiagram ? response.data : state.currentDiagram,
+            serverSnapshot: sameDiagram ? response.data.snapshot_json : state.serverSnapshot,
             diagrams: state.diagrams.map((d) => (d.id === response.data.id ? { ...d, ...toMeta(response.data) } : d)),
-            error: seq === sessionSeq ? null : state.error,
-            dirty: seq === sessionSeq ? stillDirty : state.dirty,
+            error: sameDiagram ? null : state.error,
+            dirty: sameDiagram ? stillDirty : state.dirty,
             isSaving: false
           }));
           get().persistLocalCache();
@@ -507,14 +535,39 @@ export const useCanvasStore = create((set, get) => {
             // A 409 does not necessarily mean someone else edited the canvas:
             // it also happens when the local version counter drifted (e.g. an
             // earlier save succeeded but its response was lost, or the session
-            // was reopened with a stale version). Only treat it as a real
-            // conflict when the server content actually changed.
+            // was reopened with a stale version). Compare the server content
+            // against what is actually on the canvas to tell the two apart.
             versionResynced = true;
             try {
               const detail = await axios.get(`${API_BASE}/diagrams/${diag.id}`, { headers: getHeaders() });
-              if (detail.data.snapshot_json === get().serverSnapshot) {
-                set({ versionNo: detail.data.version_no, serverSnapshot: detail.data.snapshot_json });
-                attempt -= 1; // retry immediately with the fresh version
+              const serverSnapshot = detail.data.snapshot_json;
+              const localSnapshot = JSON.stringify({ nodes: get().nodes, edges: get().edges });
+              const sameDiagram = get().currentDiagram?.id === diag.id;
+
+              if (snapshotMatches(serverSnapshot, localSnapshot)) {
+                // The edits already reached the server (a previous attempt
+                // committed but its response was lost). Realigning the version
+                // is enough; sending the payload again would just be a no-op.
+                set({
+                  versionNo: detail.data.version_no,
+                  serverSnapshot: sameDiagram ? serverSnapshot : get().serverSnapshot,
+                  currentDiagram: sameDiagram ? detail.data : get().currentDiagram,
+                  dirty: sameDiagram ? false : get().dirty,
+                  isSaving: false,
+                  savePending: false,
+                  error: sameDiagram ? null : get().error
+                });
+                if (sameDiagram) get().persistLocalCache();
+                lastError = null;
+                return;
+              }
+
+              if (snapshotMatches(serverSnapshot, get().serverSnapshot)) {
+                // The server still holds the copy we last knew about, so nobody
+                // else touched it: only our version counter drifted. Realign it
+                // and retry the write immediately.
+                set({ versionNo: detail.data.version_no, serverSnapshot });
+                attempt -= 1;
                 continue;
               }
             } catch (detailErr) {

@@ -311,6 +311,15 @@ def ai_generate_topology(
         
     # 检查域控锁定状态
     check_domain_idle(diagram.domain_id, db)
+
+    # 把大模型配置读成普通值并在调用网络之前结束读事务。下面最多会发起 3 次
+    # 超时 60 秒的 LLM 请求，若一直持有事务，SQLite 的写提交会被阻塞，
+    # 同一时间在画布上的保存请求就会卡住。
+    settings = db.query(SystemSettings).first()
+    llm_api_key = settings.api_key if settings else None
+    llm_base_url = settings.api_base_url if settings else None
+    llm_model_name = settings.model_name if settings else None
+    db.commit()
     
     reasoning_steps = {}
     # 规则算法生成 Mock 数据作为降级 (当大模型不可用或没有 API_KEY 时)
@@ -422,12 +431,11 @@ def ai_generate_topology(
         ]
 
     # 尝试调用 LLM (如果已配置)
-    settings = db.query(SystemSettings).first()
-    if settings and settings.api_key and settings.api_key != "mock_test_key":
+    if llm_api_key and llm_api_key != "mock_test_key":
         try:
-            url = f"{settings.api_base_url.rstrip('/')}/chat/completions"
+            url = f"{(llm_base_url or '').rstrip('/')}/chat/completions"
             headers = {
-                "Authorization": f"Bearer {settings.api_key}",
+                "Authorization": f"Bearer {llm_api_key}",
                 "Content-Type": "application/json"
             }
             # 请求结构化 JSON 格式
@@ -458,7 +466,7 @@ def ai_generate_topology(
                 "请以符合要求的 JSON 格式输出拓扑。不要包含任何非 JSON 文字或 markdown 标记。"
             )
             llm_payload = {
-                "model": settings.model_name,
+                "model": llm_model_name,
                 "messages": [
                     {"role": "system", "content": system_prompt},
                     {"role": "user", "content": f"请为以下功能绘制DFD画布结构：{req_data.prompt}"}
@@ -511,7 +519,7 @@ def ai_generate_topology(
                     {"role": "user", "content": f"上一次返回的 JSON 数据校验未通过，校验错误信息如下：\n{val_err}\n请修正该 JSON 数据，确保完全符合 Schema 规范且格式正确。"}
                 ]
                 payload_repair = {
-                    "model": settings.model_name,
+                    "model": llm_model_name,
                     "messages": repair_messages,
                     "response_format": llm_payload["response_format"]
                 }
@@ -534,6 +542,12 @@ def ai_generate_topology(
             reasoning_steps = validated_dict.get("reasoning_steps", {})
         except Exception as e:
             print(f"⚠️ LLM 拓扑生成失败，降级执行规则算法: {e}")
+
+    # 重新取一次最新的行再写回：等待 LLM 期间画布可能已被用户保存过，
+    # 复用早先的对象会覆盖掉那次保存。
+    diagram = db.query(Diagram).filter(Diagram.id == id).first()
+    if not diagram:
+        raise HTTPException(status_code=404, detail="功能图不存在")
 
     # 保存并更新 version_no 自增
     snapshot = {"nodes": nodes, "edges": edges}
@@ -630,6 +644,15 @@ def ai_chat_diagram(
     diagram = db.query(Diagram).filter(Diagram.id == id).first()
     if not diagram:
         raise HTTPException(status_code=404, detail="功能图不存在")
+
+    # 先把需要的内容读成普通值并结束读事务，避免下面最长 60 秒的 LLM 调用期间
+    # 一直占着数据库，阻塞同一画布上的保存。
+    existing_snapshot_json = diagram.snapshot_json
+    settings = db.query(SystemSettings).first()
+    llm_api_key = settings.api_key if settings else None
+    llm_base_url = settings.api_base_url if settings else None
+    llm_model_name = settings.model_name if settings else None
+    db.commit()
         
     reasoning_steps = {}
     p = req_data.prompt.lower()
@@ -672,21 +695,20 @@ def ai_chat_diagram(
     # 尝试加载当前已有的拓扑快照，以支持增量模式
     current_snapshot = {}
     has_existing_nodes = False
-    if diagram.snapshot_json:
+    if existing_snapshot_json:
         try:
-            current_snapshot = json.loads(diagram.snapshot_json)
+            current_snapshot = json.loads(existing_snapshot_json)
             if current_snapshot.get("nodes"):
                 has_existing_nodes = True
         except Exception:
             pass
 
     # 尝试调用 LLM (如果已配置)
-    settings = db.query(SystemSettings).first()
-    if settings and settings.api_key and settings.api_key != "mock_test_key":
+    if llm_api_key and llm_api_key != "mock_test_key":
         try:
-            url = f"{settings.api_base_url.rstrip('/')}/chat/completions"
+            url = f"{(llm_base_url or '').rstrip('/')}/chat/completions"
             headers = {
-                "Authorization": f"Bearer {settings.api_key}",
+                "Authorization": f"Bearer {llm_api_key}",
                 "Content-Type": "application/json"
             }
             system_prompt = (
@@ -746,7 +768,7 @@ def ai_chat_diagram(
             messages.append({"role": "user", "content": user_content})
             
             llm_payload = {
-                "model": settings.model_name,
+                "model": llm_model_name,
                 "messages": messages,
                 "response_format": {
                     "type": "json_schema",
@@ -796,7 +818,7 @@ def ai_chat_diagram(
                     {"role": "user", "content": f"上一次返回的 JSON 数据校验未通过，校验错误信息如下：\n{val_err}\n请修正该 JSON 数据，确保完全符合 Schema 规范且格式正确。"}
                 ]
                 payload_repair = {
-                    "model": settings.model_name,
+                    "model": llm_model_name,
                     "messages": repair_messages,
                     "response_format": llm_payload["response_format"]
                 }

@@ -6,7 +6,7 @@ class Diagram(Base):
     __tablename__ = "diagrams"
 
     id = Column(Integer, primary_key=True, index=True)
-    domain_id = Column(Integer, ForeignKey("domains.id", ondelete="CASCADE"), nullable=False)
+    domain_id = Column(Integer, ForeignKey("domains.id", ondelete="CASCADE"), nullable=False, index=True)
     title = Column(String(100), nullable=False)
     version_no = Column(Integer, default=1, nullable=False) # 用于乐观锁控制 (BR-16)
     snapshot_json = Column(Text, nullable=False, default="{}") # 存储 React Flow 拓扑数据

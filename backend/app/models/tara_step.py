@@ -1,9 +1,14 @@
-from sqlalchemy import Column, Integer, String, DateTime, ForeignKey, Text, JSON, func
+from sqlalchemy import Column, Integer, String, DateTime, ForeignKey, Text, JSON, func, Index
 from sqlalchemy.orm import relationship
 from app.core.database import Base
 
 class TaraStep(Base):
     __tablename__ = "tara_steps"
+    __table_args__ = (
+        # 按 run_id + asset_id + stage 取步骤是最热的查询路径，缺失索引时
+        # 每次都要扫全表（该表存放了全库 98% 的字节量）。
+        Index("ix_tara_steps_run_asset_stage", "run_id", "asset_id", "stage"),
+    )
 
     id = Column(Integer, primary_key=True, index=True)
     run_id = Column(Integer, ForeignKey("tara_runs.id", ondelete="CASCADE"), nullable=False)
