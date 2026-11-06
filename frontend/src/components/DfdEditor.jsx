@@ -2,10 +2,10 @@ import { useI18n } from '../stores/i18nStore';
 import { useState, useEffect, useCallback, useRef, useMemo } from 'react';
 import {
   ReactFlow,
+  ReactFlowProvider,
   MiniMap,
   Controls,
   Background,
-  BackgroundVariant,
   useNodesState,
   useEdgesState,
   useReactFlow,
@@ -282,7 +282,15 @@ const NODE_TYPES_MAP = {
   interface: CustomDfdNode
 };
 
-export default function DfdEditor({ setPage, diagramId }) {
+export default function DfdEditor(props) {
+  return (
+    <ReactFlowProvider>
+      <DfdEditorCanvas {...props} />
+    </ReactFlowProvider>
+  );
+}
+
+function DfdEditorCanvas({ setPage, diagramId }) {
   // 用 useMemo 提供稳定引用，消除 React Flow v11 + StrictMode 下的 #002 误报
   const nodeTypes = useMemo(() => NODE_TYPES_MAP, []);
   const edgeTypes = useMemo(() => EDGE_TYPES_MAP, []);
@@ -1017,12 +1025,12 @@ export default function DfdEditor({ setPage, diagramId }) {
             nodes={nodes}
             edges={edges.map(e => ({
               ...e,
-              updatable: !isReadOnly && selectedEdge && selectedEdge.id === e.id
+              reconnectable: !isReadOnly && selectedEdge && selectedEdge.id === e.id
             }))}
             onNodesChange={onNodesChangeHandler}
             onEdgesChange={onEdgesChangeHandler}
             onConnect={onConnect}
-            onEdgeUpdate={onEdgeUpdate}
+            onReconnect={onEdgeUpdate}
             onNodeClick={onNodeClick}
             onEdgeClick={onEdgeClick}
             onPaneClick={onPaneClick}
