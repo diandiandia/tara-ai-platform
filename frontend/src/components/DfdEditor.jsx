@@ -1,20 +1,24 @@
 import { useI18n } from '../stores/i18nStore';
 import { useState, useEffect, useCallback, useRef, useMemo } from 'react';
-import ReactFlow, { 
-  MiniMap, 
-  Controls, 
-  Background, 
-  useNodesState, 
-  useEdgesState, 
+import {
+  ReactFlow,
+  MiniMap,
+  Controls,
+  Background,
+  BackgroundVariant,
+  useNodesState,
+  useEdgesState,
+  useReactFlow,
   addEdge,
   MarkerType,
-  updateEdge,
+  reconnectEdge,
   getBezierPath,
   getSmoothStepPath,
   getStraightPath,
-  EdgeLabelRenderer
-} from 'reactflow';
-import 'reactflow/dist/style.css';
+  EdgeLabelRenderer,
+  SelectionMode
+} from '@xyflow/react';
+import '@xyflow/react/dist/style.css';
 
 import { useCanvasStore } from '../stores/canvasStore';
 import { useAuthStore } from '../stores/authStore';
@@ -309,9 +313,14 @@ export default function DfdEditor({ setPage, diagramId }) {
 
   const [nodes, setNodesState, onNodesChange] = useNodesState([]);
   const [edges, setEdgesState, onEdgesChange] = useEdgesState([]);
-  
+  const { getViewport } = useReactFlow();
+
   const [selectedNode, setSelectedNode] = useState(null);
   const [selectedEdge, setSelectedEdge] = useState(null);
+
+  const undoStackRef = useRef([]);
+  const redoStackRef = useRef([]);
+  const MAX_UNDO = 50;
 
   // AI Assistant Prompt State
   const [aiPrompt, setAiPrompt] = useState('');
@@ -412,8 +421,36 @@ export default function DfdEditor({ setPage, diagramId }) {
     }, 200); // Wait 200ms after user stops dragging to sync to Zustand store
   }, [isReadOnly, syncLocalChanges]);
 
+  // Snap-to-grid: round position to nearest 20px
+  const SNAP_GRID = 20;
+
+  const pushUndo = useCallback((nodesSnapshot, edgesSnapshot) => {
+    undoStackRef.current.push({ nodes: nodesSnapshot, edges: edgesSnapshot });
+    if (undoStackRef.current.length > MAX_UNDO) undoStackRef.current.shift();
+    redoStackRef.current = [];
+  }, []);
+
+  const handleUndo = useCallback(() => {
+    const snapshot = undoStackRef.current.pop();
+    if (!snapshot) return;
+    redoStackRef.current.push({ nodes: [...nodes], edges: [...edges] });
+    setNodesState(snapshot.nodes);
+    setEdgesState(preprocessEdges(snapshot.edges, snapshot.nodes));
+    syncLocalChanges(snapshot.nodes, snapshot.edges);
+  }, [nodes, edges, setNodesState, setEdgesState, syncLocalChanges]);
+
+  const handleRedo = useCallback(() => {
+    const snapshot = redoStackRef.current.pop();
+    if (!snapshot) return;
+    undoStackRef.current.push({ nodes: [...nodes], edges: [...edges] });
+    setNodesState(snapshot.nodes);
+    setEdgesState(preprocessEdges(snapshot.edges, snapshot.nodes));
+    syncLocalChanges(snapshot.nodes, snapshot.edges);
+  }, [nodes, edges, setNodesState, setEdgesState, syncLocalChanges]);
+
   const onConnect = useCallback((params) => {
     if (isReadOnly) return;
+    pushUndo([...nodes], [...edges]);
     const newEdgesRaw = addEdge({
       ...params,
       id: `e-${Date.now()}`,
@@ -424,12 +461,13 @@ export default function DfdEditor({ setPage, diagramId }) {
     const newEdges = preprocessEdges(newEdgesRaw, nodes);
     setEdgesState(newEdges);
     syncLocalChanges(nodes, newEdges);
-  }, [edges, nodes, isReadOnly, setEdgesState, syncLocalChanges, t]);
+  }, [edges, nodes, isReadOnly, setEdgesState, syncLocalChanges, t, pushUndo]);
 
   const onEdgeUpdate = useCallback((oldEdge, newConnection) => {
     if (isReadOnly) return;
+    pushUndo([...nodes], [...edges]);
     setEdgesState((els) => {
-      const updatedRaw = updateEdge(oldEdge, newConnection, els);
+      const updatedRaw = reconnectEdge(oldEdge, newConnection, els);
       const updated = preprocessEdges(updatedRaw, nodes);
       syncLocalChanges(nodes, updated);
       const newEdgeObj = updated.find(e => e.id === oldEdge.id);
@@ -438,19 +476,17 @@ export default function DfdEditor({ setPage, diagramId }) {
       }
       return updated;
     });
-  }, [nodes, isReadOnly, setEdgesState, syncLocalChanges]);
+  }, [nodes, edges, isReadOnly, setEdgesState, syncLocalChanges, pushUndo]);
 
   const onNodesChangeHandler = useCallback((changes) => {
     if (isReadOnly) return;
-    // Apply local changes immediately for smooth native dragging (60/120fps)
-    onNodesChange(changes);
-    
     const hasRemove = changes.some(c => c.type === 'remove');
     if (hasRemove) {
+      pushUndo([...nodes], [...edges]);
       setSelectedNode(null);
     }
+    onNodesChange(changes);
     
-    // Sync to store with a debounce so we don't trigger state-reload feedback loops during drag
     setNodesState((currentNodes) => {
       setEdgesState((currentEdges) => {
         const processed = preprocessEdges(currentEdges, currentNodes);
@@ -459,15 +495,16 @@ export default function DfdEditor({ setPage, diagramId }) {
       });
       return currentNodes;
     });
-  }, [isReadOnly, debouncedSync, onNodesChange, setNodesState, setEdgesState]);
+  }, [isReadOnly, debouncedSync, onNodesChange, setNodesState, setEdgesState, nodes, edges, pushUndo]);
 
   const onEdgesChangeHandler = useCallback((changes) => {
     if (isReadOnly) return;
-    onEdgesChange(changes);
     const hasRemove = changes.some(c => c.type === 'remove');
     if (hasRemove) {
+      pushUndo([...nodes], [...edges]);
       setSelectedEdge(null);
     }
+    onEdgesChange(changes);
     
     setNodesState((currentNodes) => {
       setEdgesState((currentEdges) => {
@@ -477,7 +514,7 @@ export default function DfdEditor({ setPage, diagramId }) {
       });
       return currentNodes;
     });
-  }, [isReadOnly, debouncedSync, onEdgesChange, setNodesState, setEdgesState]);
+  }, [isReadOnly, debouncedSync, onEdgesChange, setNodesState, setEdgesState, nodes, edges, pushUndo]);
 
   // Click Event on Node
   const onNodeClick = useCallback((event, node) => {
@@ -497,7 +534,23 @@ export default function DfdEditor({ setPage, diagramId }) {
     setSelectedEdge(null);
   }, []);
 
-  // Helper to add nodes locally
+  // Keyboard shortcuts: Ctrl+Z = undo, Ctrl+Shift+Z / Ctrl+Y = redo
+  useEffect(() => {
+    const handleKeyDown = (e) => {
+      if (isReadOnly) return;
+      if ((e.ctrlKey || e.metaKey) && e.key === 'z' && !e.shiftKey) {
+        e.preventDefault();
+        handleUndo();
+      } else if ((e.ctrlKey || e.metaKey) && (e.key === 'y' || (e.key === 'z' && e.shiftKey))) {
+        e.preventDefault();
+        handleRedo();
+      }
+    };
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, [isReadOnly, handleUndo, handleRedo]);
+
+  // Helper to add nodes at viewport center (with slight random offset)
   const handleAddNode = (type) => {
     if (isReadOnly) return;
     
@@ -517,10 +570,21 @@ export default function DfdEditor({ setPage, diagramId }) {
       height = 200;
     }
 
+    // Place at viewport center + small random offset to avoid stacking
+    const vp = getViewport();
+    const centerX = (window.innerWidth * 0.5 - vp.x) / vp.zoom - width / 2;
+    const centerY = (window.innerHeight * 0.4 - vp.y) / vp.zoom - height / 2;
+    const jitterX = (Math.random() - 0.5) * 80;
+    const jitterY = (Math.random() - 0.5) * 60;
+
+    // Snap to grid
+    const snapX = Math.round((centerX + jitterX) / SNAP_GRID) * SNAP_GRID;
+    const snapY = Math.round((centerY + jitterY) / SNAP_GRID) * SNAP_GRID;
+
     const newNode = {
       id: `n-${Date.now()}`,
       type,
-      position: { x: 250, y: 200 },
+      position: { x: snapX, y: snapY },
       style: { width, height },
       data: { 
         name: language === 'zh' ? `新${typeName}` : `New ${typeName}`, 
@@ -529,6 +593,7 @@ export default function DfdEditor({ setPage, diagramId }) {
         remarks: '' 
       }
     };
+    pushUndo([...nodes], [...edges]);
     const newNodes = [...nodes, newNode];
     setNodesState(newNodes);
     syncLocalChanges(newNodes, edges);
@@ -538,26 +603,24 @@ export default function DfdEditor({ setPage, diagramId }) {
 
   const handleDeleteSelectedNode = () => {
     if (isReadOnly || !selectedNode) return;
-    if (window.confirm(t('确认要删除节点 "') + selectedNode.data.name + t('" 吗？所有与其连接的线也将删除。'))) {
-      const newNodes = nodes.filter(n => n.id !== selectedNode.id);
-      const newEdgesRaw = edges.filter(e => e.source !== selectedNode.id && e.target !== selectedNode.id);
-      const newEdges = preprocessEdges(newEdgesRaw, newNodes);
-      setNodesState(newNodes);
-      setEdgesState(newEdges);
-      syncLocalChanges(newNodes, newEdges);
-      setSelectedNode(null);
-    }
+    pushUndo([...nodes], [...edges]);
+    const newNodes = nodes.filter(n => n.id !== selectedNode.id);
+    const newEdgesRaw = edges.filter(e => e.source !== selectedNode.id && e.target !== selectedNode.id);
+    const newEdges = preprocessEdges(newEdgesRaw, newNodes);
+    setNodesState(newNodes);
+    setEdgesState(newEdges);
+    syncLocalChanges(newNodes, newEdges);
+    setSelectedNode(null);
   };
 
   const handleDeleteSelectedEdge = () => {
     if (isReadOnly || !selectedEdge) return;
-    if (window.confirm(t("确认要删除连线吗？"))) {
-      const newEdgesRaw = edges.filter(e => e.id !== selectedEdge.id);
-      const newEdges = preprocessEdges(newEdgesRaw, nodes);
-      setEdgesState(newEdges);
-      syncLocalChanges(nodes, newEdges);
-      setSelectedEdge(null);
-    }
+    pushUndo([...nodes], [...edges]);
+    const newEdgesRaw = edges.filter(e => e.id !== selectedEdge.id);
+    const newEdges = preprocessEdges(newEdgesRaw, nodes);
+    setEdgesState(newEdges);
+    syncLocalChanges(nodes, newEdges);
+    setSelectedEdge(null);
   };
 
   // Details updates from right form panel
@@ -966,8 +1029,19 @@ export default function DfdEditor({ setPage, diagramId }) {
             nodeTypes={nodeTypes}
             edgeTypes={edgeTypes}
             fitView
-            elevateEdgesOnSelect={true}
+            snapToGrid={true}
+            snapGrid={[SNAP_GRID, SNAP_GRID]}
+            selectionMode={SelectionMode.Partial}
+            multiSelectionKeyCode="Shift"
             deleteKeyCode={["Delete", "Backspace"]}
+            panOnScroll={true}
+            selectionOnDrag={true}
+            selectNodesOnDrag={true}
+            panOnDrag={[1, 2]}
+            connectionLineStyle={{ stroke: 'var(--primary)', strokeWidth: 2 }}
+            defaultEdgeOptions={{
+              markerEnd: { type: MarkerType.ArrowClosed }
+            }}
           >
             <Background color="#cbd5e1" gap={16} size={1} />
             <Controls style={{ background: '#fff', border: '1px solid #cbd5e1', color: '#1e293b' }} />

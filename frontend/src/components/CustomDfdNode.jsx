@@ -1,5 +1,5 @@
 import { useI18n } from '../stores/i18nStore';
-import { Handle, Position, NodeResizer } from 'reactflow';
+import { Handle, Position, NodeResizer } from '@xyflow/react';
 import { User, Cpu, Database, Shield, Link } from 'lucide-react';
 import { useCanvasStore } from '../stores/canvasStore';
 
