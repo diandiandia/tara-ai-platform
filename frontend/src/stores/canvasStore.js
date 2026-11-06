@@ -10,6 +10,46 @@ const getHeaders = () => {
   return token ? { Authorization: `Bearer ${token}` } : {};
 };
 
+// Browser-side mirror of every diagram, so the canvas can be painted instantly
+// on open instead of waiting for a network round-trip. It also acts as a safety
+// net when a save cannot reach the server.
+const CACHE_PREFIX = 'tara_canvas_cache_';
+
+const readCache = (diagramId) => {
+  try {
+    const raw = localStorage.getItem(`${CACHE_PREFIX}${diagramId}`);
+    return raw ? JSON.parse(raw) : null;
+  } catch {
+    return null;
+  }
+};
+
+const writeCache = (diagramId, payload) => {
+  try {
+    localStorage.setItem(`${CACHE_PREFIX}${diagramId}`, JSON.stringify({ ...payload, updatedAt: Date.now() }));
+  } catch {
+    // Quota exceeded or storage disabled: the cache is best-effort only
+  }
+};
+
+const removeCache = (diagramId) => {
+  try {
+    localStorage.removeItem(`${CACHE_PREFIX}${diagramId}`);
+  } catch {
+    // Ignore
+  }
+};
+
+// The diagrams list only needs metadata; keeping snapshot_json out of it stops
+// the workbench from holding every canvas snapshot in memory.
+const toMeta = (diagram) => ({
+  id: diagram.id,
+  domain_id: diagram.domain_id,
+  title: diagram.title,
+  version_no: diagram.version_no,
+  updated_at: diagram.updated_at
+});
+
 export const useCanvasStore = create((set, get) => {
   let saveTimeout = null;
   // Incremented whenever a diagram session is closed, so in-flight saves
@@ -65,7 +105,7 @@ export const useCanvasStore = create((set, get) => {
           { headers: getHeaders() }
         );
         set((state) => ({
-          diagrams: [...state.diagrams, response.data],
+          diagrams: [...state.diagrams, toMeta(response.data)],
           loading: false
         }));
         return response.data;
@@ -79,6 +119,7 @@ export const useCanvasStore = create((set, get) => {
       set({ loading: true, error: null });
       try {
         await axios.delete(`${API_BASE}/diagrams/${diagramId}`, { headers: getHeaders() });
+        removeCache(diagramId);
         set((state) => ({
           diagrams: state.diagrams.filter((d) => d.id !== diagramId),
           currentDiagram: state.currentDiagram?.id === diagramId ? null : state.currentDiagram,
@@ -150,18 +191,109 @@ export const useCanvasStore = create((set, get) => {
       set({ ws });
     },
 
+    // Writes the current canvas into the browser cache. Called synchronously
+    // before any navigation so the last edits survive even if the network save
+    // never completes.
+    persistLocalCache: () => {
+      const diag = get().currentDiagram;
+      if (!diag || !diag.id) return;
+      writeCache(diag.id, {
+        versionNo: get().versionNo,
+        snapshot: JSON.stringify({ nodes: get().nodes, edges: get().edges }),
+        serverSnapshot: get().serverSnapshot,
+        dirty: get().dirty,
+        title: diag.title,
+        domainId: diag.domain_id
+      });
+    },
+
     openDiagramById: async (diagramId, username) => {
       get().closeDiagram();
+
+      const cached = readCache(diagramId);
+
+      // Cache hit: paint the canvas immediately, then only ask the server for a
+      // tiny version token to decide whether the full snapshot is needed.
+      if (cached && cached.snapshot) {
+        const listed = get().diagrams.find((d) => d.id === diagramId);
+        set({ loading: false, error: null });
+        await get().openDiagram(
+          {
+            id: diagramId,
+            version_no: cached.versionNo,
+            snapshot_json: cached.snapshot,
+            title: cached.title,
+            domain_id: cached.domainId || listed?.domain_id
+          },
+          username
+        );
+        set({
+          serverSnapshot: cached.serverSnapshot || null,
+          dirty: !!cached.dirty
+        });
+
+        let meta;
+        try {
+          const metaResponse = await axios.get(`${API_BASE}/diagrams/${diagramId}/meta`, { headers: getHeaders() });
+          meta = metaResponse.data;
+        } catch (err) {
+          if (err.response?.status === 404) {
+            // The diagram was deleted elsewhere; drop the stale cache
+            removeCache(diagramId);
+            set({ error: err.response?.data?.detail || '功能图不存在' });
+            return;
+          }
+          // Offline or transient failure: the cached copy stays usable
+          return;
+        }
+
+        if (get().currentDiagram?.id !== diagramId) return;
+
+        set((state) => ({
+          diagrams: state.diagrams.some((d) => d.id === meta.id)
+            ? state.diagrams.map((d) => (d.id === meta.id ? { ...d, ...meta } : d))
+            : [...state.diagrams, meta]
+        }));
+
+        if (meta.version_no === cached.versionNo) {
+          // Server has not moved since the cache was written: nothing to fetch.
+          // Only unsaved local edits still need to reach the server.
+          if (get().dirty) get().flushSave();
+          return;
+        }
+
+        if (get().dirty) {
+          // Local edits exist and the server moved on. Let the save path decide
+          // between "version drift" (safe to realign) and a real conflict.
+          get().flushSave();
+          return;
+        }
+
+        // Nothing unsaved locally and the server has newer content: pull it.
+        try {
+          const response = await axios.get(`${API_BASE}/diagrams/${diagramId}`, { headers: getHeaders() });
+          if (get().currentDiagram?.id !== diagramId) return;
+          await get().openDiagram(response.data, username);
+          get().persistLocalCache();
+        } catch (err) {
+          set({ error: err.response?.data?.detail || '加载画布失败' });
+        }
+        return;
+      }
+
+      // Cold start: no cache yet, the full snapshot is unavoidable.
       set({ loading: true, error: null });
       try {
         const response = await axios.get(`${API_BASE}/diagrams/${diagramId}`, { headers: getHeaders() });
+        const fresh = response.data;
+        await get().openDiagram(fresh, username);
         set((state) => ({
           loading: false,
-          diagrams: state.diagrams.some((d) => d.id === response.data.id)
-            ? state.diagrams.map((d) => (d.id === response.data.id ? response.data : d))
-            : [...state.diagrams, response.data]
+          diagrams: state.diagrams.some((d) => d.id === fresh.id)
+            ? state.diagrams.map((d) => (d.id === fresh.id ? { ...d, ...toMeta(fresh) } : d))
+            : [...state.diagrams, toMeta(fresh)]
         }));
-        await get().openDiagram(response.data, username);
+        get().persistLocalCache();
       } catch (err) {
         set({
           loading: false,
@@ -210,6 +342,9 @@ export const useCanvasStore = create((set, get) => {
 
     triggerAutoSave: () => {
       if (get().isReadOnly) return;
+      // Mirror the edit into the browser cache right away so a crash, refresh or
+      // failed network save cannot lose it.
+      get().persistLocalCache();
       if (saveTimeout) clearTimeout(saveTimeout);
       saveTimeout = setTimeout(() => {
         get().saveDiagram();
@@ -255,6 +390,10 @@ export const useCanvasStore = create((set, get) => {
         edges: get().edges
       });
 
+      // Mirror the outgoing payload into the browser cache so the canvas can be
+      // restored instantly (and offline) even if this request never lands.
+      get().persistLocalCache();
+
       // If offline, store in LocalStorage (BR-17)
       if (get().isOffline || !navigator.onLine) {
         localStorage.setItem(`tara_offline_diagram_${diag.id}`, JSON.stringify({
@@ -282,15 +421,19 @@ export const useCanvasStore = create((set, get) => {
             { headers: getHeaders() }
           );
           // Save successful, update local version_no and keep the diagrams list in sync
+          // Edits made while this request was in flight are still unsaved, so the
+          // dirty flag must only be cleared when the payload matches the store.
+          const stillDirty = JSON.stringify({ nodes: get().nodes, edges: get().edges }) !== snapshot_json;
           set((state) => ({
             versionNo: seq === sessionSeq ? response.data.version_no : state.versionNo,
             currentDiagram: seq === sessionSeq ? response.data : state.currentDiagram,
             serverSnapshot: seq === sessionSeq ? response.data.snapshot_json : state.serverSnapshot,
-            diagrams: state.diagrams.map((d) => (d.id === response.data.id ? response.data : d)),
+            diagrams: state.diagrams.map((d) => (d.id === response.data.id ? { ...d, ...toMeta(response.data) } : d)),
             error: seq === sessionSeq ? null : state.error,
-            dirty: seq === sessionSeq ? false : state.dirty,
+            dirty: seq === sessionSeq ? stillDirty : state.dirty,
             isSaving: false
           }));
+          get().persistLocalCache();
           // Remove local backup if it matches
           localStorage.removeItem(`tara_offline_diagram_${diag.id}`);
 

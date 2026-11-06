@@ -8,7 +8,7 @@ from app.api.auth import get_current_user
 from app.models.user import User
 from app.models.domain import Domain
 from app.models.diagram import Diagram
-from app.schemas.diagram import DiagramUpdate, DiagramOut
+from app.schemas.diagram import DiagramUpdate, DiagramOut, DiagramMeta
 from app.api.project import check_domain_idle
 from pydantic import BaseModel, Field
 
@@ -100,7 +100,7 @@ def create_diagram(
     db.refresh(diagram)
     return diagram
 
-@router.get("/domain/{domain_id}", response_model=List[DiagramOut])
+@router.get("/domain/{domain_id}", response_model=List[DiagramMeta])
 def list_diagrams(
     domain_id: int,
     db: Session = Depends(get_db),
@@ -113,6 +113,21 @@ def list_diagrams(
     if not domain:
         raise HTTPException(status_code=404, detail="子域控不存在")
     return db.query(Diagram).filter(Diagram.domain_id == domain_id).all()
+
+@router.get("/{id}/meta", response_model=DiagramMeta)
+def get_diagram_meta(
+    id: int,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user)
+):
+    """
+    获取功能图的版本元信息（不含 snapshot_json）。
+    前端用它判断本地缓存是否仍然是最新，避免为了回答"云端变了吗"而下载整张画布。
+    """
+    diagram = db.query(Diagram).filter(Diagram.id == id).first()
+    if not diagram:
+        raise HTTPException(status_code=404, detail="功能图不存在")
+    return diagram
 
 @router.get("/{id}", response_model=DiagramOut)
 def get_diagram(
@@ -819,4 +834,3 @@ def ai_chat_diagram(
         "reply": reply,
         "snapshot_json": snapshot_str
     }
-
