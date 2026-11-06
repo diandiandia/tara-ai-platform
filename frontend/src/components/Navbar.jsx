@@ -16,12 +16,16 @@ export default function Navbar({ setPage }) {
   };
 
   const handleHomeClick = () => {
-    closeDiagram();
+    // Do NOT call closeDiagram() here – it would reset dirty:false and
+    // currentDiagram:null before DfdEditor's unmount cleanup can flush the
+    // save, silently losing the user's work. The cleanup effect inside
+    // DfdEditor handles save-then-close, and the editor instance ownership
+    // token prevents a stale cleanup from tearing down a live session.
     setPage(user?.role === 'admin' ? 'users' : 'projects');
   };
 
   const handleSettingsClick = () => {
-    closeDiagram();
+    // Same reasoning as handleHomeClick – let DfdEditor's cleanup flush first.
     setPage('settings');
   };
 

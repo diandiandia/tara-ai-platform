@@ -122,6 +122,7 @@ export const useCanvasStore = create((set, get) => {
     ws: null,
     loading: false,
     error: null,
+    deletingDiagramId: null,
     isOffline: !navigator.onLine,
     isSaving: false,
     savePending: false,
@@ -141,14 +142,17 @@ export const useCanvasStore = create((set, get) => {
       }
     },
 
-    fetchDiagrams: async (domainId) => {
+    fetchDiagrams: async (domainId, opts = {}) => {
+      const { skipPrefetch = false } = opts;
       set({ loading: true, error: null });
       try {
         const response = await axios.get(`${API_BASE}/diagrams/domain/${domainId}`, { headers: getHeaders() });
         set({ diagrams: response.data, loading: false });
         // Warm the browser cache in the background so opening any canvas from
         // the list is instant instead of waiting on a cold network round-trip.
-        get().prefetchDiagrams(response.data);
+        if (!skipPrefetch) {
+          get().prefetchDiagrams(response.data);
+        }
       } catch (err) {
         set({ error: err.response?.data?.detail || '获取功能图列表失败', loading: false });
       }
@@ -221,18 +225,23 @@ export const useCanvasStore = create((set, get) => {
     },
 
     deleteDiagram: async (diagramId) => {
-      set({ loading: true, error: null });
+      // Guard against duplicate calls (e.g. from a component that rapidly
+      // re-mounts while the confirm dialog was open, or from click-event
+      // propagation quirks). The first caller wins; concurrent callers skip.
+      if (get().deletingDiagramId === diagramId) return false;
+      set({ loading: true, error: null, deletingDiagramId: diagramId });
       try {
         await axios.delete(`${API_BASE}/diagrams/${diagramId}`, { headers: getHeaders() });
         removeCache(diagramId);
         set((state) => ({
           diagrams: state.diagrams.filter((d) => d.id !== diagramId),
           currentDiagram: state.currentDiagram?.id === diagramId ? null : state.currentDiagram,
-          loading: false
+          loading: false,
+          deletingDiagramId: null
         }));
         return true;
       } catch (err) {
-        set({ error: err.response?.data?.detail || '删除功能图失败', loading: false });
+        set({ error: err.response?.data?.detail || '删除功能图失败', loading: false, deletingDiagramId: null });
         return false;
       }
     },

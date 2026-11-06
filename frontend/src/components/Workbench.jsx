@@ -360,7 +360,15 @@ export default function Workbench({ setPage, setDomainId, setDiagramId, projectI
     if (diagram) {
       setShowDfdModal(false);
       setNewDfdTitle('');
-      fetchDiagrams(activeDomain.id);
+      // Refresh the list from the server so it reflects the correct order and
+      // any concurrent changes, but skip the costly full-snapshot prefetch:
+      // the newly created diagram has an empty snapshot, and every other
+      // diagram was already mirrored when the workbench mounted.
+      fetchDiagrams(activeDomain.id, { skipPrefetch: true });
+    } else {
+      // createDiagram caught an error and stored it in canvasStore.error
+      const latestError = useCanvasStore.getState().error;
+      setDfdModalError(latestError || t('创建功能图失败'));
     }
   };
 
@@ -377,7 +385,10 @@ export default function Workbench({ setPage, setDomainId, setDiagramId, projectI
     if (activeDomain.status === 'running') return;
     if (window.confirm(t('确定要删除功能图 "') + title + t('" 吗？该画布提取出的资产也将级联清除。'))) {
       await deleteDiagram(diagId);
-      fetchDiagrams(activeDomain.id);
+      // Skip the costly full-snapshot prefetch – the workbench already has
+      // the up-to-date diagram list from the initial mount. Reloading every
+      // remaining snapshot here just blocks the UI with no benefit.
+      fetchDiagrams(activeDomain.id, { skipPrefetch: true });
       fetchAssets(activeDomain.id);
     }
   };

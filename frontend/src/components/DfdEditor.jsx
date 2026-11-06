@@ -481,9 +481,16 @@ function DfdEditorCanvas({ setPage, diagramId }) {
       const startSessionId = store.sessionId;
 
       if (!dirtyRef.current && !store.dirty) {
-        // Nothing pending locally and nothing unsaved in the store
-        if (ownerToken === editorOwnerToken) store.closeDiagram();
-        return;
+        // Double-check that the graph ref does not still hold edits that
+        // were never synced into the store (e.g. because a parent
+        // component called closeDiagram() before this cleanup ran).
+        const latest = latestGraphRef.current;
+        const hasPendingGraph = latest.nodes.length > 0 || latest.edges.length > 0;
+        if (!hasPendingGraph) {
+          if (ownerToken === editorOwnerToken) store.closeDiagram();
+          return;
+        }
+        dirtyRef.current = true;
       }
 
       if (dirtyRef.current) {
