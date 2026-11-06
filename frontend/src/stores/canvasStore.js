@@ -54,17 +54,49 @@ const toMeta = (diagram) => ({
   updated_at: diagram.updated_at
 });
 
-// Compares two snapshots by content instead of by string: the server may
-// serialize the JSON differently (key order, spacing) from what the client sent,
-// so a raw string comparison would report a conflict that does not exist.
+// xyflow attaches runtime properties (measured, selected, dragging, etc.) to
+// nodes and edges after they are rendered. Those values differ across sessions
+// and would cause a byte-for-byte comparison to report a conflict when the
+// business content is identical. Stripping them before comparison gives the
+// real answer.
+const STRIP_NODE_KEYS = new Set([
+  'measured', 'selected', 'dragging', 'resizing',
+  'width', 'height', 'selectable', 'deletable',
+  'draggable', 'connectable', 'focusable', 'parentId'
+]);
+const STRIP_EDGE_KEYS = new Set(['selected', 'dragging']);
+
+const normalizeNode = (n) => {
+  const out = {};
+  for (const k of Object.keys(n)) {
+    if (!STRIP_NODE_KEYS.has(k)) out[k] = n[k];
+  }
+  return out;
+};
+
+const normalizeEdge = (e) => {
+  const out = {};
+  for (const k of Object.keys(e)) {
+    if (!STRIP_EDGE_KEYS.has(k)) out[k] = e[k];
+  }
+  return out;
+};
+
+// Compares two snapshots by business content: they match when the same set of
+// nodes and edges are present, regardless of xyflow-internal runtime fields or
+// JSON formatting differences between the Python server and the JS client.
 const snapshotMatches = (a, b) => {
   if (a === b) return true;
   if (!a || !b) return false;
   try {
     const left = JSON.parse(a);
     const right = JSON.parse(b);
-    return JSON.stringify(left.nodes || []) === JSON.stringify(right.nodes || [])
-      && JSON.stringify(left.edges || []) === JSON.stringify(right.edges || []);
+    const leftNodes = (left.nodes || []).map(normalizeNode);
+    const rightNodes = (right.nodes || []).map(normalizeNode);
+    const leftEdges = (left.edges || []).map(normalizeEdge);
+    const rightEdges = (right.edges || []).map(normalizeEdge);
+    return JSON.stringify(leftNodes) === JSON.stringify(rightNodes)
+      && JSON.stringify(leftEdges) === JSON.stringify(rightEdges);
   } catch {
     return false;
   }
