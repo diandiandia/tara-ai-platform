@@ -336,7 +336,7 @@ export const useTaraStore = create((set, get) => ({
       document.body.appendChild(link);
       link.click();
       link.remove();
-      window.URL.revokeObjectURL(downloadUrl);
+      window.setTimeout(() => window.URL.revokeObjectURL(downloadUrl), 1000);
       return true;
     } catch (err) {
       console.error(err);

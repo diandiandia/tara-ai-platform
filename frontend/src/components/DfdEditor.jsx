@@ -1,5 +1,5 @@
 import { useI18n } from '../stores/i18nStore';
-import { useState, useEffect, useCallback, useRef, useMemo } from 'react';
+import { useState, useEffect, useLayoutEffect, useCallback, useRef, useMemo } from 'react';
 import {
   ReactFlow,
   ReactFlowProvider,
@@ -9,6 +9,8 @@ import {
   useNodesState,
   useEdgesState,
   useReactFlow,
+  applyEdgeChanges,
+  applyNodeChanges,
   addEdge,
   MarkerType,
   reconnectEdge,
@@ -232,11 +234,12 @@ const nextSide = (side) => {
 
 const preprocessEdges = (edgesList, nodesList = []) => {
   if (!edgesList) return [];
+  const nodesById = new Map(nodesList.map(node => [node.id, node]));
   
   // 1. Auto-routing calculation (opt-in only: user must enable it explicitly)
   const routedEdges = edgesList.map(edge => {
-    const sourceNode = nodesList.find(n => n.id === edge.source);
-    const targetNode = nodesList.find(n => n.id === edge.target);
+    const sourceNode = nodesById.get(edge.source);
+    const targetNode = nodesById.get(edge.target);
 
     if (!sourceNode || !targetNode) {
       return edge;
@@ -411,8 +414,6 @@ function DfdEditorCanvas({ setPage, diagramId }) {
     error,
     isOffline,
     openDiagramById,
-    setNodes,
-    setEdges,
     saveDiagram,
     triggerAIChat,
     applySnapshot,
@@ -420,8 +421,8 @@ function DfdEditorCanvas({ setPage, diagramId }) {
     activeUsers
   } = useCanvasStore();
 
-  const [nodes, setNodesState, onNodesChange] = useNodesState([]);
-  const [edges, setEdgesState, onEdgesChange] = useEdgesState([]);
+  const [nodes, setNodesState] = useNodesState([]);
+  const [edges, setEdgesState] = useEdgesState([]);
   const { getViewport } = useReactFlow();
 
   const [selectedNode, setSelectedNode] = useState(null);
@@ -448,7 +449,7 @@ function DfdEditorCanvas({ setPage, diagramId }) {
   const latestGraphRef = useRef({ nodes: [], edges: [] });
   const dirtyRef = useRef(false);
 
-  useEffect(() => {
+  useLayoutEffect(() => {
     latestGraphRef.current = { nodes, edges };
   }, [nodes, edges]);
 
@@ -495,8 +496,7 @@ function DfdEditorCanvas({ setPage, diagramId }) {
 
       if (dirtyRef.current) {
         const latest = latestGraphRef.current;
-        store.setNodes(latest.nodes);
-        store.setEdges(latest.edges);
+        store.setGraph(latest.nodes, latest.edges);
         dirtyRef.current = false;
       }
 
@@ -573,10 +573,14 @@ function DfdEditorCanvas({ setPage, diagramId }) {
   // Update store when local nodes/edges change (debounced in store)
   const syncLocalChanges = useCallback((newNodes, newEdges) => {
     if (isReadOnly) return;
-    setNodes(newNodes);
-    setEdges(newEdges);
+    if (syncTimeoutRef.current) {
+      clearTimeout(syncTimeoutRef.current);
+      syncTimeoutRef.current = null;
+    }
+    latestGraphRef.current = { nodes: newNodes, edges: newEdges };
+    useCanvasStore.getState().setGraph(newNodes, newEdges);
     dirtyRef.current = false;
-  }, [isReadOnly, setNodes, setEdges]);
+  }, [isReadOnly]);
 
   // Debounced store sync to eliminate drag latency / resistance (feedback loop)
   const debouncedSync = useCallback((newNodes, newEdges) => {
@@ -703,17 +707,11 @@ function DfdEditorCanvas({ setPage, diagramId }) {
       pushUndo([...nodes], [...edges]);
       setSelectedNode(null);
     }
-    onNodesChange(changes);
-    
-    setNodesState((currentNodes) => {
-      setEdgesState((currentEdges) => {
-        const processed = preprocessEdges(currentEdges, currentNodes);
-        debouncedSync(currentNodes, processed);
-        return processed;
-      });
-      return currentNodes;
-    });
-  }, [isReadOnly, debouncedSync, onNodesChange, setNodesState, setEdgesState, nodes, edges, pushUndo]);
+    const nextNodes = applyNodeChanges(changes, latestGraphRef.current.nodes);
+    latestGraphRef.current = { ...latestGraphRef.current, nodes: nextNodes };
+    setNodesState(nextNodes);
+    debouncedSync(nextNodes, latestGraphRef.current.edges);
+  }, [isReadOnly, debouncedSync, setNodesState, nodes, edges, pushUndo]);
 
   const onEdgesChangeHandler = useCallback((changes) => {
     if (isReadOnly) return;
@@ -722,17 +720,31 @@ function DfdEditorCanvas({ setPage, diagramId }) {
       pushUndo([...nodes], [...edges]);
       setSelectedEdge(null);
     }
-    onEdgesChange(changes);
-    
-    setNodesState((currentNodes) => {
-      setEdgesState((currentEdges) => {
-        const processed = preprocessEdges(currentEdges, currentNodes);
-        debouncedSync(currentNodes, processed);
-        return processed;
-      });
-      return currentNodes;
-    });
-  }, [isReadOnly, debouncedSync, onEdgesChange, setNodesState, setEdgesState, nodes, edges, pushUndo]);
+    const nextEdges = applyEdgeChanges(changes, latestGraphRef.current.edges);
+    const graphChanged = changes.some(change => ['add', 'remove', 'replace'].includes(change.type));
+    const processedEdges = graphChanged
+      ? preprocessEdges(nextEdges, latestGraphRef.current.nodes)
+      : nextEdges;
+    latestGraphRef.current = { ...latestGraphRef.current, edges: processedEdges };
+    setEdgesState(processedEdges);
+    debouncedSync(latestGraphRef.current.nodes, processedEdges);
+  }, [isReadOnly, debouncedSync, setEdgesState, nodes, edges, pushUndo]);
+
+  const handleNodeDragStop = useCallback((_, draggedNode) => {
+    if (isReadOnly) return;
+    if (syncTimeoutRef.current) {
+      clearTimeout(syncTimeoutRef.current);
+      syncTimeoutRef.current = null;
+    }
+    const nextNodes = latestGraphRef.current.nodes.map(node =>
+      node.id === draggedNode.id ? draggedNode : node
+    );
+    const nextEdges = preprocessEdges(latestGraphRef.current.edges, nextNodes);
+    latestGraphRef.current = { nodes: nextNodes, edges: nextEdges };
+    setNodesState(nextNodes);
+    setEdgesState(nextEdges);
+    syncLocalChanges(nextNodes, nextEdges);
+  }, [isReadOnly, setNodesState, setEdgesState, syncLocalChanges]);
 
   // Click Event on Node
   const onNodeClick = useCallback((event, node) => {
@@ -751,6 +763,11 @@ function DfdEditorCanvas({ setPage, diagramId }) {
     setSelectedNode(null);
     setSelectedEdge(null);
   }, []);
+
+  const renderedEdges = useMemo(() => edges.map(edge => ({
+    ...edge,
+    reconnectable: !isReadOnly && selectedEdge?.id === edge.id
+  })), [edges, isReadOnly, selectedEdge?.id]);
 
   // Keyboard shortcuts: Ctrl+Z = undo, Ctrl+Shift+Z / Ctrl+Y = redo
   useEffect(() => {
@@ -1195,12 +1212,10 @@ function DfdEditorCanvas({ setPage, diagramId }) {
         <div style={{ flexGrow: 1, height: '100%', background: '#f8fafc' }}>
           <ReactFlow
             nodes={nodes}
-            edges={edges.map(e => ({
-              ...e,
-              reconnectable: !isReadOnly && selectedEdge && selectedEdge.id === e.id
-            }))}
+            edges={renderedEdges}
             onNodesChange={onNodesChangeHandler}
             onEdgesChange={onEdgesChangeHandler}
+            onNodeDragStop={handleNodeDragStop}
             onConnect={onConnect}
             onConnectStart={onConnectStart}
             onConnectEnd={onConnectEnd}

@@ -110,6 +110,7 @@ export const useCanvasStore = create((set, get) => {
   // Only one prefetch sweep runs at a time; bumping the token abandons the
   // previous sweep when the user switches domain mid-flight.
   let prefetchToken = 0;
+  let prefetchController = null;
   // Guards duplicate deleteDiagram calls for the same diagram ID.
   // Module-level so the lock is guaranteed to clear on a full page refresh,
   // unlike Zustand state which may persist across SPA navigations.
@@ -169,6 +170,9 @@ export const useCanvasStore = create((set, get) => {
       if (!items.length) return;
 
       const token = ++prefetchToken;
+      prefetchController?.abort();
+      prefetchController = new AbortController();
+      const { signal } = prefetchController;
 
       for (const meta of items) {
         if (token !== prefetchToken) return;
@@ -184,7 +188,7 @@ export const useCanvasStore = create((set, get) => {
         if (cached?.snapshot && cached.versionNo === meta.version_no) continue;
 
         try {
-          const response = await axios.get(`${API_BASE}/diagrams/${meta.id}`, { headers: getHeaders() });
+          const response = await axios.get(`${API_BASE}/diagrams/${meta.id}`, { headers: getHeaders(), signal });
           if (token !== prefetchToken) return;
           if (get().currentDiagram?.id === meta.id) continue;
 
@@ -330,6 +334,9 @@ export const useCanvasStore = create((set, get) => {
     },
 
     openDiagramById: async (diagramId, username) => {
+      prefetchToken += 1;
+      prefetchController?.abort();
+      prefetchController = null;
       get().closeDiagram();
 
       const cached = readCache(diagramId);
@@ -471,6 +478,11 @@ export const useCanvasStore = create((set, get) => {
 
     setEdges: (edges) => {
       set({ edges, dirty: true });
+      get().triggerAutoSave();
+    },
+
+    setGraph: (nodes, edges) => {
+      set({ nodes, edges, dirty: true });
       get().triggerAutoSave();
     },
 
