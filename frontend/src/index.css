@@ -479,6 +479,27 @@ body {
   border-color: rgba(244, 63, 94, 0.65) !important;
 }
 
+.toolbox-card.interface-card:hover {
+  background: rgba(217, 119, 6, 0.1) !important;
+  border-color: rgba(217, 119, 6, 0.65) !important;
+}
+
+/* Shape preview inside each toolbox card */
+.toolbox-preview {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  height: 40px;
+  border-radius: 6px;
+  background: rgba(255, 255, 255, 0.45);
+  transition: background-color 0.2s ease, transform 0.2s cubic-bezier(0.4, 0, 0.2, 1);
+}
+
+.toolbox-card:hover .toolbox-preview {
+  background: rgba(255, 255, 255, 0.75);
+  transform: scale(1.04);
+}
+
 /* React Flow custom node handles and resizing style overrides */
 .custom-node-container .react-flow__handle {
   width: 8px !important;

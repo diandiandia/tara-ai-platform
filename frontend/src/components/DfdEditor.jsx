@@ -33,6 +33,59 @@ import {
 import CustomDfdNode from './CustomDfdNode';
 import { User, Database, Shield, Link } from 'lucide-react';
 
+// Palette swatches for the toolbox previews, kept in sync with the colours used
+// by CustomDfdNode so the shape shown in the palette is what gets drawn.
+const TOOLBOX_SHAPES = {
+  entity: { stroke: '#6366f1', fill: 'rgba(99, 102, 241, 0.12)' },
+  process: { stroke: '#d946ef', fill: 'rgba(217, 70, 239, 0.12)' },
+  storage: { stroke: '#10b981', fill: 'rgba(16, 185, 129, 0.12)' },
+  boundary: { stroke: '#f43f5e', fill: 'rgba(244, 63, 94, 0.05)' },
+  interface: { stroke: '#d97706', fill: 'rgba(217, 119, 6, 0.12)' }
+};
+
+function ToolboxPreview({ type }) {
+  const { stroke, fill } = TOOLBOX_SHAPES[type];
+
+  return (
+    <div className="toolbox-preview">
+      <svg width="68" height="34" viewBox="0 0 68 34" aria-hidden="true">
+        {type === 'entity' && (
+          <rect x="6" y="6" width="56" height="22" rx="4" fill={fill} stroke={stroke} strokeWidth="1.6" />
+        )}
+        {type === 'process' && (
+          <circle cx="34" cy="17" r="12.5" fill={fill} stroke={stroke} strokeWidth="1.6" />
+        )}
+        {type === 'storage' && (
+          <g>
+            <rect x="6" y="8" width="56" height="18" fill={fill} />
+            <line x1="6" y1="8" x2="62" y2="8" stroke={stroke} strokeWidth="2" strokeLinecap="round" />
+            <line x1="6" y1="26" x2="62" y2="26" stroke={stroke} strokeWidth="2" strokeLinecap="round" />
+          </g>
+        )}
+        {type === 'boundary' && (
+          <rect
+            x="6"
+            y="6"
+            width="56"
+            height="22"
+            rx="5"
+            fill={fill}
+            stroke={stroke}
+            strokeWidth="1.6"
+            strokeDasharray="5 3"
+          />
+        )}
+        {type === 'interface' && (
+          <g>
+            <rect x="6" y="6" width="56" height="22" rx="4" fill={fill} stroke={stroke} strokeWidth="1.6" />
+            <line x1="14" y1="17" x2="48" y2="17" stroke={stroke} strokeWidth="1.4" strokeDasharray="4 3" opacity="0.75" />
+          </g>
+        )}
+      </svg>
+    </div>
+  );
+}
+
 function ParallelBezierEdge({
   id,
   sourceX,
@@ -356,7 +409,6 @@ function DfdEditorCanvas({ setPage, diagramId }) {
     setNodes,
     setEdges,
     saveDiagram,
-    flushSave,
     triggerAIChat,
     applySnapshot,
     setOfflineStatus,
@@ -859,21 +911,29 @@ function DfdEditorCanvas({ setPage, diagramId }) {
     saveDiagram();
   };
 
-  const handleExitToWorkbench = async () => {
-    // Flush any debounced edit first so the last changes are included in the save
+  const handleExitToWorkbench = () => {
+    // Push any debounced edit into the store first so nothing is dropped
     if (syncTimeoutRef.current) {
       clearTimeout(syncTimeoutRef.current);
       syncTimeoutRef.current = null;
     }
     const latest = latestGraphRef.current;
-    syncLocalChanges(latest.nodes, latest.edges);
-    await flushSave();
-    // Stay on the canvas when the save did not go through, so the conflict /
-    // failure notice remains visible instead of being lost on navigation.
-    const state = useCanvasStore.getState();
-    if (state.error && state.error.includes('保存冲突')) {
-      return;
+    const current = useCanvasStore.getState();
+    const latestEmpty = !latest.nodes.length && !latest.edges.length;
+    const storeHasData = current.nodes.length > 0 || current.edges.length > 0;
+    // Never let an empty local graph overwrite a loaded one (e.g. clicking
+    // "back" before the canvas finished hydrating).
+    if (!latestEmpty || !storeHasData) {
+      syncLocalChanges(latest.nodes, latest.edges);
     }
+
+    const store = useCanvasStore.getState();
+    // Write the browser cache synchronously: it is instant, so leaving the page
+    // never has to wait for the network.
+    store.persistLocalCache();
+    // Fire the server save without blocking navigation; the request keeps going
+    // after unmount and the cache above guarantees the edits are not lost.
+    store.saveDiagram();
     setPage('workbench');
   };
 
@@ -1001,19 +1061,7 @@ function DfdEditorCanvas({ setPage, diagramId }) {
                 <User size={15} style={{ color: '#818cf8' }} />
                 <span style={{ fontSize: '13px', fontWeight: '600', color: 'var(--text-primary)' }}>{t("外部实体 (Entity)")}</span>
               </div>
-              <div style={{
-                height: '32px',
-                border: '2px solid #6366f1',
-                background: 'rgba(99, 102, 241, 0.1)',
-                borderRadius: '4px',
-                display: 'flex',
-                alignItems: 'center',
-                justifyContent: 'center',
-                fontSize: '10px',
-                color: '#818cf8',
-              }}>
-                [ Entity ]
-              </div>
+              <ToolboxPreview type="entity" />
             </div>
 
             {/* Process Card */}
@@ -1037,21 +1085,7 @@ function DfdEditorCanvas({ setPage, diagramId }) {
                 <Cpu size={15} style={{ color: '#f472b6' }} />
                 <span style={{ fontSize: '13px', fontWeight: '600', color: 'var(--text-primary)' }}>{t("处理过程 (Process)")}</span>
               </div>
-              <div style={{
-                height: '36px',
-                width: '36px',
-                margin: '0 auto',
-                border: '2.5px solid #d946ef',
-                background: 'rgba(217, 70, 239, 0.1)',
-                borderRadius: '50%',
-                display: 'flex',
-                alignItems: 'center',
-                justifyContent: 'center',
-                fontSize: '10px',
-                color: '#f472b6',
-              }}>
-                P
-              </div>
+              <ToolboxPreview type="process" />
             </div>
 
             {/* Storage Card */}
@@ -1075,21 +1109,7 @@ function DfdEditorCanvas({ setPage, diagramId }) {
                 <Database size={15} style={{ color: '#34d399' }} />
                 <span style={{ fontSize: '13px', fontWeight: '600', color: 'var(--text-primary)' }}>{t("数据存储 (Storage)")}</span>
               </div>
-              <div style={{
-                height: '32px',
-                borderTop: '2.5px solid #10b981',
-                borderBottom: '2.5px solid #10b981',
-                borderLeft: 'none',
-                borderRight: 'none',
-                background: 'rgba(16, 185, 129, 0.1)',
-                display: 'flex',
-                alignItems: 'center',
-                justifyContent: 'center',
-                fontSize: '10px',
-                color: '#34d399',
-              }}>
-                ==========
-              </div>
+              <ToolboxPreview type="storage" />
             </div>
 
             {/* Boundary Card */}
@@ -1113,19 +1133,7 @@ function DfdEditorCanvas({ setPage, diagramId }) {
                 <Shield size={15} style={{ color: '#fb7185' }} />
                 <span style={{ fontSize: '13px', fontWeight: '600', color: 'var(--text-primary)' }}>{t("物理边界 (Boundary)")}</span>
               </div>
-              <div style={{
-                height: '32px',
-                border: '2px dashed #f43f5e',
-                background: 'rgba(244, 63, 94, 0.05)',
-                borderRadius: '4px',
-                display: 'flex',
-                alignItems: 'center',
-                justifyContent: 'center',
-                fontSize: '10px',
-                color: '#fb7185',
-              }}>
-                - - - - - - - -
-              </div>
+              <ToolboxPreview type="boundary" />
             </div>
 
             {/* Interface Card */}
@@ -1149,19 +1157,7 @@ function DfdEditorCanvas({ setPage, diagramId }) {
                 <Link size={15} style={{ color: '#fbbf24' }} />
                 <span style={{ fontSize: '13px', fontWeight: '600', color: 'var(--text-primary)' }}>{t("接口 (Interface)")}</span>
               </div>
-              <div style={{
-                height: '32px',
-                border: '2px solid #d97706',
-                background: 'rgba(217, 119, 6, 0.1)',
-                borderRadius: '4px',
-                display: 'flex',
-                alignItems: 'center',
-                justifyContent: 'center',
-                fontSize: '10px',
-                color: '#fbbf24',
-              }}>
-                [ Interface ]
-              </div>
+              <ToolboxPreview type="interface" />
             </div>
           </div>
 
