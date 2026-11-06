@@ -110,6 +110,10 @@ export const useCanvasStore = create((set, get) => {
   // Only one prefetch sweep runs at a time; bumping the token abandons the
   // previous sweep when the user switches domain mid-flight.
   let prefetchToken = 0;
+  // Guards duplicate deleteDiagram calls for the same diagram ID.
+  // Module-level so the lock is guaranteed to clear on a full page refresh,
+  // unlike Zustand state which may persist across SPA navigations.
+  let deletingDiagramId = null;
 
   return {
     diagrams: [],
@@ -122,7 +126,6 @@ export const useCanvasStore = create((set, get) => {
     ws: null,
     loading: false,
     error: null,
-    deletingDiagramId: null,
     isOffline: !navigator.onLine,
     isSaving: false,
     savePending: false,
@@ -228,20 +231,25 @@ export const useCanvasStore = create((set, get) => {
       // Guard against duplicate calls (e.g. from a component that rapidly
       // re-mounts while the confirm dialog was open, or from click-event
       // propagation quirks). The first caller wins; concurrent callers skip.
-      if (get().deletingDiagramId === diagramId) return false;
-      set({ loading: true, error: null, deletingDiagramId: diagramId });
+      // Uses a module-level variable so the lock is guaranteed to clear on a
+      // full page refresh, unlike Zustand state which may persist across SPA
+      // navigations inside the same tab.
+      if (deletingDiagramId === diagramId) return false;
+      deletingDiagramId = diagramId;
+      set({ loading: true, error: null });
       try {
         await axios.delete(`${API_BASE}/diagrams/${diagramId}`, { headers: getHeaders() });
         removeCache(diagramId);
         set((state) => ({
           diagrams: state.diagrams.filter((d) => d.id !== diagramId),
           currentDiagram: state.currentDiagram?.id === diagramId ? null : state.currentDiagram,
-          loading: false,
-          deletingDiagramId: null
+          loading: false
         }));
+        deletingDiagramId = null;
         return true;
       } catch (err) {
-        set({ error: err.response?.data?.detail || '删除功能图失败', loading: false, deletingDiagramId: null });
+        set({ error: err.response?.data?.detail || '删除功能图失败', loading: false });
+        deletingDiagramId = null;
         return false;
       }
     },
@@ -436,6 +444,10 @@ export const useCanvasStore = create((set, get) => {
         clearTimeout(saveTimeout);
         saveTimeout = null;
       }
+
+      // Release any stale delete guard – a previous async delete may have
+      // been interrupted by the navigation that just closed this diagram.
+      deletingDiagramId = null;
 
       set({
         currentDiagram: null,
