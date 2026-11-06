@@ -322,7 +322,7 @@ const translations = {
     "：画布已被其他成员更新。您的最新修改已备份至本地缓存，请刷新页面加载最新画布并按提示合并。": ": Canvas updated by another member. Edits are backed up. Please refresh to load the latest canvas and merge.",
     "独占编辑中": "Exclusive Editing",
     "正在绘制中...": "Drawing...",
-    "检测到此画布已有其他成员进行了保存提交。\n              为避免覆盖他人的工作，系统已自动将您的修改备份至浏览器的 LocalStorage 中。请立即刷新页面以合并。": "Detected that this canvas has been saved and submitted by another member. To avoid overwriting others' work, your modifications have been backed up. Please refresh the page.",
+    "服务器上的画布版本与本地版本不一致，本次修改未能写入。\n              这通常发生在同一画布被多个浏览器标签页或更早的会话修改过。您的修改已自动备份至浏览器 LocalStorage，请刷新页面加载最新画布后再合并。": "The canvas version on the server differs from your local version, so this change was not saved. This usually happens when the same canvas was modified from another browser tab or an earlier session. Your edits have been backed up in LocalStorage; please refresh to load the latest canvas and merge.",
     // TARA Results
     "安全风险与威胁评估结果 (TARA)": "Cybersecurity Threat Analysis & Risk Assessment (TARA)",
     "子系统域控 TARA 自动化威胁识别与控制要求矩阵 (ISO 21434)。": "Sub-domain controller TARA automated threat identification and control requirements matrix (ISO 21434).",
@@ -602,7 +602,7 @@ const translations = {
     "获取功能图列表失败": "Failed to get function diagrams",
     "创建功能图失败": "Failed to create function diagram",
     "删除功能图失败": "Failed to delete function diagram",
-    "保存冲突 (409)：画布已被其他成员更新。您的最新修改已备份至本地缓存，请刷新页面加载最新画布并按提示合并。": "Save Conflict (409): Canvas has been updated by another user. Your edits are backed up locally, please refresh to load and merge.",
+    "保存冲突 (409)：服务器上的画布内容已发生变化（可能来自另一个浏览器标签页或更早的会话），本次修改未写入。您的最新修改已备份至浏览器 LocalStorage，请刷新页面加载最新画布后再合并。": "Save Conflict (409): The canvas on the server has changed (possibly from another browser tab or an earlier session), so this change was not saved. Your edits are backed up in LocalStorage; please refresh to load the latest canvas and merge.",
     "自动保存失败": "Auto-save failed",
     "AI 拓扑图生成失败": "AI topology generation failed",
     "AI 拓扑对话失败": "AI topology chat failed",

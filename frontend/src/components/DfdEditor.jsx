@@ -352,11 +352,11 @@ function DfdEditorCanvas({ setPage, diagramId }) {
     loading,
     error,
     isOffline,
-    openDiagram,
-    closeDiagram,
+    openDiagramById,
     setNodes,
     setEdges,
     saveDiagram,
+    flushSave,
     triggerAIChat,
     applySnapshot,
     setOfflineStatus,
@@ -387,6 +387,14 @@ function DfdEditorCanvas({ setPage, diagramId }) {
   // Sync ref to debounce store updates during dragging
   const syncTimeoutRef = useRef(null);
 
+  // Latest local graph + dirty flag, used to flush pending edits before leaving the editor
+  const latestGraphRef = useRef({ nodes: [], edges: [] });
+  const dirtyRef = useRef(false);
+
+  useEffect(() => {
+    latestGraphRef.current = { nodes, edges };
+  }, [nodes, edges]);
+
   // Sync state between zustand store and reactflow local state
   useEffect(() => {
     if (diagramId && user) {
@@ -394,13 +402,43 @@ function DfdEditorCanvas({ setPage, diagramId }) {
       if (activeDiag && activeDiag.id === diagramId) {
         return;
       }
-      const foundDiag = useCanvasStore.getState().diagrams.find(d => d.id === diagramId);
-      openDiagram(foundDiag || { id: diagramId, domain_id: activeDomain?.id, version_no: 1, snapshot_json: '{}' }, user.username);
+      // Always load the authoritative snapshot from the server; the local
+      // diagrams list may be stale or not loaded yet.
+      openDiagramById(diagramId, user.username);
     }
     return () => {
-      closeDiagram();
+      // Flush any pending debounced edit and save before tearing down the session
+      if (syncTimeoutRef.current) {
+        clearTimeout(syncTimeoutRef.current);
+        syncTimeoutRef.current = null;
+      }
+      const store = useCanvasStore.getState();
+      const startSessionId = store.sessionId;
+
+      if (!dirtyRef.current && !store.dirty) {
+        // Nothing pending locally and nothing unsaved in the store
+        store.closeDiagram();
+        return;
+      }
+
+      if (dirtyRef.current) {
+        const latest = latestGraphRef.current;
+        store.setNodes(latest.nodes);
+        store.setEdges(latest.edges);
+        dirtyRef.current = false;
+      }
+
+      // flushSave is async and needs currentDiagram to still be set, so the
+      // session is only torn down after the save settles. The sessionId guard
+      // prevents a stale cleanup from closing a newly opened diagram.
+      store.flushSave().finally(() => {
+        const s = useCanvasStore.getState();
+        if (s.sessionId === startSessionId) {
+          s.closeDiagram();
+        }
+      });
     };
-  }, [diagramId, user, activeDomain?.id, openDiagram, closeDiagram]);
+  }, [diagramId, user, openDiagramById]);
 
   useEffect(() => {
     const sanitizedNodes = storeNodes.map(node => {
@@ -461,17 +499,48 @@ function DfdEditorCanvas({ setPage, diagramId }) {
     if (isReadOnly) return;
     setNodes(newNodes);
     setEdges(newEdges);
+    dirtyRef.current = false;
   }, [isReadOnly, setNodes, setEdges]);
 
   // Debounced store sync to eliminate drag latency / resistance (feedback loop)
   const debouncedSync = useCallback((newNodes, newEdges) => {
     if (isReadOnly) return;
+    dirtyRef.current = true;
     if (syncTimeoutRef.current) {
       clearTimeout(syncTimeoutRef.current);
     }
     syncTimeoutRef.current = setTimeout(() => {
       syncLocalChanges(newNodes, newEdges);
     }, 200); // Wait 200ms after user stops dragging to sync to Zustand store
+  }, [isReadOnly, syncLocalChanges]);
+
+  // Flush pending edits when the page is hidden / unloaded (refresh, tab close, navigation)
+  useEffect(() => {
+    const persistPending = () => {
+      const store = useCanvasStore.getState();
+      if (isReadOnly) return;
+      if (!dirtyRef.current && !store.dirty) return;
+      if (syncTimeoutRef.current) {
+        clearTimeout(syncTimeoutRef.current);
+        syncTimeoutRef.current = null;
+      }
+      if (dirtyRef.current) {
+        const latest = latestGraphRef.current;
+        syncLocalChanges(latest.nodes, latest.edges);
+      }
+      store.flushSave();
+    };
+
+    const handleVisibilityChange = () => {
+      if (document.visibilityState === 'hidden') persistPending();
+    };
+
+    window.addEventListener('pagehide', persistPending);
+    document.addEventListener('visibilitychange', handleVisibilityChange);
+    return () => {
+      window.removeEventListener('pagehide', persistPending);
+      document.removeEventListener('visibilitychange', handleVisibilityChange);
+    };
   }, [isReadOnly, syncLocalChanges]);
 
   // Snap-to-grid: round position to nearest 20px
@@ -790,6 +859,24 @@ function DfdEditorCanvas({ setPage, diagramId }) {
     saveDiagram();
   };
 
+  const handleExitToWorkbench = async () => {
+    // Flush any debounced edit first so the last changes are included in the save
+    if (syncTimeoutRef.current) {
+      clearTimeout(syncTimeoutRef.current);
+      syncTimeoutRef.current = null;
+    }
+    const latest = latestGraphRef.current;
+    syncLocalChanges(latest.nodes, latest.edges);
+    await flushSave();
+    // Stay on the canvas when the save did not go through, so the conflict /
+    // failure notice remains visible instead of being lost on navigation.
+    const state = useCanvasStore.getState();
+    if (state.error && state.error.includes('保存冲突')) {
+      return;
+    }
+    setPage('workbench');
+  };
+
   return (
     <div style={{ display: 'flex', flexDirection: 'column', height: 'calc(100vh - 64px)', overflow: 'hidden' }}>
       {/* Editor Header Status Bar */}
@@ -804,7 +891,7 @@ function DfdEditorCanvas({ setPage, diagramId }) {
       }}>
         <div style={{ display: 'flex', alignItems: 'center', gap: '16px' }}>
           <button 
-            onClick={() => setPage('workbench')} 
+            onClick={handleExitToWorkbench} 
             className="btn btn-secondary"
             style={{ padding: '8px 14px' }}
           >
@@ -1581,8 +1668,34 @@ function DfdEditorCanvas({ setPage, diagramId }) {
         )}
       </div>
 
+      {/* Non-conflict save error notice (network / server / database lock) */}
+      {error && !error.includes('保存冲突') && (
+        <div
+          className="glass"
+          style={{
+            position: 'fixed',
+            bottom: '24px',
+            left: '50%',
+            transform: 'translateX(-50%)',
+            padding: '10px 18px',
+            borderRadius: '8px',
+            border: '1px solid var(--border-color)',
+            color: 'var(--accent)',
+            fontSize: '13px',
+            zIndex: 1000,
+            display: 'flex',
+            alignItems: 'center',
+            gap: '8px',
+            maxWidth: '80vw'
+          }}
+        >
+          <Info size={14} />
+          <span>{error}</span>
+        </div>
+      )}
+
       {/* Save Conflict Alert Modal (BR-16) */}
-      {error && error.includes(t('保存冲突')) && (
+      {error && error.includes('保存冲突') && (
         <div className="modal-overlay">
           <div className="modal-content glass" style={{ width: '450px', textAlign: 'center' }}>
             <div style={{
@@ -1603,7 +1716,7 @@ function DfdEditorCanvas({ setPage, diagramId }) {
               {t("乐观锁冲突！")}
             </h3>
             <p style={{ color: 'var(--text-secondary)', fontSize: '13px', lineHeight: '1.5', marginBottom: '24px' }}>
-              {t("检测到此画布已有其他成员进行了保存提交。\n              为避免覆盖他人的工作，系统已自动将您的修改备份至浏览器的 LocalStorage 中。请立即刷新页面以合并。")}
+              {t("服务器上的画布版本与本地版本不一致，本次修改未能写入。\n              这通常发生在同一画布被多个浏览器标签页或更早的会话修改过。您的修改已自动备份至浏览器 LocalStorage，请刷新页面加载最新画布后再合并。")}
             </p>
 
             <button 

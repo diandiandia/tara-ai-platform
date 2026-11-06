@@ -12,6 +12,9 @@ const getHeaders = () => {
 
 export const useCanvasStore = create((set, get) => {
   let saveTimeout = null;
+  // Incremented whenever a diagram session is closed, so in-flight saves
+  // cannot restore currentDiagram after the editor has been left.
+  let sessionSeq = 0;
 
   return {
     diagrams: [],
@@ -28,6 +31,12 @@ export const useCanvasStore = create((set, get) => {
     isSaving: false,
     savePending: false,
     activeUsers: [],
+    sessionId: 0,
+    // True while the in-memory canvas differs from the last persisted snapshot
+    dirty: false,
+    // Last snapshot known to be persisted on the server (used to tell a real
+    // conflict apart from a pure version-number drift)
+    serverSnapshot: null,
 
     setOfflineStatus: (status) => {
       set({ isOffline: status });
@@ -84,6 +93,7 @@ export const useCanvasStore = create((set, get) => {
 
     openDiagram: async (diagram, username) => {
       get().closeDiagram();
+      sessionSeq += 1;
 
       let snapshot = { nodes: [], edges: [] };
       try {
@@ -97,10 +107,13 @@ export const useCanvasStore = create((set, get) => {
         nodes: snapshot.nodes || [],
         edges: snapshot.edges || [],
         versionNo: diagram.version_no,
+        serverSnapshot: diagram.snapshot_json || '{}',
+        dirty: false,
         lockedBy: null,
         isReadOnly: false,
         error: null,
-        activeUsers: [username]
+        activeUsers: [username],
+        sessionId: sessionSeq
       });
 
       // Connect to Diagram-specific WebSocket (for automatic locking and membership tracking)
@@ -137,7 +150,28 @@ export const useCanvasStore = create((set, get) => {
       set({ ws });
     },
 
+    openDiagramById: async (diagramId, username) => {
+      get().closeDiagram();
+      set({ loading: true, error: null });
+      try {
+        const response = await axios.get(`${API_BASE}/diagrams/${diagramId}`, { headers: getHeaders() });
+        set((state) => ({
+          loading: false,
+          diagrams: state.diagrams.some((d) => d.id === response.data.id)
+            ? state.diagrams.map((d) => (d.id === response.data.id ? response.data : d))
+            : [...state.diagrams, response.data]
+        }));
+        await get().openDiagram(response.data, username);
+      } catch (err) {
+        set({
+          loading: false,
+          error: err.response?.data?.detail || '加载画布失败，请返回工作台重试'
+        });
+      }
+    },
+
     closeDiagram: () => {
+      sessionSeq += 1;
       // Close WebSocket
       const ws = get().ws;
       if (ws) {
@@ -156,17 +190,21 @@ export const useCanvasStore = create((set, get) => {
         lockedBy: null,
         isReadOnly: false,
         ws: null,
-        activeUsers: []
+        activeUsers: [],
+        sessionId: sessionSeq,
+        serverSnapshot: null,
+        dirty: false,
+        error: null
       });
     },
 
     setNodes: (nodes) => {
-      set({ nodes });
+      set({ nodes, dirty: true });
       get().triggerAutoSave();
     },
 
     setEdges: (edges) => {
-      set({ edges });
+      set({ edges, dirty: true });
       get().triggerAutoSave();
     },
 
@@ -178,9 +216,32 @@ export const useCanvasStore = create((set, get) => {
       }, 2000); // 2 second debounce
     },
 
+    flushSave: async () => {
+      if (saveTimeout) {
+        clearTimeout(saveTimeout);
+        saveTimeout = null;
+      }
+      if (!get().currentDiagram || get().isReadOnly) return;
+
+      // An in-flight save may already be holding a stale snapshot, and a queued
+      // save is fired without awaiting. Keep polling until the store is idle so
+      // the latest edits are definitely persisted before the session closes.
+      const deadline = Date.now() + 15000;
+      while ((get().isSaving || get().savePending) && Date.now() < deadline) {
+        await new Promise((resolve) => setTimeout(resolve, 100));
+      }
+
+      if (!get().currentDiagram || get().isReadOnly) return;
+      if (get().isSaving || get().savePending) return;
+      if (!get().dirty) return;
+      await get().saveDiagram();
+    },
+
     saveDiagram: async () => {
       const diag = get().currentDiagram;
       if (!diag || get().isReadOnly) return;
+
+      const seq = sessionSeq;
 
       if (get().isSaving) {
         set({ savePending: true });
@@ -202,50 +263,96 @@ export const useCanvasStore = create((set, get) => {
           timestamp: Date.now()
         }));
         console.log("Offline state, saved diagram snapshot to LocalStorage");
-        set({ isSaving: false });
+        set({ isSaving: false, savePending: false });
         return;
       }
 
-      try {
-        const response = await axios.put(
-          `${API_BASE}/diagrams/${diag.id}`,
-          {
-            version_no: get().versionNo,
-            snapshot_json
-          },
-          { headers: getHeaders() }
-        );
-        // Save successful, update local version_no
-        set({ 
-          versionNo: response.data.version_no,
-          currentDiagram: response.data,
-          error: null,
-          isSaving: false
-        });
-        // Remove local backup if it matches
-        localStorage.removeItem(`tara_offline_diagram_${diag.id}`);
+      const MAX_ATTEMPTS = 3;
+      let lastError = null;
+      let versionResynced = false;
 
-        // If another save was queued during flight, run it now
-        if (get().savePending) {
-          get().saveDiagram();
-        }
-      } catch (err) {
-        set({ isSaving: false });
-        if (err.response?.status === 409) {
-          // Version conflict (BR-16)
-          // Backup local data to localStorage to avoid overwrite
-          localStorage.setItem(`tara_backup_conflict_${diag.id}`, JSON.stringify({
-            nodes: get().nodes,
-            edges: get().edges,
-            version_no: get().versionNo,
-            timestamp: Date.now()
+      for (let attempt = 1; attempt <= MAX_ATTEMPTS; attempt += 1) {
+        try {
+          const response = await axios.put(
+            `${API_BASE}/diagrams/${diag.id}`,
+            {
+              version_no: get().versionNo,
+              snapshot_json
+            },
+            { headers: getHeaders() }
+          );
+          // Save successful, update local version_no and keep the diagrams list in sync
+          set((state) => ({
+            versionNo: seq === sessionSeq ? response.data.version_no : state.versionNo,
+            currentDiagram: seq === sessionSeq ? response.data : state.currentDiagram,
+            serverSnapshot: seq === sessionSeq ? response.data.snapshot_json : state.serverSnapshot,
+            diagrams: state.diagrams.map((d) => (d.id === response.data.id ? response.data : d)),
+            error: seq === sessionSeq ? null : state.error,
+            dirty: seq === sessionSeq ? false : state.dirty,
+            isSaving: false
           }));
-          set({
-            error: '保存冲突 (409)：画布已被其他成员更新。您的最新修改已备份至本地缓存，请刷新页面加载最新画布并按提示合并。'
-          });
-        } else {
-          set({ error: err.response?.data?.detail || '自动保存失败' });
+          // Remove local backup if it matches
+          localStorage.removeItem(`tara_offline_diagram_${diag.id}`);
+
+          // If another save was queued during flight, run it now
+          if (get().savePending) {
+            get().saveDiagram();
+          }
+          return;
+        } catch (err) {
+          lastError = err;
+          const status = err.response?.status;
+
+          if (status === 409 && !versionResynced) {
+            // A 409 does not necessarily mean someone else edited the canvas:
+            // it also happens when the local version counter drifted (e.g. an
+            // earlier save succeeded but its response was lost, or the session
+            // was reopened with a stale version). Only treat it as a real
+            // conflict when the server content actually changed.
+            versionResynced = true;
+            try {
+              const detail = await axios.get(`${API_BASE}/diagrams/${diag.id}`, { headers: getHeaders() });
+              if (detail.data.snapshot_json === get().serverSnapshot) {
+                set({ versionNo: detail.data.version_no, serverSnapshot: detail.data.snapshot_json });
+                attempt -= 1; // retry immediately with the fresh version
+                continue;
+              }
+            } catch (detailErr) {
+              lastError = detailErr;
+            }
+            break;
+          }
+
+          // Retry only transient failures (network error / server error / SQLite lock)
+          const retryable = !status || status >= 500;
+          if (!retryable || attempt === MAX_ATTEMPTS) {
+            break;
+          }
+          await new Promise((resolve) => setTimeout(resolve, attempt * 800));
         }
+      }
+
+      const err = lastError;
+      // Clear the queued flag as well: the queued save cannot run once we bail
+      // out here, and leaving it set would make flushSave spin until timeout.
+      set({ isSaving: false, savePending: false });
+      if (err?.response?.status === 409) {
+        // Version conflict (BR-16)
+        // Backup local data to localStorage to avoid overwrite
+        localStorage.setItem(`tara_backup_conflict_${diag.id}`, JSON.stringify({
+          nodes: get().nodes,
+          edges: get().edges,
+          version_no: get().versionNo,
+          timestamp: Date.now()
+        }));
+        set({
+          error: '保存冲突 (409)：服务器上的画布内容已发生变化（可能来自另一个浏览器标签页或更早的会话），本次修改未写入。您的最新修改已备份至浏览器 LocalStorage，请刷新页面加载最新画布后再合并。'
+        });
+      } else {
+        set({
+          error: err?.response?.data?.detail
+            || `自动保存失败：${err?.message || '服务器无响应'}（修改尚未保存到服务器，请检查网络后重试）`
+        });
       }
     },
 
@@ -257,10 +364,13 @@ export const useCanvasStore = create((set, get) => {
 
       try {
         const parsed = JSON.parse(offlineData);
+        // Always resolve the current version from the server first: the version
+        // stored offline is stale by definition and would trigger a false 409.
+        const detail = await axios.get(`${API_BASE}/diagrams/${diag.id}`, { headers: getHeaders() });
         const response = await axios.put(
           `${API_BASE}/diagrams/${diag.id}`,
           {
-            version_no: parsed.version_no,
+            version_no: detail.data.version_no,
             snapshot_json: parsed.snapshot_json
           },
           { headers: getHeaders() }
@@ -268,6 +378,7 @@ export const useCanvasStore = create((set, get) => {
         set({ 
           versionNo: response.data.version_no, 
           currentDiagram: response.data,
+          serverSnapshot: response.data.snapshot_json,
           nodes: JSON.parse(parsed.snapshot_json).nodes || [],
           edges: JSON.parse(parsed.snapshot_json).edges || []
         });
@@ -295,6 +406,7 @@ export const useCanvasStore = create((set, get) => {
           nodes: snapshot.nodes || [],
           edges: snapshot.edges || [],
           versionNo: response.data.version_no,
+          serverSnapshot: response.data.snapshot_json,
           loading: false
         });
         return response.data;
@@ -345,6 +457,7 @@ export const useCanvasStore = create((set, get) => {
           nodes: snapshot.nodes || [],
           edges: snapshot.edges || [],
           versionNo: response.data.version_no,
+          serverSnapshot: response.data.snapshot_json,
           loading: false
         });
         return response.data;
