@@ -8,7 +8,7 @@ from app.api.auth import get_current_user
 from app.models.user import User
 from app.models.domain import Domain
 from app.models.asset import Asset
-from app.models.tara_run import TaraRun
+from app.models.tara_run import TaraRun, get_results_run
 from app.models.tara_step import TaraStep
 from app.schemas.tara import TaraRunOut, TaraStepOut, StepUpdateReq, ManualOfflineInputReq
 from app.api.project import check_domain_idle, check_project_active, recalculate_project_status
@@ -152,15 +152,7 @@ def get_tara_results(
     """
     获取域控最近一次成功完成分析的步骤结论详情
     """
-    # 查找最新一次分析的 completed/failed 任务
-    last_run = db.query(TaraRun).filter(
-        TaraRun.domain_id == domain_id,
-        TaraRun.status.in_(["completed", "failed", "cancelled"])
-    ).order_by(TaraRun.id.desc()).first()
-    
-    if not last_run:
-        # 如果当前在运行中，直接读取当前运行
-        last_run = db.query(TaraRun).filter(TaraRun.domain_id == domain_id).order_by(TaraRun.id.desc()).first()
+    last_run = get_results_run(db, domain_id)
         
     if not last_run:
         return []

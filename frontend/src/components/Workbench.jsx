@@ -13,8 +13,8 @@ import {
   previewCustomerRequirements,
   synthesizeMergedRequirements,
   exportMergedRequirements,
-  fetchCustomerRequirements,
-  fetchMergedRequirements,
+  fetchCustomerRequirementCount,
+  fetchWorkbenchSummary,
   fetchCsrMappingStatus,
 } from '../stores/reqMergeStore';
 
@@ -42,9 +42,7 @@ export default function Workbench({ setPage, setDomainId, setDiagramId, projectI
 
   const { 
     assets, 
-    taraResults,
     fetchAssets, 
-    fetchTaraResults,
     confirmAsset, 
     extractAssets, 
     clearAssets,
@@ -94,15 +92,18 @@ export default function Workbench({ setPage, setDomainId, setDiagramId, projectI
   const [merging, setMerging] = useState(false);
   const [mergeMsg, setMergeMsg] = useState(null); // { type: 'success' | 'error', text: string }
   const [customerReqCount, setCustomerReqCount] = useState(0);
-  const [mergedCount, setMergedCount] = useState(0);
   const [oemPreviewFile, setOemPreviewFile] = useState(null);
   const [oemPreview, setOemPreview] = useState(null); // { sheets, sheet, headers, preview, row_count }
   const [oemMapping, setOemMapping] = useState({ id_column: null, text_column: null, section_column: null, category_column: null });
   const oemFileRef = useRef(null);
   const [exportingTara, setExportingTara] = useState(false);
 
-  // TARA 结果是否已加载完成（用于「查看/导出 TARA 结果」按钮的可用状态）
-  const resultsReady = Array.isArray(taraResults) && taraResults.length > 0;
+  const [summary, setSummary] = useState(null);
+  const resultsReady = summary?.domain_id === activeDomain?.id && summary?.has_tara_results === true;
+  const mergedCount = summary && summary.domain_id === activeDomain?.id ? summary.merged_count : 0;
+  const activeDomainId = activeDomain?.id;
+  const activeDomainStatus = activeDomain?.status;
+  const summaryRequestRef = useRef(0);
 
   const handleExportTara = async () => {
     if (!activeDomain) return;
@@ -126,25 +127,25 @@ export default function Workbench({ setPage, setDomainId, setDiagramId, projectI
   const refreshCustomerReqCount = useCallback(async () => {
     if (!projectId) return;
     try {
-      const rows = await fetchCustomerRequirements(projectId);
-      setCustomerReqCount(Array.isArray(rows) ? rows.length : 0);
-    } catch {
-      setCustomerReqCount(0);
+      setCustomerReqCount(await fetchCustomerRequirementCount(projectId));
+    } catch (err) {
+      setMergeMsg({ type: 'error', text: err?.response?.data?.detail || t("获取客户需求数量失败") });
     }
-  }, [projectId]);
+  }, [projectId, t]);
 
-  const refreshMergedCount = useCallback(async (domainId) => {
-    if (!domainId) {
-      setMergedCount(0);
-      return;
-    }
+  const refreshSummary = useCallback(async (domainId, signal) => {
+    const requestSeq = ++summaryRequestRef.current;
     try {
-      const merged = await fetchMergedRequirements(domainId);
-      setMergedCount(Array.isArray(merged) ? merged.length : 0);
-    } catch {
-      setMergedCount(0);
+      const data = await fetchWorkbenchSummary(domainId, { signal });
+      if (signal?.aborted || requestSeq !== summaryRequestRef.current) return;
+      if (useProjectStore.getState().activeDomain?.id !== domainId) return;
+      setSummary(data);
+    } catch (err) {
+      if (signal?.aborted || requestSeq !== summaryRequestRef.current) return;
+      if (useProjectStore.getState().activeDomain?.id !== domainId) return;
+      setMergeMsg({ type: 'error', text: err?.response?.data?.detail || t("获取工作台状态失败") });
     }
-  }, []);
+  }, [t]);
 
   const guessColumn = (headers, keywords) => {
     const idx = headers.findIndex((h) =>
@@ -218,20 +219,23 @@ export default function Workbench({ setPage, setDomainId, setDiagramId, projectI
   const [csrStatus, setCsrStatus] = useState(null);
 
   const refreshCsrStatus = useCallback(async () => {
-    if (!activeDomain) {
+    if (!activeDomainId) {
       setCsrStatus(null);
       return;
     }
     try {
-      setCsrStatus(await fetchCsrMappingStatus(activeDomain.id));
-    } catch {
+      const status = await fetchCsrMappingStatus(activeDomainId);
+      if (useProjectStore.getState().activeDomain?.id === activeDomainId) setCsrStatus(status);
+    } catch (err) {
+      if (useProjectStore.getState().activeDomain?.id !== activeDomainId) return;
       setCsrStatus(null);
+      setMergeMsg({ type: 'error', text: err?.response?.data?.detail || t("获取 CSR 映射状态失败") });
     }
-  }, [activeDomain]);
+  }, [activeDomainId, t]);
 
   useEffect(() => {
     refreshCsrStatus();
-  }, [refreshCsrStatus, resultsReady]);
+  }, [refreshCsrStatus, resultsReady, activeDomainStatus]);
 
   const handleMergeRequirements = async () => {
     if (!activeDomain) return;
@@ -246,7 +250,9 @@ export default function Workbench({ setPage, setDomainId, setDiagramId, projectI
     setMergeMsg(null);
     try {
       const res = await synthesizeMergedRequirements(activeDomain.id);
-      setMergedCount(res.merged_count || 0);
+      setSummary(current => current?.domain_id === activeDomain.id
+        ? { ...current, merged_count: res.merged_count || 0 }
+        : current);
       setMergeMsg({
         type: 'success',
         text: `${t("合并完成")}：${res.merged_count || 0} ${t("条最终需求")}`,
@@ -303,24 +309,28 @@ export default function Workbench({ setPage, setDomainId, setDiagramId, projectI
 
   // Fetch Domain Details when Active Domain changes
   useEffect(() => {
-    if (activeDomain) {
-      fetchDiagrams(activeDomain.id);
-      fetchAssets(activeDomain.id);
-      fetchTaraProgress(activeDomain.id);
-      fetchTaraResults(activeDomain.id);
-      refreshMergedCount(activeDomain.id);
+    const controller = new AbortController();
+    if (activeDomainId) {
+      fetchDiagrams(activeDomainId);
+      fetchAssets(activeDomainId);
+      fetchTaraProgress(activeDomainId);
+      refreshSummary(activeDomainId, controller.signal);
       
       // If domain is running, start polling progress
-      if (activeDomain.status === 'running') {
-        startProgressPolling(activeDomain.id);
+      if (activeDomainStatus === 'running') {
+        startProgressPolling(activeDomainId);
       } else {
         stopProgressPolling();
       }
     } else {
-      setMergedCount(0);
       stopProgressPolling();
     }
-  }, [activeDomain, fetchAssets, fetchDiagrams, fetchTaraProgress, fetchTaraResults, startProgressPolling, refreshMergedCount]);
+    return () => {
+      controller.abort();
+      summaryRequestRef.current += 1;
+      stopProgressPolling();
+    };
+  }, [activeDomainId, activeDomainStatus, fetchAssets, fetchDiagrams, fetchTaraProgress, startProgressPolling, refreshSummary]);
 
   const handleCreateDomainSubmit = async (e) => {
     e.preventDefault();
@@ -404,6 +414,7 @@ export default function Workbench({ setPage, setDomainId, setDiagramId, projectI
       // remaining snapshot here just blocks the UI with no benefit.
       fetchDiagrams(activeDomain.id, { skipPrefetch: true });
       fetchAssets(activeDomain.id);
+      refreshSummary(activeDomain.id);
     }
   };
 

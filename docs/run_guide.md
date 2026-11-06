@@ -70,11 +70,49 @@ cd backend
 删除失败原因会保留在 DFD 列表上方。请求超时不能证明服务器没有执行，
 尤其是新建超时后，应先刷新列表确认，避免再次创建重复画布。
 
+创建超时仍然发生时，查看同一 `DFD request=<ID>` 的日志：
+
+```bash
+sudo journalctl -u tara-backend.service --since '5 minutes ago' --no-pager
+```
+
+- `stage=received`：请求已到达后端路由，尚未完成数据库依赖和认证。
+- `stage=validate`：认证已完成，开始查询域控和项目状态。
+- `stage=commit`：开始插入并提交；如果长期停在这里，应检查数据库写锁和磁盘。
+- `stage=refresh`：提交已成功，正在读取新建记录。
+- `stage=created`：记录已读取；后续 `outcome=response_ready` 表示响应已生成，
+  **不代表浏览器已经收到响应**。
+
+日志包含累计 `elapsed_ms`，不记录画布名称、令牌或查询参数。
+成功响应的 `X-Request-ID` 可与浏览器 Network 对照。
+如果点击后没有 `stage=received`，需结合前端代理日志和监听进程排查；
+仅凭缺少日志不能断定数据库有问题。不要通过增大前端超时或自动重试 POST 掩盖故障。
+
 DFD 请求回归测试：
 
 ```bash
 cd frontend
 node --experimental-vm-modules --test tests/canvasStore.test.mjs
+```
+
+工作台使用 `/api/domains/{id}/workbench-summary` 查询结果是否存在及合并需求数量，
+不再仅为按钮状态下载完整 TARA 结果或逐条需求来源。客户需求数量也使用独立计数接口。
+域控对象替换但 ID 和状态不变时不会重复加载；切换域控会取消旧摘要请求。
+完整分析结果仍在结果页加载，Excel 导出逻辑不变。
+升级时必须同时部署后端新接口与前端构建；这些接口不需要数据库迁移。
+
+后端创建及诊断日志回归测试（使用隔离数据库）：
+
+```bash
+cd backend
+python -m pytest -q tests/test_diagram_requests.py tests/test_diagram_indexes.py tests/test_workbench_summary.py
+```
+
+工作台轻量加载与域控切换回归测试：
+
+```bash
+cd frontend
+node --experimental-vm-modules --test tests/canvasStore.test.mjs tests/workbench.test.mjs
 ```
 
 ---

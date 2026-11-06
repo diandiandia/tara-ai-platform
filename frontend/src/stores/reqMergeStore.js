@@ -46,6 +46,20 @@ export async function fetchCustomerRequirements(projectId) {
   return res.data;
 }
 
+export async function fetchCustomerRequirementCount(projectId) {
+  const res = await axios.get(`${API_BASE}/projects/${projectId}/customer-requirements/count`, {
+    headers: getHeaders(), timeout: 30000,
+  });
+  return res.data.count;
+}
+
+export async function fetchWorkbenchSummary(domainId, { signal } = {}) {
+  const res = await axios.get(`${API_BASE}/domains/${domainId}/workbench-summary`, {
+    headers: getHeaders(), timeout: 30000, signal,
+  });
+  return res.data;
+}
+
 /** 触发某个域控的最终需求合并（OEM 客户需求 + 本域控 TARA 需求） */
 export async function synthesizeMergedRequirements(domainId) {
   const form = new FormData();

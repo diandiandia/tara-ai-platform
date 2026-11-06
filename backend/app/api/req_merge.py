@@ -1,5 +1,7 @@
 from fastapi import APIRouter, Depends, HTTPException, UploadFile, File, Query, Form
 from sqlalchemy.orm import Session
+from sqlalchemy import func
+from pydantic import BaseModel
 from typing import Optional
 import os
 import tempfile
@@ -9,7 +11,8 @@ from app.api.auth import get_current_user
 from app.api.project import check_project_active
 from app.models.user import User
 from app.models.domain import Domain
-from app.models.tara_run import TaraRun
+from app.models.tara_run import TaraRun, get_results_run
+from app.models.tara_step import TaraStep
 from app.models.req_merge import CustomerRequirement, MergedRequirement, MergedRequirementSource
 from app.services.req_merge import (
     parse_customer_requirements_excel,
@@ -24,6 +27,45 @@ from app.services.oem_csr_merge import (
 )
 
 router = APIRouter(tags=["客户需求与 TARA 需求合并"])
+
+
+class WorkbenchSummary(BaseModel):
+    domain_id: int
+    run_id: Optional[int]
+    has_tara_results: bool
+    merged_count: int
+
+
+@router.get("/domains/{domain_id}/workbench-summary", response_model=WorkbenchSummary)
+def get_workbench_summary(
+    domain_id: int,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    _get_domain(domain_id, db)
+    run = get_results_run(db, domain_id)
+    has_results = run is not None and db.query(TaraStep.id).filter(
+        TaraStep.run_id == run.id
+    ).first() is not None
+    merged_count = db.query(func.count(MergedRequirement.id)).filter(
+        MergedRequirement.domain_id == domain_id
+    ).scalar()
+    return WorkbenchSummary(
+        domain_id=domain_id, run_id=run.id if run else None,
+        has_tara_results=has_results, merged_count=merged_count,
+    )
+
+
+@router.get("/projects/{project_id}/customer-requirements/count")
+def count_customer_requirements(
+    project_id: int,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    count = db.query(func.count(CustomerRequirement.id)).filter(
+        CustomerRequirement.project_id == project_id
+    ).scalar()
+    return {"count": count}
 
 
 def _save_upload(upload: UploadFile) -> str:

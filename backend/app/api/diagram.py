@@ -1,7 +1,11 @@
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, Request, status
+from fastapi.routing import APIRoute
 from sqlalchemy.orm import Session
 import redis
 import json
+import logging
+from time import perf_counter
+from uuid import uuid4
 from typing import List, Optional
 from app.core.database import get_db
 from app.api.auth import get_current_user
@@ -60,7 +64,40 @@ class DiagramChatOutput(BaseModel):
     snapshot_json: DiagramTemplateOutput = Field(description="包含 reasoning_steps、nodes 和 edges 的 DFD 拓扑数据对象")
 
 
-router = APIRouter(prefix="/diagrams", tags=["功能图与编辑器管理"])
+logger = logging.getLogger("uvicorn.error")
+
+
+class DiagramTimingRoute(APIRoute):
+    def get_route_handler(self):
+        handler = super().get_route_handler()
+
+        async def timed_handler(request: Request):
+            request_id = uuid4().hex
+            request.state.diagram_request_id = request_id
+            started = perf_counter()
+            outcome = "failed"
+            logger.info(
+                "DFD request=%s method=%s path=%s stage=received",
+                request_id, request.method, request.url.path,
+            )
+            try:
+                response = await handler(request)
+                response.headers["X-Request-ID"] = request_id
+                outcome = f"response_ready status={response.status_code}"
+                return response
+            finally:
+                logger.info(
+                    "DFD request=%s outcome=%s elapsed_ms=%.1f",
+                    request_id, outcome, (perf_counter() - started) * 1000,
+                )
+
+        return timed_handler
+
+
+router = APIRouter(
+    prefix="/diagrams", tags=["功能图与编辑器管理"],
+    route_class=DiagramTimingRoute,
+)
 
 import os
 
@@ -78,6 +115,7 @@ def get_lock_key(diagram_id: int) -> str:
 
 @router.post("", response_model=DiagramOut)
 def create_diagram(
+    request: Request,
     domain_id: int,
     title: str,
     db: Session = Depends(get_db),
@@ -86,6 +124,9 @@ def create_diagram(
     """
     新建功能图 (DFD)
     """
+    request_id = request.state.diagram_request_id
+    started = perf_counter()
+    logger.info("DFD request=%s stage=validate domain_id=%s", request_id, domain_id)
     # 检查域控锁定状态
     check_domain_idle(domain_id, db)
     
@@ -96,8 +137,20 @@ def create_diagram(
         snapshot_json="{}"
     )
     db.add(diagram)
+    logger.info(
+        "DFD request=%s stage=commit elapsed_ms=%.1f",
+        request_id, (perf_counter() - started) * 1000,
+    )
     db.commit()
+    logger.info(
+        "DFD request=%s stage=refresh elapsed_ms=%.1f",
+        request_id, (perf_counter() - started) * 1000,
+    )
     db.refresh(diagram)
+    logger.info(
+        "DFD request=%s stage=created diagram_id=%s elapsed_ms=%.1f",
+        request_id, diagram.id, (perf_counter() - started) * 1000,
+    )
     return diagram
 
 @router.get("/domain/{domain_id}", response_model=List[DiagramMeta])

@@ -1,5 +1,5 @@
 from sqlalchemy import Column, Integer, String, DateTime, ForeignKey, func
-from sqlalchemy.orm import relationship
+from sqlalchemy.orm import Session, relationship
 from app.core.database import Base
 
 class TaraRun(Base):
@@ -15,3 +15,11 @@ class TaraRun(Base):
 
     domain = relationship("Domain", back_populates="runs")
     steps = relationship("TaraStep", back_populates="run", cascade="all, delete-orphan")
+
+
+def get_results_run(db: Session, domain_id: int) -> TaraRun | None:
+    query = db.query(TaraRun).filter(TaraRun.domain_id == domain_id)
+    finished = query.filter(
+        TaraRun.status.in_(["completed", "failed", "cancelled"])
+    ).order_by(TaraRun.id.desc()).first()
+    return finished if finished is not None else query.order_by(TaraRun.id.desc()).first()

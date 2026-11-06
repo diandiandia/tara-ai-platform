@@ -1,8 +1,12 @@
 import { create } from 'zustand';
+import { useCallback } from 'react';
 
 const translations = {
   zh: {},
   en: {
+    "获取客户需求数量失败": "Failed to load the customer requirement count",
+    "获取工作台状态失败": "Failed to load workbench status",
+    "获取 CSR 映射状态失败": "Failed to load CSR mapping status",
     // Shared / Core
     "TARA AI 分析平台": "TARA AI Analysis Platform",
     "汽车网络安全威胁建模与分析系统 (v3)": "Automotive Cybersecurity Threat Modeling & Analysis System (v3)",
@@ -718,7 +722,7 @@ export function useI18n() {
   const language = useI18nStore((state) => state.language);
   const setLanguage = useI18nStore((state) => state.setLanguage);
 
-  const t = (key, fallback) => {
+  const t = useCallback((key, fallback) => {
     if (language === 'zh') {
       return fallback !== undefined ? fallback : key;
     }
@@ -731,7 +735,7 @@ export function useI18n() {
       return englishFallback !== undefined ? englishFallback : fallback;
     }
     return key;
-  };
+  }, [language]);
 
   return { language, setLanguage, t };
 }
