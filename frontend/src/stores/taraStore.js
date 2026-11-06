@@ -3,6 +3,8 @@ import axios from 'axios';
 import { useAuthStore } from './authStore';
 
 const API_BASE = '/api';
+let assetsRequestSeq = 0;
+let resultsRequestSeq = 0;
 
 const getHeaders = () => {
   const token = useAuthStore.getState().token;
@@ -13,17 +15,29 @@ export const useTaraStore = create((set, get) => ({
   assets: [],
   taraRun: null,
   taraResults: [],
+  assetsLoading: false,
+  assetsError: null,
+  assetsDomainId: null,
+  resultsLoading: false,
+  resultsError: null,
+  resultsDomainId: null,
   settings: null,
   loading: false,
   error: null,
 
   fetchAssets: async (domainId) => {
-    set({ loading: true, error: null });
+    const requestSeq = ++assetsRequestSeq;
+    set({ loading: true, error: null, assetsLoading: true, assetsError: null, assetsDomainId: domainId });
     try {
       const response = await axios.get(`${API_BASE}/domains/${domainId}/assets`, { headers: getHeaders() });
-      set({ assets: response.data, loading: false });
+      if (requestSeq !== assetsRequestSeq) return null;
+      set({ assets: response.data, loading: false, assetsLoading: false });
+      return response.data;
     } catch (err) {
-      set({ error: err.response?.data?.detail || '获取资产列表失败', loading: false });
+      if (requestSeq !== assetsRequestSeq) return null;
+      const message = err.response?.data?.detail || '获取资产列表失败';
+      set({ error: message, loading: false, assetsLoading: false, assetsError: message });
+      return null;
     }
   },
 
@@ -172,14 +186,18 @@ export const useTaraStore = create((set, get) => ({
   },
 
   fetchTaraResults: async (domainId) => {
-    set({ loading: true, error: null });
+    const requestSeq = ++resultsRequestSeq;
+    set({ loading: true, error: null, resultsLoading: true, resultsError: null, resultsDomainId: domainId });
     try {
       const response = await axios.get(`${API_BASE}/domains/${domainId}/tara-results`, { headers: getHeaders() });
-      set({ taraResults: response.data, loading: false });
+      if (requestSeq !== resultsRequestSeq) return null;
+      set({ taraResults: response.data, loading: false, resultsLoading: false });
       return response.data;
     } catch (err) {
-      set({ error: err.response?.data?.detail || '获取 TARA 分析结果失败', loading: false });
-      return [];
+      if (requestSeq !== resultsRequestSeq) return null;
+      const message = err.response?.data?.detail || '获取 TARA 分析结果失败';
+      set({ error: message, loading: false, resultsLoading: false, resultsError: message });
+      return null;
     }
   },
 

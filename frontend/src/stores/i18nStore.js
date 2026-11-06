@@ -4,6 +4,10 @@ import { useCallback } from 'react';
 const translations = {
   zh: {},
   en: {
+    "请稍候，正在检查分析记录；数据较大时加载可能需要几十秒。": "Please wait while analysis records are checked. Large datasets may take tens of seconds to load.",
+    "评估数据加载失败": "Failed to load assessment data",
+    "加载失败不代表分析数据已被删除，请重试，不需要重新运行分析。": "A loading failure does not mean your analysis data was deleted. Retry without rerunning the analysis.",
+    "重新加载评估数据": "Reload assessment data",
     "获取客户需求数量失败": "Failed to load the customer requirement count",
     "获取工作台状态失败": "Failed to load workbench status",
     "获取 CSR 映射状态失败": "Failed to load CSR mapping status",

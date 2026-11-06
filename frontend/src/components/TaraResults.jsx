@@ -663,13 +663,19 @@ export default function TaraResults({ setPage, domainId }) {
     fetchAssets,
     submitManualOfflineResults,
     exportReport,
-    loading,
+    assetsLoading,
+    assetsError,
+    assetsDomainId,
+    resultsLoading,
+    resultsError,
+    resultsDomainId,
     error,
     clearError
   } = useTaraStore();
 
   // Excel layout flat rows
   const [taraRows, setTaraRows] = useState([]);
+  const [rowsSource, setRowsSource] = useState(null);
   const updateTaraRows = (updater) => {
     setTaraRows(prev => {
       const nextRows = typeof updater === 'function' ? updater(prev) : updater;
@@ -686,6 +692,18 @@ export default function TaraResults({ setPage, domainId }) {
   // Export States
   const [exportDesensitize, setExportDesensitize] = useState(false);
   const [exporting, setExporting] = useState(false);
+  const reviewError = (resultsDomainId === domainId && resultsError)
+    || (assetsDomainId === domainId && assetsError);
+  const reviewLoading = resultsLoading || assetsLoading
+    || resultsDomainId !== domainId || assetsDomainId !== domainId;
+  const reviewReady = !reviewLoading && !reviewError;
+  const rowsPending = rowsSource?.results !== taraResults || rowsSource?.assets !== assets
+    || rowsSource?.domainId !== domainId;
+  const reloadReview = () => {
+    if (!domainId) return;
+    fetchTaraResults(domainId);
+    fetchAssets(domainId);
+  };
 
   useEffect(() => {
     if (domainId) {
@@ -695,13 +713,22 @@ export default function TaraResults({ setPage, domainId }) {
   }, [domainId, fetchAssets, fetchTaraResults]);
 
   useEffect(() => {
+    if (!reviewReady) return;
+    let timer;
     if (taraResults.length > 0 && assets.length > 0) {
       const rows = buildExcelRowsFromSteps(taraResults, assets);
-      setTimeout(() => updateTaraRows(rows), 0);
+      timer = setTimeout(() => {
+        updateTaraRows(rows);
+        setRowsSource({ results: taraResults, assets, domainId });
+      }, 0);
     } else {
-      setTimeout(() => updateTaraRows([]), 0);
+      timer = setTimeout(() => {
+        updateTaraRows([]);
+        setRowsSource({ results: taraResults, assets, domainId });
+      }, 0);
     }
-  }, [taraResults, assets]);
+    return () => clearTimeout(timer);
+  }, [taraResults, assets, reviewReady, domainId]);
 
   // Handle adding an empty row inline
   const handleAddRow = () => {
@@ -1005,7 +1032,7 @@ export default function TaraResults({ setPage, domainId }) {
         </div>
       </div>
 
-      {error && (
+      {error && !reviewError && (
         <div style={{
           background: 'rgba(244, 63, 94, 0.1)',
           border: '1px solid rgba(244, 63, 94, 0.3)',
@@ -1026,10 +1053,23 @@ export default function TaraResults({ setPage, domainId }) {
         </div>
       )}
 
-      {loading && taraRows.length === 0 ? (
+      {reviewError ? (
+        <div className="glass" style={{ padding: '40px', textAlign: 'center' }}>
+          <ShieldAlert size={32} />
+          <h3>{t("评估数据加载失败")}</h3>
+          <p>{t(reviewError)}</p>
+          <p>{t("加载失败不代表分析数据已被删除，请重试，不需要重新运行分析。")}</p>
+          <button onClick={reloadReview} disabled={resultsLoading || assetsLoading}>
+            {t("重新加载评估数据")}
+          </button>
+        </div>
+      ) : reviewLoading || rowsPending ? (
         <div style={{ display: 'flex', alignItems: 'center', gap: '12px', padding: '45px 0' }}>
           <div className="spinner"></div>
-          <span style={{ color: 'var(--text-secondary)' }}>{t("正在加载评估数据...")}</span>
+          <div role="status" aria-live="polite" style={{ color: 'var(--text-secondary)' }}>
+            <div>{t("正在加载评估数据...")}</div>
+            <div>{t("请稍候，正在检查分析记录；数据较大时加载可能需要几十秒。")}</div>
+          </div>
         </div>
       ) : taraRows.length === 0 ? (
         <div className="glass" style={{ padding: '60px 40px', textAlign: 'center', color: 'var(--text-secondary)' }}>

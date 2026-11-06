@@ -115,6 +115,15 @@ cd frontend
 node --experimental-vm-modules --test tests/canvasStore.test.mjs tests/workbench.test.mjs
 ```
 
+审阅页分别跟踪结果与资产的加载状态，任一请求未完成时不会显示“没有找到分析记录”。
+请求失败显示独立错误与“重新加载评估数据”，不会被其他成功请求清除；
+只有两项请求和表格转换成功后才判断数据为空。看到下载失败时不要重新启动分析。
+
+```bash
+cd frontend
+node --experimental-vm-modules --test tests/taraReview.test.mjs
+```
+
 ---
 
 ## 3. 手动分步部署与本地开发模式 (可选)
