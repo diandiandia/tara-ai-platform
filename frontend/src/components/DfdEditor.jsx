@@ -16,7 +16,8 @@ import {
   getSmoothStepPath,
   getStraightPath,
   EdgeLabelRenderer,
-  SelectionMode
+  SelectionMode,
+  ConnectionMode
 } from '@xyflow/react';
 import '@xyflow/react/dist/style.css';
 
@@ -156,15 +157,31 @@ const EDGE_TYPES_MAP = {
   default: ParallelBezierEdge
 };
 
+const normalizeHandleId = (handleId, targetType) => {
+  if (!handleId) return handleId;
+  const parts = String(handleId).split('-');
+  if (parts.length < 2) return handleId;
+  const prefix = targetType === 'source' ? 's' : 't';
+  return `${prefix}-${parts.slice(1).join('-')}`;
+};
+
+const SIDE_ORDER = ['top', 'right', 'bottom', 'left'];
+
+const handleSide = (handleId) => {
+  const parts = String(handleId || '').split('-');
+  return parts.length >= 2 ? parts.slice(1).join('-') : '';
+};
+
+const nextSide = (side) => {
+  const index = SIDE_ORDER.indexOf(side);
+  return SIDE_ORDER[(index + 1) % SIDE_ORDER.length] || 'right';
+};
+
 const preprocessEdges = (edgesList, nodesList = []) => {
   if (!edgesList) return [];
   
-  // 1. Auto-routing calculation
+  // 1. Auto-routing calculation (opt-in only: user must enable it explicitly)
   const routedEdges = edgesList.map(edge => {
-    if (edge.data?.autoRoute === false) {
-      return edge;
-    }
-
     const sourceNode = nodesList.find(n => n.id === edge.source);
     const targetNode = nodesList.find(n => n.id === edge.target);
 
@@ -172,13 +189,34 @@ const preprocessEdges = (edgesList, nodesList = []) => {
       return edge;
     }
 
+    // Route only when explicitly enabled, or when the edge has no handle info
+    // (AI-generated / legacy edges), otherwise respect the user's chosen handles
+    const autoRouteEnabled = edge.data?.autoRoute === true || !edge.sourceHandle || !edge.targetHandle;
+
     // Handle self-loop
     if (edge.source === edge.target) {
+      if (autoRouteEnabled) {
+        return {
+          ...edge,
+          sourceHandle: 's-top',
+          targetHandle: 't-right',
+          data: { ...edge.data, autoRoute: true }
+        };
+      }
+      const sourceHandle = normalizeHandleId(edge.sourceHandle, 'source') || 's-top';
+      let targetHandle = normalizeHandleId(edge.targetHandle, 'target') || 't-right';
+      if (handleSide(sourceHandle) === handleSide(targetHandle)) {
+        targetHandle = `t-${nextSide(handleSide(sourceHandle))}`;
+      }
       return {
         ...edge,
-        sourceHandle: 's-top',
-        targetHandle: 't-right'
+        sourceHandle,
+        targetHandle
       };
+    }
+
+    if (!autoRouteEnabled) {
+      return edge;
     }
 
     const sWidth = sourceNode.style?.width || (sourceNode.type === 'process' ? 100 : sourceNode.type === 'boundary' ? 280 : 150);
@@ -218,14 +256,20 @@ const preprocessEdges = (edgesList, nodesList = []) => {
     return {
       ...edge,
       sourceHandle,
-      targetHandle
+      targetHandle,
+      data: { ...edge.data, autoRoute: true }
     };
   });
 
+  // 2. Parallel offset calculation (independent from auto-routing)
   const groups = {};
   routedEdges.forEach(edge => {
-    const nodesPair = [edge.source, edge.target].sort();
-    const key = nodesPair.join('-');
+    const nodesPair = [edge.source, edge.target].sort().join('-');
+    const geometry = [
+      `${edge.source}:${handleSide(edge.sourceHandle)}`,
+      `${edge.target}:${handleSide(edge.targetHandle)}`
+    ].sort().join('|');
+    const key = `${nodesPair}::${geometry}`;
     if (!groups[key]) groups[key] = [];
     groups[key].push(edge);
   });
@@ -328,6 +372,7 @@ function DfdEditorCanvas({ setPage, diagramId }) {
 
   const undoStackRef = useRef([]);
   const redoStackRef = useRef([]);
+  const connectStartRef = useRef(null);
   const MAX_UNDO = 50;
 
   // AI Assistant Prompt State
@@ -456,14 +501,34 @@ function DfdEditorCanvas({ setPage, diagramId }) {
     syncLocalChanges(snapshot.nodes, snapshot.edges);
   }, [nodes, edges, setNodesState, setEdgesState, syncLocalChanges]);
 
+  const onConnectStart = useCallback((event, { nodeId }) => {
+    connectStartRef.current = nodeId || null;
+  }, []);
+
+  const onConnectEnd = useCallback(() => {
+    connectStartRef.current = null;
+  }, []);
+
   const onConnect = useCallback((params) => {
     if (isReadOnly) return;
     pushUndo([...nodes], [...edges]);
-    const newEdgesRaw = addEdge({
+
+    const startNodeId = connectStartRef.current;
+    const isReversed = startNodeId && startNodeId === params.target && startNodeId !== params.source;
+
+    const connection = {
       ...params,
+      source: isReversed ? params.target : params.source,
+      target: isReversed ? params.source : params.target,
+      sourceHandle: normalizeHandleId(isReversed ? params.targetHandle : params.sourceHandle, 'source'),
+      targetHandle: normalizeHandleId(isReversed ? params.sourceHandle : params.targetHandle, 'target')
+    };
+
+    const newEdgesRaw = addEdge({
+      ...connection,
       id: `e-${Date.now()}`,
       label: t('数据流'),
-      data: { name: t('数据流'), transmitted_info: '', protocol: '', autoRoute: true },
+      data: { name: t('数据流'), transmitted_info: '', protocol: '', autoRoute: false },
       markerEnd: { type: MarkerType.ArrowClosed }
     }, edges);
     const newEdges = preprocessEdges(newEdgesRaw, nodes);
@@ -1030,6 +1095,9 @@ function DfdEditorCanvas({ setPage, diagramId }) {
             onNodesChange={onNodesChangeHandler}
             onEdgesChange={onEdgesChangeHandler}
             onConnect={onConnect}
+            onConnectStart={onConnectStart}
+            onConnectEnd={onConnectEnd}
+            connectionMode={ConnectionMode.Loose}
             onReconnect={onEdgeUpdate}
             onNodeClick={onNodeClick}
             onEdgeClick={onEdgeClick}
@@ -1314,13 +1382,13 @@ function DfdEditorCanvas({ setPage, diagramId }) {
               <input
                 type="checkbox"
                 style={{ width: '18px', height: '18px', cursor: 'pointer', accentColor: 'var(--primary)' }}
-                checked={selectedEdge.data?.autoRoute !== false}
+                checked={selectedEdge.data?.autoRoute === true}
                 onChange={(e) => handleEdgeDataChange('autoRoute', e.target.checked)}
                 disabled={isReadOnly}
               />
             </div>
             <p style={{ fontSize: '11px', color: 'var(--text-secondary)', marginTop: '-12px', marginBottom: '20px', lineHeight: '1.3' }}>
-              {t("自动优化并平滑连接点，拖动节点时自动选择最近端点")}
+              {t("默认保留您手动选择的连接点；开启后按节点相对位置自动选择最近端点，拖动节点时会自动切换")}
             </p>
 
             <div className="input-group" style={{ marginBottom: '16px' }}>
