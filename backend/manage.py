@@ -166,6 +166,37 @@ def migrate():
         print("数据库字段已是最新，TARA 步骤索引已检查补齐。")
 
 
+def cleanup_history():
+    """Use an online SQLite backup and reserve the writer before inspecting runs."""
+    import sqlite3
+    from sqlalchemy import text
+    from app.services.tara_history import cleanup_tara_history
+
+    if engine.dialect.name != "sqlite":
+        raise RuntimeError("本命令仅支持 SQLite；其他数据库请先建立一致性备份。")
+    os.makedirs(BACKUP_DIR, exist_ok=True)
+    backup_path = os.path.join(
+        BACKUP_DIR, f"before_history_cleanup_{datetime.now():%Y%m%d_%H%M%S_%f}.db"
+    )
+    fd = os.open(backup_path, os.O_CREAT | os.O_EXCL | os.O_WRONLY, 0o600)
+    os.close(fd)
+    raw = engine.raw_connection()
+    try:
+        with sqlite3.connect(backup_path) as target:
+            raw.driver_connection.backup(target)
+            if target.execute("PRAGMA integrity_check").fetchone()[0] != "ok":
+                raise RuntimeError("备份完整性检查失败，未清理历史。")
+    finally:
+        raw.close()
+    print(f"一致性备份: {backup_path}")
+    with SessionLocal() as db:
+        db.execute(text("BEGIN IMMEDIATE"))
+        result = cleanup_tara_history(db)
+        db.commit()
+    print(result)
+    print("清理完成；空闲页可供后续写入复用，未执行 VACUUM。")
+
+
 FIXTURE_CATALOG = os.path.join(
     os.path.dirname(os.path.abspath(__file__)), "fixtures", "csr_new.xlsx"
 )
@@ -218,6 +249,7 @@ if __name__ == "__main__":
 
     # migrate
     subparsers.add_parser("migrate", help="为已有数据库补齐模型新增字段（幂等）")
+    subparsers.add_parser("cleanup-history", help="备份并清理历史，保留每域控最新成功及最新任务")
 
     # import-csr-catalog
     parser_catalog = subparsers.add_parser(
@@ -248,6 +280,8 @@ if __name__ == "__main__":
         create_admin(args.user, args.pwd)
     elif args.command == "migrate":
         migrate()
+    elif args.command == "cleanup-history":
+        cleanup_history()
     elif args.command == "import-csr-catalog":
         import_csr_catalog_command(
             args.file, args.sheet, not args.no_activate, args.if_missing

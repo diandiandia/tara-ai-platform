@@ -2432,6 +2432,23 @@ def run_tara_analysis(self, domain_id: int, run_record_id: int, force: bool = Fa
         # 4. 联动推导项目状态 (BR-03)
         from app.api.project import recalculate_project_status
         recalculate_project_status(domain.project_id, db)
+
+        # Cleanup failure must not turn a completed analysis into a failed run.
+        try:
+            from sqlalchemy import text
+            from app.services.tara_history import cleanup_tara_history
+
+            with SessionLocal() as history_db:
+                if history_db.bind.dialect.name == "sqlite":
+                    history_db.execute(text("BEGIN IMMEDIATE"))
+                summary = cleanup_tara_history(history_db, domain_id)
+                history_db.commit()
+            print(f"[TARA-AI] 历史清理: {summary}")
+        except Exception:
+            import logging
+            logging.getLogger(__name__).exception(
+                "TARA history cleanup failed after completed run %s", run_record_id
+            )
         
         return {"status": "completed", "domain_id": domain_id}
         

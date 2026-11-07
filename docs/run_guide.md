@@ -128,6 +128,32 @@ node --experimental-vm-modules --test tests/taraReview.test.mjs
 
 ## 3. 手动分步部署与本地开发模式 (可选)
 
+### TARA 历史保留与一次性清理
+
+每次分析成功结束后，自动保留每个域控最新一次任务及最新成功任务，
+删除更早任务及其步骤、CSR 映射、冲突和 OEM 缺口。存在 pending/running
+任务或域控正在分析时跳过，避免破坏增量分析正在读取的旧结果。
+项目、画布、资产、客户需求、固定目录和当前合并需求不删除。
+最新失败/取消任务与最近成功任务都保留；历史自动清理失败会记录异常，
+不把已经成功的分析改成失败。历史清理后，较老的人工修改不再可追溯。
+
+已有库可在实际数据库配置环境执行一次：
+
+```bash
+cd backend
+./venv/bin/python manage.py cleanup-history
+```
+
+该命令先使用 SQLite 在线备份 API 创建并检查一致性备份，再开启写事务清理。
+备份位于项目 `backups_local/before_history_cleanup_*.db`，包含清理前历史，
+需按访问权限和备份策略管理。命令不会自动删除备份，也不执行 VACUUM；
+数据库文件未立即缩小是正常的，释放的页会复用。此命令当前仅支持 SQLite。
+线上运行命令前核对 DATABASE_URL 与备份磁盘空间。
+
+```bash
+python -m pytest -q tests/test_tara_history.py
+```
+
 如需针对单个模块进行代码调试或深入排查，可按照以下分步指南手动启动：
 
 ### Step 3.1: 启动 Redis 缓存服务
